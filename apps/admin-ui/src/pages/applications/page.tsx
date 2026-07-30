@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Search } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
@@ -14,6 +14,8 @@ import {
   type RefexEnvironment,
 } from '@/seeds/refexAppCatalog';
 import { springSnappy, staggerContainer } from '@/lib/motion';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadApplicationsFromBackend } from '@/services/applicationsApi';
 
 const ENV_STORAGE_KEY = 'ne_apps_environment';
 
@@ -32,8 +34,31 @@ export default function ApplicationsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [tick, setTick] = useState(0);
   const [environment, setEnvironment] = useState<RefexEnvironment>(readEnvPreference);
+  const [loading, setLoading] = useState(isBackendApiMode());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [backendApps, setBackendApps] = useState<ReturnType<typeof getApplications>>([]);
 
-  const applications = useMemo(() => getApplications(), [tick]);
+  useEffect(() => {
+    if (!isBackendApiMode()) return;
+    let cancelled = false;
+    setLoading(true);
+    loadApplicationsFromBackend().then((result) => {
+      if (cancelled) return;
+      setBackendApps(result.applications);
+      setLoadError(result.error || null);
+      setLoadWarning(result.warning || null);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
+  const applications = useMemo(() => {
+    if (isBackendApiMode()) return backendApps;
+    return getApplications();
+  }, [backendApps, tick]);
 
   const envApps = useMemo(
     () => applications.filter((a) => a.environment === environment),
@@ -89,11 +114,24 @@ export default function ApplicationsPage() {
 
         <div className="flex flex-1 flex-col sm:flex-row sm:items-center gap-3 lg:justify-end">
           <EnvToggle value={environment} onChange={selectEnvironment} />
-          <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
-            Connect
-          </Button>
+          {!isBackendApiMode() && (
+            <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
+              Connect
+            </Button>
+          )}
         </div>
       </div>
+
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Could not load applications from backend-api: {loadError}
+        </div>
+      )}
+      {loadWarning && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          Partial data: {loadWarning}. Run PostgreSQL migrations to populate applications.
+        </div>
+      )}
 
       <div className="mb-5 flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative flex-1 max-w-md">
@@ -105,12 +143,19 @@ export default function ApplicationsPage() {
           />
         </div>
         <p className="text-xs text-foreground-400 font-medium sm:ml-auto">
-          {filteredApps.length} app{filteredApps.length === 1 ? '' : 's'}
+          {loading ? 'Loading…' : `${filteredApps.length} app${filteredApps.length === 1 ? '' : 's'}`}
           {envApps.length > 0 ? ` · ${connectedCount} connected` : ''}
+          {isBackendApiMode() ? ' · backend-api' : ''}
         </p>
       </div>
 
-      {filteredApps.length > 0 ? (
+      {loading ? (
+        <EmptyState
+          variant="apps"
+          title="Loading applications"
+          description="Fetching from backend-api…"
+        />
+      ) : filteredApps.length > 0 ? (
         <motion.div
           key={environment}
           className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
@@ -134,17 +179,23 @@ export default function ApplicationsPage() {
         <EmptyState
           variant="apps"
           title={`No ${environment.toLowerCase()} applications`}
-          description="Connect a Kissflow account for this environment to sync fields and schedule reports."
-          primaryLabel="Connect Application"
-          onPrimary={() => setFormOpen(true)}
+          description={
+            isBackendApiMode()
+              ? 'No applications in PostgreSQL for this environment yet. Run ingestion to populate engagement_reporting.application.'
+              : 'Connect a Kissflow account for this environment to sync fields and schedule reports.'
+          }
+          primaryLabel={isBackendApiMode() ? undefined : 'Connect Application'}
+          onPrimary={isBackendApiMode() ? undefined : () => setFormOpen(true)}
         />
       )}
 
-      <AddApplicationForm
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onCreated={() => setTick((t) => t + 1)}
-      />
+      {!isBackendApiMode() && (
+        <AddApplicationForm
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          onCreated={() => setTick((t) => t + 1)}
+        />
+      )}
     </Layout>
   );
 }
