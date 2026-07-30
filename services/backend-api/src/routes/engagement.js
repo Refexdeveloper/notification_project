@@ -29,6 +29,7 @@ app_member AS (
   WHERE pu.environment = $1
     AND pu.application_id = $2
     AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
   UNION
   SELECT DISTINCT ia.principal_id AS user_id
   FROM engagement_reporting.item_assignment ia
@@ -66,6 +67,7 @@ role_names AS (
   WHERE pu.environment = $1
     AND pu.application_id = $2
     AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
   GROUP BY pu.user_id
 ),
 assignment_counts AS (
