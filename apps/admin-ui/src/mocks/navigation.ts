@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
+  LayoutDashboard,
   LayoutGrid,
   Users,
   Shield,
@@ -17,8 +18,9 @@ export interface NavItem {
   path: string;
 }
 
-/** Product nav: Connect → Templates → Schedules → Sent → Settings */
+/** Product nav: Dashboard → Applications → … */
 export const navigationItems: NavItem[] = [
+  { id: 'dashboard', label: 'Dashboard', hint: 'Metrics & recent sends', icon: LayoutDashboard, path: '/dashboard' },
   { id: 'applications', label: 'Applications', hint: 'Connect Kissflow apps', icon: LayoutGrid, path: '/applications' },
   { id: 'users', label: 'Users', hint: 'Full account directory', icon: Users, path: '/users' },
   { id: 'platform-users', label: 'Admin users', hint: 'Portal access & roles', icon: Shield, path: '/platform-users' },

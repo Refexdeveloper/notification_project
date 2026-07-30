@@ -1,47 +1,38 @@
 import Layout from '@/components/feature/Layout';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { History, Search, RefreshCw } from 'lucide-react';
+import { History, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { apiFetch } from '@/services/api';
 import { isBackendApiMode } from '@/services/backendApi';
-import { loadGlobalDeliveryHistory } from '@/services/historyApi';
+import { loadGlobalDeliveryHistory, type SendHistoryRow } from '@/services/historyApi';
 
-type LogStatus = 'sent' | 'failed';
+type FilterKey = 'all' | 'delivered' | 'failed' | 'pending';
 
-type HistoryRow = {
-  id: string;
-  recipient: string;
-  subject: string;
-  status: 'delivered' | 'failed' | 'pending';
-  error_message?: string | null;
-  sent_at: string;
-  entity_type?: string | null;
-  entity_id?: string | null;
-  application_name?: string;
-};
+function formatWhen(value: string | null | undefined): string {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('en-IN', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
-type FilterKey = 'all' | 'delivered' | 'failed';
-
-function sourceLabel(row: HistoryRow): string {
-  if (row.entity_type === 'EmailScheduler' || row.entity_type === 'ReportSchedule') {
-    return 'Scheduled send';
-  }
-  if (row.entity_type === 'SMTPConfig' || row.entity_type === 'SmtpTest') return 'SMTP test';
-  if (row.application_name) return row.application_name;
-  if (row.entity_type) return row.entity_type;
-  return 'Email';
+function statusChip(status: string): string {
+  if (status === 'delivered') return 'chip-success capitalize';
+  if (status === 'failed') return 'chip-danger capitalize';
+  return 'chip-warn capitalize';
 }
 
 export default function HistoryPage() {
   const navigate = useNavigate();
   const backendMode = isBackendApiMode();
-  const [search, setSearch] = useState('');
   const [status, setStatus] = useState<FilterKey>('all');
-  const [items, setItems] = useState<HistoryRow[]>([]);
+  const [items, setItems] = useState<SendHistoryRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,23 +50,7 @@ export default function HistoryPage() {
         setItems([]);
         setTotal(0);
       } else {
-        setItems(
-          result.items.map((row) => ({
-            id: row.id,
-            recipient: row.detail || '—',
-            subject: row.title,
-            status:
-              row.status === 'delivered'
-                ? 'delivered'
-                : row.status === 'failed'
-                  ? 'failed'
-                  : 'pending',
-            error_message: row.error_message,
-            sent_at: row.occurred_at,
-            entity_type: 'ReportSchedule',
-            application_name: row.subtitle,
-          })),
-        );
+        setItems(result.items);
         setTotal(result.total);
         setWarning(result.warning || '');
       }
@@ -87,11 +62,8 @@ export default function HistoryPage() {
       id: number;
       recipient: string;
       subject: string;
-      status: LogStatus;
-      error_message?: string | null;
+      status: 'sent' | 'failed';
       sent_at: string;
-      entity_type?: string | null;
-      entity_id?: string | null;
     }> }>('/api/email-logs?limit=100');
     if (!res.ok) {
       setError(res.error || 'Failed to load sent history');
@@ -101,13 +73,9 @@ export default function HistoryPage() {
       setItems(
         (Array.isArray(res.data?.items) ? res.data.items : []).map((row) => ({
           id: String(row.id),
-          recipient: row.recipient,
-          subject: row.subject,
+          application_name: row.subject || 'Email',
           status: row.status === 'sent' ? 'delivered' : 'failed',
-          error_message: row.error_message,
           sent_at: row.sent_at,
-          entity_type: row.entity_type,
-          entity_id: row.entity_id ? String(row.entity_id) : null,
         })),
       );
       setTotal(Number(res.data?.total) || 0);
@@ -120,29 +88,17 @@ export default function HistoryPage() {
   }, [load]);
 
   const list = useMemo(() => {
-    return items.filter((h) => {
-      const matchStatus = status === 'all' || h.status === status;
-      const q = search.toLowerCase();
-      const matchSearch =
-        !q ||
-        (h.subject || '').toLowerCase().includes(q) ||
-        (h.recipient || '').toLowerCase().includes(q) ||
-        (h.error_message || '').toLowerCase().includes(q) ||
-        (h.application_name || '').toLowerCase().includes(q);
-      return matchStatus && matchSearch;
-    });
-  }, [items, search, status]);
+    return items.filter((h) => status === 'all' || h.status === status);
+  }, [items, status]);
 
   return (
-    <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Sent history' }]}>
+    <Layout breadcrumbs={[{ label: 'Dashboard', path: '/dashboard' }, { label: 'Sent history' }]}>
       <div className="mb-7 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="page-title">Sent history</h1>
           <p className="page-subtitle">
-            {backendMode
-              ? 'Report delivery runs from PostgreSQL across all applications.'
-              : 'See what went out, to whom, and whether it was delivered.'}
-            {!loading && total > 0 ? ` ${total} record${total === 1 ? '' : 's'}.` : ''}
+            Which application sent a scheduled report and when.
+            {!loading && total > 0 ? ` ${total} send${total === 1 ? '' : 's'}.` : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -150,23 +106,15 @@ export default function HistoryPage() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button variant="secondary" onClick={() => navigate('/applications')}>
-            Browse applications
+          <Button variant="secondary" onClick={() => navigate('/dashboard')}>
+            Dashboard
           </Button>
         </div>
       </div>
 
       <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex-1 max-w-sm">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search subject, app, or recipient…"
-            leftSlot={<Search className="w-4 h-4" />}
-          />
-        </div>
         <div className="flex items-center glass rounded-[14px] p-1 flex-wrap">
-          {(['all', 'delivered', 'failed'] as FilterKey[]).map((s) => (
+          {(['all', 'delivered', 'failed', 'pending'] as FilterKey[]).map((s) => (
             <button
               key={s}
               type="button"
@@ -196,66 +144,35 @@ export default function HistoryPage() {
           onPrimary={() => void load()}
         />
       ) : loading && items.length === 0 ? (
-        <EmptyState
-          variant="activity"
-          title="Loading…"
-          description="Fetching delivery history."
-        />
+        <EmptyState variant="activity" title="Loading…" description="Fetching send history." />
       ) : list.length === 0 ? (
         <EmptyState
           variant="activity"
-          title="No messages yet"
-          description={
-            backendMode
-              ? 'Scheduled report runs will appear here after the pipeline logs deliveries to PostgreSQL.'
-              : 'Once you send or schedule notifications, delivery history will appear here.'
-          }
-          primaryLabel="Go to applications"
-          onPrimary={() => navigate('/applications')}
+          title="No sends yet"
+          description="Scheduled report runs will appear here after the pipeline completes a send."
+          primaryLabel="Go to dashboard"
+          onPrimary={() => navigate('/dashboard')}
         />
       ) : (
         <GlassCard className="overflow-hidden p-0">
+          <div className="hidden md:grid grid-cols-[1.4fr_100px_180px] gap-2 px-5 py-2.5 border-b border-background-100 text-[11px] font-medium text-foreground-400 uppercase tracking-wide">
+            <span>Application</span>
+            <span>Status</span>
+            <span>Sent at</span>
+          </div>
           {list.map((item) => (
             <div
               key={item.id}
-              className="px-5 py-3.5 border-b border-background-100 last:border-0 flex items-center gap-4 hover:bg-background-50/80"
+              className="grid grid-cols-1 md:grid-cols-[1.4fr_100px_180px] gap-1 md:gap-2 px-5 py-3.5 border-b border-background-100 last:border-0 hover:bg-background-50/80 items-center"
             >
-              <span className="icon-well shrink-0">
-                <History className="w-4 h-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-foreground-900 truncate">
-                  {item.subject || '(no subject)'}
-                </p>
-                <p className="text-xs text-foreground-500 mt-0.5 truncate">
-                  {sourceLabel(item)} · {item.recipient}
-                </p>
-                {item.error_message ? (
-                  <p className="text-xs text-danger-600 mt-1 truncate">{item.error_message}</p>
-                ) : null}
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="icon-well shrink-0 md:hidden">
+                  <History className="w-4 h-4" />
+                </span>
+                <p className="text-sm font-semibold text-foreground-900 truncate">{item.application_name}</p>
               </div>
-              <span className="chip-muted capitalize">email</span>
-              <span
-                className={
-                  item.status === 'failed'
-                    ? 'chip-danger capitalize'
-                    : item.status === 'pending'
-                      ? 'chip-warn capitalize'
-                      : 'chip-success capitalize'
-                }
-              >
-                {item.status}
-              </span>
-              <span className="text-xs text-foreground-400 whitespace-nowrap">
-                {item.sent_at
-                  ? new Date(item.sent_at).toLocaleString('en-IN', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })
-                  : '—'}
-              </span>
+              <span className={`${statusChip(item.status)} w-fit`}>{item.status}</span>
+              <span className="text-xs text-foreground-500 whitespace-nowrap">{formatWhen(item.sent_at)}</span>
             </div>
           ))}
         </GlassCard>

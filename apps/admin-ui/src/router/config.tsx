@@ -1,5 +1,6 @@
 import { Navigate, type RouteObject } from "react-router-dom";
 import PrototypeOnlyGate from "@/components/routing/PrototypeOnlyGate";
+import DashboardPage from "@/pages/dashboard/page";
 import ApplicationsPage from "@/pages/applications/page";
 import ApplicationDetail from "@/pages/applications/detail/page";
 import ResourceWorkspaceRoute from "@/components/routing/ResourceWorkspaceRoute";
@@ -19,7 +20,8 @@ import NotFound from "@/pages/NotFound";
 
 const routes: RouteObject[] = [
   { path: "/login", element: <LoginPage /> },
-  { path: "/", element: <Navigate to="/applications" replace /> },
+  { path: "/", element: <Navigate to="/dashboard" replace /> },
+  { path: "/dashboard", element: <DashboardPage /> },
   { path: "/applications", element: <ApplicationsPage /> },
   {
     path: "/applications/:id/resources/:resourceId",
@@ -59,11 +61,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/history",
-    element: (
-      <PrototypeOnlyGate>
-        <HistoryPage />
-      </PrototypeOnlyGate>
-    ),
+    element: <HistoryPage />,
   },
   { path: "/logs", element: <PrototypeOnlyGate><LogsPage /></PrototypeOnlyGate> },
   { path: "/audit-logs", element: <PrototypeOnlyGate><AuditLogsPage /></PrototypeOnlyGate> },

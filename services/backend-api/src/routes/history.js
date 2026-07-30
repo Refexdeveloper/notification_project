@@ -122,20 +122,23 @@ router.get('/', async (req, res) => {
     const reportItems = reports.rows.map((row) => ({
       id: row.report_run_id,
       kind: 'report',
-      title: `Report run · ${row.process_id}`,
-      subtitle: row.report_run_id,
+      title: row.application_id,
+      subtitle: row.application_id,
       process_id: row.process_id,
       process_name: null,
       status: mapReportStatus(row.status),
       raw_status: row.status,
       occurred_at: row.completed_at || row.scheduled_at,
       error_message: row.error_message,
-      detail: row.error_message || 'Email report delivery',
+      detail: mapReportStatus(row.status),
     }));
 
-    const items = [...reportItems, ...snapshotItems].sort(
-      (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
-    );
+    const sendsOnly = String(req.query.sends_only || '').toLowerCase() === 'true';
+    const items = sendsOnly
+      ? reportItems.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
+      : [...reportItems, ...snapshotItems].sort(
+          (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
+        );
 
     return ok(res, req.correlationId, {
       items,
