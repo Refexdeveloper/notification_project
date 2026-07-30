@@ -77,6 +77,6 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
   return {
     applications: res.data.items.map(mapRowToApplication),
     source: 'backend',
-    warning: res.data.warning,
+    warning: res.data.warning || res.data.hint,
   };
 }

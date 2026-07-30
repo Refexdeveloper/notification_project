@@ -129,7 +129,11 @@ export default function ApplicationsPage() {
       )}
       {loadWarning && (
         <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-          Partial data: {loadWarning}. Run PostgreSQL migrations to populate applications.
+          {loadWarning === 'DATABASE_NOT_CONFIGURED'
+            ? 'PostgreSQL not configured. Copy services/backend-api/.env.example to .env and set PGPASSWORD to load applications.'
+            : loadWarning === 'SCHEMA_NOT_MIGRATED'
+              ? 'Database schema not migrated yet. Run db/migrations/*.sql'
+              : `Partial data: ${loadWarning}`}
         </div>
       )}
 

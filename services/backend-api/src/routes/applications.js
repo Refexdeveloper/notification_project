@@ -2,11 +2,23 @@
 
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
-const { getPool } = require('../lib/db');
+const { getPool, isDatabaseConfigured } = require('../lib/db');
 
 const router = express.Router();
 
+function dbNotConfigured(res, correlationId) {
+  return ok(res, correlationId, {
+    items: [],
+    count: 0,
+    warning: 'DATABASE_NOT_CONFIGURED',
+    hint: 'Copy services/backend-api/.env.example to .env and set PGPASSWORD (or DATABASE_URL)',
+  });
+}
+
 router.get('/', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return dbNotConfigured(res, req.correlationId);
+  }
   try {
     const { rows } = await getPool().query(
       `SELECT environment, application_id, application_name, last_seen_at, is_current
@@ -18,6 +30,17 @@ router.get('/', async (req, res) => {
   } catch (err) {
     if (err.code === '42P01') {
       return ok(res, req.correlationId, { items: [], count: 0, warning: 'SCHEMA_NOT_MIGRATED' });
+    }
+    if (err.code === 'DATABASE_NOT_CONFIGURED') {
+      return dbNotConfigured(res, req.correlationId);
+    }
+    if (err.message?.includes('password must be a string') || err.code === 'ECONNREFUSED') {
+      return ok(res, req.correlationId, {
+        items: [],
+        count: 0,
+        warning: 'DATABASE_UNAVAILABLE',
+        hint: err.message,
+      });
     }
     fail(res, req.correlationId, 'APPLICATIONS_LIST_FAILED', err.message, 500, true);
   }
@@ -38,6 +61,9 @@ router.post('/', async (req, res) => {
 });
 
 router.get('/:applicationId/processes', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return dbNotConfigured(res, req.correlationId);
+  }
   try {
     const { rows } = await getPool().query(
       `SELECT environment, process_id, application_id, process_name, last_seen_at, is_current
