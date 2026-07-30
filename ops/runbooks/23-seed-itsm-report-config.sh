@@ -27,7 +27,7 @@ SCHEDULE_ID="${SEED_SCHEDULE_ID:-55555555-5555-4555-8555-555555555555}"
 TEMPLATE_NAME="Kissflow User Engagement Report"
 SCHEDULE_NAME="Daily ITSM engagement report"
 CONTENT_REF="db/seeds/itsm-engagement-template.html"
-CRON_EXPRESSION="0 9 * * *"
+CRON_EXPRESSION="0 9-18/2 * * 1-5"
 TIMEZONE="Asia/Kolkata"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }

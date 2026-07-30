@@ -1,5 +1,6 @@
 import {
   cadenceStateToCron,
+  DEFAULT_WEEKDAY_INTERVAL,
   describeScheduleCadence,
   type ScheduleCadenceState,
   type SchedulePattern,
@@ -31,11 +32,26 @@ export default function ScheduleCadenceFields({ value, onChange, disabled }: Sch
         <select
           value={value.pattern}
           disabled={disabled}
-          onChange={(e) => set({ pattern: e.target.value as SchedulePattern })}
+          onChange={(e) => {
+            const pattern = e.target.value as SchedulePattern;
+            if (pattern === 'weekday_interval') {
+              onChange({
+                ...value,
+                pattern,
+                startHour: DEFAULT_WEEKDAY_INTERVAL.startHour,
+                endHour: DEFAULT_WEEKDAY_INTERVAL.endHour,
+                intervalHours: DEFAULT_WEEKDAY_INTERVAL.intervalHours,
+                time: '09:00',
+              });
+              return;
+            }
+            set({ pattern });
+          }}
           className="field-input w-full"
         >
           <option value="daily">Every day</option>
-          <option value="weekdays">Weekdays only (Mon–Fri)</option>
+          <option value="weekdays">Weekdays only (Mon–Fri) — once daily</option>
+          <option value="weekday_interval">Weekdays every N hours (e.g. ITSM 9 AM–6 PM)</option>
           <option value="weekends">Weekends only (Sat–Sun)</option>
           <option value="weekly">Once a week</option>
           <option value="monthly">Once a month</option>
@@ -43,7 +59,7 @@ export default function ScheduleCadenceFields({ value, onChange, disabled }: Sch
         </select>
       </div>
 
-      {value.pattern !== 'cron' && (
+      {value.pattern !== 'cron' && value.pattern !== 'weekday_interval' && (
         <div>
           <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Time (24-hour)</label>
           <input
@@ -53,6 +69,59 @@ export default function ScheduleCadenceFields({ value, onChange, disabled }: Sch
             onChange={(e) => set({ time: e.target.value || '09:00' })}
             className="field-input w-full max-w-[200px]"
           />
+        </div>
+      )}
+
+      {value.pattern === 'weekday_interval' && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">From hour</label>
+            <select
+              value={value.startHour}
+              disabled={disabled}
+              onChange={(e) => set({ startHour: Number(e.target.value) })}
+              className="field-input w-full"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, '0')}:00
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">To hour</label>
+            <select
+              value={value.endHour}
+              disabled={disabled}
+              onChange={(e) => set({ endHour: Number(e.target.value) })}
+              className="field-input w-full"
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, '0')}:00
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Every</label>
+            <select
+              value={value.intervalHours}
+              disabled={disabled}
+              onChange={(e) => set({ intervalHours: Number(e.target.value) })}
+              className="field-input w-full"
+            >
+              {[1, 2, 3, 4, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n} hour{n === 1 ? '' : 's'}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-[11px] text-foreground-400 sm:col-span-3">
+            Mon–Fri only, no weekends. ITSM default: 9 AM–6 PM every 2 hours → 9:00, 11:00, 13:00, 15:00, 17:00.
+          </p>
         </div>
       )}
 
