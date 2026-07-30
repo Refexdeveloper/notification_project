@@ -47,12 +47,14 @@ if [[ -n "${CC_LIST}" ]]; then
   IFS=',' read -r -a CC_RECIPIENTS <<< "${CC_LIST}"
 fi
 declare -a RCPT=("${RECIPIENT}")
-for cc in "${CC_RECIPIENTS[@]}"; do
-  cc="${cc#"${cc%%[![:space:]]*}"}"
-  cc="${cc%"${cc##*[![:space:]]}"}"
-  [[ -z "${cc}" ]] && continue
-  RCPT+=("${cc}")
-done
+if ((${#CC_RECIPIENTS[@]} > 0)); then
+  for cc in "${CC_RECIPIENTS[@]}"; do
+    cc="${cc#"${cc%%[![:space:]]*}"}"
+    cc="${cc%"${cc##*[![:space:]]}"}"
+    [[ -z "${cc}" ]] && continue
+    RCPT+=("${cc}")
+  done
+fi
 
 # Legacy ITSM path only when no schedule CC was supplied.
 if [[ -z "${CC_LIST}" && -z "${SCHEDULE_ID:-}" ]]; then
