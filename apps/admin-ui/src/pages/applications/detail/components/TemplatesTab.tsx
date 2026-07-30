@@ -38,6 +38,13 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
     };
   }, [app, backendMode, tick]);
 
+  useEffect(() => {
+    if (!backendMode) return;
+    const onFocus = () => setTick((n) => n + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [backendMode]);
+
   const list = useMemo(() => {
     if (backendMode) return backendList;
     void tick;

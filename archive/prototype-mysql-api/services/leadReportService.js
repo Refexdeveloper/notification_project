@@ -1,6 +1,7 @@
 /**
  * Lead Tracker report builder — live Kissflow leads + fresh user login detail per send.
  */
+const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const adminUiEnv = path.join(__dirname, '../../../apps/admin-ui/.env.local');
@@ -9,6 +10,26 @@ require('dotenv').config({ path: adminUiEnv });
 const PROCESS_ID = 'Lead_tracker_1_A00';
 const PAGE_SIZE = 1000;
 const TZ = 'Asia/Kolkata';
+const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, '../../..');
+const LEAD_TRACKER_TEMPLATE_PATH = path.join(
+  REPO_ROOT,
+  'db/seeds/lead-tracker-report-template.html',
+);
+
+function replaceTemplateVariables(templateBody, variables = {}) {
+  let body = String(templateBody || '');
+  for (const key of Object.keys(variables)) {
+    body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(variables[key] ?? ''));
+  }
+  return body;
+}
+
+function loadLeadTrackerTemplate() {
+  if (fs.existsSync(LEAD_TRACKER_TEMPLATE_PATH)) {
+    return fs.readFileSync(LEAD_TRACKER_TEMPLATE_PATH, 'utf8');
+  }
+  return null;
+}
 
 function pickString(obj, keys) {
   if (!obj || typeof obj !== 'object') return '';
@@ -350,29 +371,29 @@ function escapeHtml(v) {
 
 function renderTable(rows) {
   if (!rows.length) {
-    return '<p style="color:#64748b;font-size:13px;">No users/leads for this team.</p>';
+    return '<p style="color:#888888;font-size:13px;">No users/leads for this team.</p>';
   }
   const body = rows
     .map((row, idx) => {
-      const bg = idx % 2 ? '#f8fafc' : '#fff';
+      const bg = idx % 2 ? '#faf9f7' : '#ffffff';
       const sign = row.loggedInToday ? '✓' : '✕';
-      const signBg = row.loggedInToday ? '#dcfce7;color:#16a34a' : '#fee2e2;color:#dc2626';
+      const signBg = row.loggedInToday ? '#dcfce7;color:#16a34a' : '#fee2e2;color:#c8102e';
       const lastLogin = formatLogin(row.lastSignedIn);
       return `<tr style="background:${bg}">
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;font-size:13px">${escapeHtml(row.email || '—')}</td>
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:600">${escapeHtml(row.name)}</td>
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:center;color:#ea580c;font-weight:700">${row.openLeads}</td>
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:center;color:#059669;font-weight:700">${row.closedLeads}</td>
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:center"><span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:${signBg.split(';')[0]};${signBg.split(';')[1] || ''};font-weight:bold">${sign}</span></td>
-<td style="padding:10px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#64748b">${escapeHtml(lastLogin)}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;font-size:13px;color:#1a1a1a;">${escapeHtml(row.email || '—')}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;font-weight:600;color:#1a1a1a;">${escapeHtml(row.name)}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;color:#c8102e;font-weight:700;">${row.openLeads}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;color:#1a1a1a;font-weight:700;">${row.closedLeads}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;"><span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:${signBg.split(';')[0]};${signBg.split(';')[1] || ''};font-weight:bold;">${sign}</span></td>
+<td style="font-size:11px;padding:10px 12px;border-bottom:1px solid #ececea;color:#888888;">${escapeHtml(lastLogin)}</td>
 </tr>`;
     })
     .join('');
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;border-collapse:collapse">
-<thead><tr style="background:#1e293b;color:#f1f5f9;font-size:10px;text-transform:uppercase">
-<th style="padding:10px;text-align:left">Email</th><th style="padding:10px;text-align:left">Name</th>
-<th style="padding:10px;text-align:center">Open</th><th style="padding:10px;text-align:center">Closed</th>
-<th style="padding:10px;text-align:center">Signed in today</th><th style="padding:10px;text-align:left">Last signed in</th>
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ececea;border-radius:4px;border-collapse:collapse;overflow:hidden;">
+<thead><tr style="background:#faf9f7;color:#888888;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;">
+<th style="padding:10px 12px;text-align:left;font-weight:700;">Email</th><th style="padding:10px 12px;text-align:left;font-weight:700;">Name</th>
+<th style="padding:10px 12px;text-align:center;font-weight:700;">Open</th><th style="padding:10px 12px;text-align:center;font-weight:700;">Closed</th>
+<th style="padding:10px 12px;text-align:center;font-weight:700;">Signed in today</th><th style="padding:10px 12px;text-align:left;font-weight:700;">Last signed in</th>
 </tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -382,21 +403,36 @@ function renderHtml(groupName, rows, totals) {
   const closed = totals.totalClosed ?? rows.reduce((n, r) => n + r.closedLeads, 0);
   const signedInToday = rows.filter((r) => r.loggedInToday).length;
   const date = new Date().toLocaleDateString('en-IN', { dateStyle: 'medium', timeZone: TZ });
-  return `<!DOCTYPE html><html><body style="font-family:Segoe UI,sans-serif;background:#f1f5f9;padding:24px">
-<div style="max-width:720px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
-<div style="background:linear-gradient(135deg,#ea580c,#f97316);padding:24px;color:#fff">
-<div style="font-size:11px;opacity:.85">REFEX</div>
-<div style="font-size:20px;font-weight:800;margin-top:4px">${escapeHtml(groupName)} — Lead Tracker</div>
-<div style="font-size:13px;margin-top:6px">Team: ${escapeHtml(groupName)} · ${date}</div>
-</div>
-<div style="padding:20px;display:flex;gap:12px">
-<div style="flex:1;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:#ea580c">${totals.totalLeads}</div><div style="font-size:11px">Total Leads</div></div>
-<div style="flex:1;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:#ea580c">${open}</div><div style="font-size:11px">Open</div></div>
-<div style="flex:1;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:#059669">${closed}</div><div style="font-size:11px">Closed</div></div>
-</div>
-<div style="padding:0 20px 24px">${table}</div>
-<p style="padding:0 20px 16px;font-size:11px;color:#94a3b8;margin:0;">Login data refreshed from Kissflow at ${new Date().toLocaleString('en-IN', { timeZone: TZ })} · ${signedInToday} signed in today</p>
-</div></body></html>`;
+  const reportBody = `Live data from Kissflow Lead Tracker (${groupName}): leads filtered by Website_and_form, grouped by assigned sales person.`;
+  const variables = {
+    CompanyName: 'REFEX',
+    ReportTitle: `${groupName} — Lead Tracker`,
+    GroupName: groupName,
+    ReportDate: date,
+    TotalLeads: String(totals.totalLeads),
+    OpenLeads: String(open),
+    ClosedLeads: String(closed),
+    SignedInToday: String(signedInToday),
+    LeadTableHtml: table,
+    ReportBody: reportBody,
+  };
+
+  const template = loadLeadTrackerTemplate();
+  if (template) {
+    return replaceTemplateVariables(template, variables);
+  }
+
+  return replaceTemplateVariables(
+    `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f4f4f2;padding:24px">
+<div style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #e5e5e0;border-radius:6px;padding:24px;">
+<div style="font-size:20px;font-weight:bold;color:#1a1a1a;border-bottom:3px solid #c8102e;padding-bottom:12px;">{{CompanyName}}</div>
+<div style="font-size:18px;font-weight:bold;margin-top:16px;">{{ReportTitle}}</div>
+<div style="font-size:13px;color:#888888;margin-top:4px;">Generated {{ReportDate}} · Team: {{GroupName}}</div>
+<div style="margin-top:16px;">{{LeadTableHtml}}</div>
+<p style="font-size:13px;color:#5b5b5b;">{{ReportBody}}</p>
+</div></body></html>`,
+    variables,
+  );
 }
 
 async function buildLeadTrackerReport({ groupName, websiteFilter }) {

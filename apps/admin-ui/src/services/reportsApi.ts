@@ -1,5 +1,5 @@
 import type { KissflowApplication } from '@/mocks/applications';
-import { resolveBackendApplicationId } from '@/services/applicationsApi';
+import { resolveBackendApplicationId, toDbEnvironment } from '@/services/applicationsApi';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import type { ReportTemplate } from '@/stores/reportTemplates';
 import { describeCadence } from '@/stores/reportSchedulers';
@@ -55,10 +55,6 @@ export type SchedulesListResponse = {
   warning?: string;
   hint?: string;
 };
-
-function toDbEnvironment(environment: KissflowApplication['environment']): string {
-  return environment === 'Production' ? 'production' : 'development';
-}
 
 function mapTemplateRow(row: BackendTemplateRow, app: KissflowApplication): ReportTemplate {
   return {
@@ -169,6 +165,68 @@ export type ScheduleUpdateResult = {
   schedule?: ReportScheduler;
   error?: string;
 };
+
+export type ScheduleCreatePayload = {
+  name: string;
+  template_id: string;
+  template_name?: string;
+  cron_expression?: string;
+  timezone?: string;
+  from_email?: string;
+  recipients_to?: string[];
+  recipients_cc?: string[];
+  is_active?: boolean;
+  process_id?: string;
+};
+
+export type ScheduleCreateResult = {
+  ok: boolean;
+  schedule?: ReportScheduler;
+  error?: string;
+};
+
+export async function createScheduleOnBackend(
+  app: KissflowApplication,
+  payload: ScheduleCreatePayload,
+): Promise<ScheduleCreateResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/schedules?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{ item: BackendScheduleRow }>(path, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to create schedule' };
+  }
+
+  return { ok: true, schedule: mapScheduleRow(res.data.item, app) };
+}
+
+export async function deleteScheduleOnBackend(
+  app: KissflowApplication,
+  scheduleId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/schedules/${encodeURIComponent(scheduleId)}?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{ deleted: boolean }>(path, { method: 'DELETE' });
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Failed to delete schedule' };
+  }
+
+  return { ok: true };
+}
 
 export type TemplateMutationPayload = {
   name?: string;

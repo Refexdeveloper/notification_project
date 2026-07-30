@@ -42,7 +42,7 @@ export const APP_DETAIL_TABS: AppDetailTab[] = [
   { id: 'templates', label: 'Templates', icon: Mail },
   { id: 'schedulers', label: 'Schedules', icon: CalendarClock },
   { id: 'history', label: 'Sent', icon: History },
-  { id: 'settings', label: 'App settings', icon: Settings, prototypeOnly: true },
+  { id: 'settings', label: 'App settings', icon: Settings },
 ];
 
 /** Sidebar routes that only work with the MySQL prototype API. */

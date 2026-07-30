@@ -100,8 +100,16 @@ async function resolveKissflowCredentials(environment) {
   };
 }
 
-async function kissflowGet({ environment, accountId, processId, pageNumber = 1, pageSize = 1000 }) {
-  const creds = await resolveKissflowCredentials(environment);
+async function kissflowGet({
+  environment,
+  accountId,
+  processId,
+  pageNumber = 1,
+  pageSize = 1000,
+  applyPreference = true,
+  credentials,
+}) {
+  const creds = credentials || (await resolveKissflowCredentials(environment));
   const account = accountId || creds.accountId;
   if (!account || !creds.keyId || !creds.secret) {
     const err = new Error(
@@ -111,7 +119,8 @@ async function kissflowGet({ environment, accountId, processId, pageNumber = 1, 
     throw err;
   }
 
-  const url = `${creds.baseUrl}/process/2/${encodeURIComponent(account)}/admin/${encodeURIComponent(processId)}/item?page_number=${pageNumber}&page_size=${pageSize}&apply_preference=1`;
+  const pref = applyPreference ? '1' : 'false';
+  const url = `${creds.baseUrl}/process/2/${encodeURIComponent(account)}/admin/${encodeURIComponent(processId)}/item?page_number=${pageNumber}&page_size=${pageSize}&apply_preference=${pref}`;
 
   const res = await fetch(url, {
     headers: {

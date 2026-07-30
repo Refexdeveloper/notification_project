@@ -236,11 +236,56 @@ export type ApplicationRegistrationResult = {
   idempotentReplay?: boolean;
 };
 
+export type ApplicationValidationResult = {
+  ok: boolean;
+  valid?: boolean;
+  process_ids?: string[];
+  dataform_ids?: string[];
+  board_ids?: string[];
+  dataset_ids?: string[];
+  warnings?: string[];
+  error?: string;
+};
+
 function idempotencyKey(): string {
   return crypto.randomUUID();
 }
 
-/** Register a Kissflow application in PostgreSQL (backend-api mode). */
+/** Validate Kissflow credentials and discover resources before registration. */
+export async function validateApplicationOnBackend(
+  payload: ApplicationRegistrationPayload,
+): Promise<ApplicationValidationResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const res = await apiV1Fetch<{
+    valid: boolean;
+    process_ids: string[];
+    dataform_ids: string[];
+    board_ids: string[];
+    dataset_ids: string[];
+    warnings: string[];
+  }>('/applications/validate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Kissflow validation failed' };
+  }
+
+  return {
+    ok: true,
+    valid: res.data.valid,
+    process_ids: res.data.process_ids,
+    dataform_ids: res.data.dataform_ids,
+    board_ids: res.data.board_ids,
+    dataset_ids: res.data.dataset_ids,
+    warnings: res.data.warnings,
+  };
+}
+
 export async function createApplicationOnBackend(
   payload: ApplicationRegistrationPayload,
 ): Promise<ApplicationRegistrationResult> {
@@ -269,6 +314,31 @@ export async function createApplicationOnBackend(
     item: res.data.item,
     idempotentReplay: Boolean(res.data.idempotent_replay),
   };
+}
+
+/** Soft-delete an application in PostgreSQL (backend-api mode). */
+export async function deleteApplicationOnBackend(
+  routeId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const parsed = parseBackendApplicationRouteId(routeId);
+  if (!parsed) {
+    return { ok: false, error: 'Invalid application id' };
+  }
+
+  const res = await apiV1Fetch<{ deleted: boolean }>(
+    `/applications/${encodeURIComponent(parsed.applicationId)}?environment=${encodeURIComponent(parsed.environment)}`,
+    { method: 'DELETE' },
+  );
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Failed to delete application' };
+  }
+
+  return { ok: true };
 }
 
 export { toDbEnvironment };

@@ -3,6 +3,8 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
+const { resolveSession } = require('../lib/session');
+const { createSchedule, deleteSchedule } = require('../lib/scheduleRepository');
 
 const router = express.Router({ mergeParams: true });
 
@@ -191,6 +193,115 @@ router.get('/', async (req, res) => {
       return dbNotConfigured(res, req.correlationId);
     }
     return fail(res, req.correlationId, 'SCHEDULES_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+router.post('/', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+
+  const applicationId = req.params.applicationId;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const name = String(body.name || '').trim();
+  const templateId = String(body.template_id || '').trim();
+  const cronExpression = String(body.cron_expression || '0 9 * * *').trim();
+  const timezone = String(body.timezone || 'Asia/Kolkata').trim();
+  const fromEmail = normalizeSingleEmail(body.from_email);
+  const recipientsTo = normalizeEmailList(body.recipients_to || body.recipients);
+  const recipientsCc = normalizeEmailList(body.recipients_cc || body.cc);
+  const isActive = Boolean(body.is_active);
+
+  if (!name) {
+    return fail(res, req.correlationId, 'NAME_REQUIRED', 'Schedule name is required', 400);
+  }
+  if (!templateId) {
+    return fail(res, req.correlationId, 'TEMPLATE_ID_REQUIRED', 'template_id is required', 400);
+  }
+  if (isActive && recipientsTo.length === 0) {
+    return fail(res, req.correlationId, 'RECIPIENTS_REQUIRED', 'Add at least one To recipient before activating', 400);
+  }
+  if (isActive && !fromEmail) {
+    return fail(res, req.correlationId, 'FROM_EMAIL_REQUIRED', 'from_email is required when schedule is active', 400);
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const scheduleId = await createSchedule(client, {
+      environment,
+      applicationId,
+      name,
+      templateId,
+      templateName: String(body.template_name || name).trim(),
+      processId: body.process_id || null,
+      cronExpression,
+      timezone,
+      fromEmail,
+      recipientsTo,
+      recipientsCc,
+      subject: body.subject || name,
+      websiteFilter: body.website_filter || null,
+      userGroupFilter: body.user_group_filter || null,
+      isActive,
+    });
+    await client.query('COMMIT');
+
+    const { rows } = await getPool().query(SCHEDULE_BY_ID_QUERY, [environment, applicationId, scheduleId]);
+    return ok(res, req.correlationId, { item: mapScheduleRow(rows[0]) }, 201);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'SCHEDULE_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 404);
+    }
+    return fail(res, req.correlationId, 'SCHEDULE_CREATE_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/:scheduleId', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+
+  const applicationId = req.params.applicationId;
+  const scheduleId = req.params.scheduleId;
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await deleteSchedule(client, { environment, applicationId, scheduleId });
+    await client.query('COMMIT');
+    return ok(res, req.correlationId, { deleted: true, id: scheduleId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'SCHEDULE_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 404);
+    }
+    return fail(res, req.correlationId, 'SCHEDULE_DELETE_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
   }
 });
 

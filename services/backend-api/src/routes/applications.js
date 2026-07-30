@@ -8,7 +8,9 @@ const {
   RegistrationConflictError,
   normalizeRegistrationBody,
   registerApplication,
+  deleteApplication,
 } = require('../lib/applicationRegistration');
+const { validateAndDiscoverRegistrationInput } = require('../lib/kissflowDiscovery');
 
 const router = express.Router();
 
@@ -63,6 +65,41 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.post('/validate', async (req, res) => {
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const { errors, input } = normalizeRegistrationBody(req.body);
+  if (errors.length) {
+    return fail(res, req.correlationId, 'VALIDATION_FAILED', errors.join('; '), 400);
+  }
+
+  try {
+    const discovery = await validateAndDiscoverRegistrationInput(input);
+    return ok(res, req.correlationId, {
+      valid: true,
+      ...discovery,
+      application_id: input.applicationId,
+      kissflow_account_id: input.kissflowAccountId,
+    });
+  } catch (err) {
+    if (err.code === 'VALIDATION_FAILED') {
+      return fail(res, req.correlationId, err.code, err.message, 400);
+    }
+    const status = err.status === 401 || err.status === 403 ? err.status : 502;
+    return fail(
+      res,
+      req.correlationId,
+      'KISSFLOW_VALIDATION_FAILED',
+      err.message,
+      status,
+      status >= 500,
+    );
+  }
+});
+
 router.post('/', async (req, res) => {
   const idempotencyKey = req.headers['idempotency-key'];
   if (!idempotencyKey || String(idempotencyKey).length < 8) {
@@ -89,11 +126,33 @@ router.post('/', async (req, res) => {
     return fail(res, req.correlationId, 'VALIDATION_FAILED', errors.join('; '), 400);
   }
 
+  let registrationInput = input;
+  try {
+    const discovery = await validateAndDiscoverRegistrationInput(input);
+    registrationInput = {
+      ...input,
+      processIds: discovery.process_ids,
+      dataformIds: discovery.dataform_ids,
+      boardIds: discovery.board_ids,
+      datasetIds: discovery.dataset_ids,
+    };
+  } catch (err) {
+    const status = err.status === 401 || err.status === 403 ? err.status : 502;
+    return fail(
+      res,
+      req.correlationId,
+      'KISSFLOW_VALIDATION_FAILED',
+      err.message,
+      status,
+      status >= 500,
+    );
+  }
+
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     const result = await registerApplication(client, {
-      input,
+      input: registrationInput,
       idempotencyKey: String(idempotencyKey),
       correlationId: req.correlationId,
       actorSubject: session.subject,
@@ -111,6 +170,41 @@ router.post('/', async (req, res) => {
       return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
     }
     return fail(res, req.correlationId, 'APPLICATION_REGISTER_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/:applicationId', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = String(req.query.environment || 'development').toLowerCase();
+  const applicationId = req.params.applicationId;
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await deleteApplication(client, {
+      environment,
+      applicationId,
+      actorSubject: session.subject,
+      correlationId: req.correlationId,
+    });
+    await client.query('COMMIT');
+    return ok(res, req.correlationId, result);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'APPLICATION_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 404);
+    }
+    return fail(res, req.correlationId, 'APPLICATION_DELETE_FAILED', err.message, 500, true);
   } finally {
     client.release();
   }

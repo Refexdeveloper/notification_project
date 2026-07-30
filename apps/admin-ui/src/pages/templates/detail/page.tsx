@@ -151,6 +151,9 @@ export default function TemplateDetailPage() {
         }
 
         if (result.template) {
+          setName(result.template.name);
+          setSubject(result.template.subject);
+          setDescription(result.template.description);
           setHtml(result.template.html);
           setStatus(result.template.status);
         } else if (publish) {

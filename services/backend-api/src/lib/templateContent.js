@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 function repoRoot() {
+  if (process.env.REPO_ROOT) return process.env.REPO_ROOT;
   return path.resolve(__dirname, '../../../..');
 }
 

@@ -41,10 +41,37 @@ log "Building MIME email"
 MIME_FILE="$(mktemp)"
 trap 'rm -f "${MIME_FILE}"; unset SMTP_USER SMTP_APP_PASSWORD' EXIT
 
+CC_LIST="${CC:-}"
+CC_RECIPIENTS=()
+if [[ -n "${CC_LIST}" ]]; then
+  IFS=',' read -r -a CC_RECIPIENTS <<< "${CC_LIST}"
+fi
+declare -a RCPT=("${RECIPIENT}")
+for cc in "${CC_RECIPIENTS[@]}"; do
+  cc="${cc#"${cc%%[![:space:]]*}"}"
+  cc="${cc%"${cc##*[![:space:]]}"}"
+  [[ -z "${cc}" ]] && continue
+  RCPT+=("${cc}")
+done
+
+# Legacy ITSM path only when no schedule CC was supplied.
+if [[ -z "${CC_LIST}" && -z "${SCHEDULE_ID:-}" ]]; then
+  RCPT+=(
+    "srivaths.varadharajan@refex.co.in"
+    "gowtham.s@refex.co.in"
+    "pravinkumar.raja@refex.co.in"
+    "mohamedaasik.m@refex.co.in"
+  )
+fi
+
 {
   echo "From: ${FROM_EMAIL}"
   echo "To: ${RECIPIENT}"
-  echo "Cc: srivaths.varadharajan@refex.co.in, gowtham.s@refex.co.in, pravinkumar.raja@refex.co.in, mohamedaasik.m@refex.co.in"
+  if [[ -n "${CC_LIST}" ]]; then
+    echo "Cc: ${CC_LIST}"
+  elif [[ -z "${SCHEDULE_ID:-}" ]]; then
+    echo "Cc: srivaths.varadharajan@refex.co.in, gowtham.s@refex.co.in, pravinkumar.raja@refex.co.in, mohamedaasik.m@refex.co.in"
+  fi
   echo "Subject: ${SUBJECT}"
   echo "MIME-Version: 1.0"
   echo "Content-Type: text/html; charset=UTF-8"
@@ -54,15 +81,16 @@ trap 'rm -f "${MIME_FILE}"; unset SMTP_USER SMTP_APP_PASSWORD' EXIT
 
 log "Sending via Gmail SMTP"
 
+CURL_RCPT=()
+for addr in "${RCPT[@]}"; do
+  CURL_RCPT+=(--mail-rcpt "${addr}")
+done
+
 if curl --silent --show-error \
   --url "smtps://smtp.gmail.com:465" \
   --ssl-reqd \
   --mail-from "${FROM_EMAIL}" \
-  --mail-rcpt "${RECIPIENT}" \
-  --mail-rcpt "srivaths.varadharajan@refex.co.in" \
-  --mail-rcpt "gowtham.s@refex.co.in" \
-  --mail-rcpt "pravinkumar.raja@refex.co.in" \
-  --mail-rcpt "mohamedaasik.m@refex.co.in" \
+  "${CURL_RCPT[@]}" \
   --user "${SMTP_USER}:${SMTP_APP_PASSWORD}" \
   --upload-file "${MIME_FILE}"; then
   STATUS="SENT"

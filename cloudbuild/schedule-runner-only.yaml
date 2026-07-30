@@ -1,0 +1,16 @@
+steps:
+  - id: build-schedule-runner
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/schedule-runner:${COMMIT_SHA}
+      - -f
+      - services/engagement-pipeline/Dockerfile.schedule-runner
+      - .
+
+images:
+  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/schedule-runner:${COMMIT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY

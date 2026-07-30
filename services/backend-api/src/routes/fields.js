@@ -9,6 +9,17 @@ const {
   readFieldDiscovery,
   buildFieldDiscoveryPayload,
 } = require('../lib/fieldDiscovery');
+const {
+  filterItemsForFieldDiscovery,
+  classifyItemStatus,
+  extractProcessStatus,
+} = require('../lib/kissflowDiscovery');
+const {
+  buildResourceKey,
+  getWatermark,
+  setWatermark,
+  filterItemsSinceWatermark,
+} = require('../lib/syncWatermark');
 
 const router = express.Router({ mergeParams: true });
 
@@ -40,6 +51,29 @@ function mapFieldRow(field) {
     sample: field.sample || null,
     occurrences: Number(field.occurrences) || 0,
   };
+}
+
+function mergeFieldCatalog(priorFields, newFields) {
+  const map = new Map();
+  for (const field of priorFields || []) {
+    if (!field?.name) continue;
+    map.set(field.name, { ...field });
+  }
+  for (const field of newFields || []) {
+    if (!field?.name) continue;
+    const existing = map.get(field.name);
+    if (existing) {
+      map.set(field.name, {
+        ...existing,
+        ...field,
+        occurrences: Math.max(Number(existing.occurrences) || 0, Number(field.occurrences) || 0),
+        sample: field.sample || existing.sample,
+      });
+    } else {
+      map.set(field.name, field);
+    }
+  }
+  return [...map.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
 router.get('/', async (req, res) => {
@@ -92,7 +126,9 @@ router.post('/sync', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required for field sync', 503);
   }
 
-  const pageSize = Math.min(Math.max(Number(req.body?.page_size) || 1000, 1), 1000);
+  const pageSize = Math.min(Math.max(Number(req.body?.page_size) || 500, 1), 1000);
+  const inProgressOnly = req.body?.in_progress_only !== false;
+  const incremental = req.body?.incremental !== false;
 
   try {
     const { rows } = await getPool().query(PROCESS_QUERY, [
@@ -117,6 +153,15 @@ router.post('/sync', async (req, res) => {
       );
     }
 
+    const pool = getPool();
+    const resourceKey = buildResourceKey(
+      environment,
+      row.application_id,
+      row.process_id,
+      'field_discovery',
+    );
+    const watermark = incremental ? await getWatermark(pool, resourceKey) : null;
+
     const { data } = await kissflowGet({
       environment,
       accountId,
@@ -125,10 +170,46 @@ router.post('/sync', async (req, res) => {
       pageSize,
     });
 
-    const extracted = extractFieldsFromItems(data);
-    const fieldDiscovery = buildFieldDiscoveryPayload(extracted);
+    const rawItems = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.Data)
+        ? data.Data
+        : Array.isArray(data?.items)
+          ? data.items
+          : [];
 
-    await getPool().query(
+    let items = rawItems;
+    if (incremental && watermark) {
+      items = filterItemsSinceWatermark(items, watermark);
+    }
+    if (inProgressOnly) {
+      items = filterItemsForFieldDiscovery(items, { inProgressOnly: true });
+    }
+
+    const statusCounts = { open: 0, closed: 0, other: 0, unknown: 0 };
+    for (const item of rawItems) {
+      const bucket = classifyItemStatus(extractProcessStatus(item));
+      statusCounts[bucket] = (statusCounts[bucket] || 0) + 1;
+    }
+
+    const priorDiscovery = readFieldDiscovery(row.source_payload);
+    const extracted = extractFieldsFromItems(items.length ? items : rawItems.slice(0, 50));
+    const mergedFields = mergeFieldCatalog(priorDiscovery.fields, extracted.fields);
+    const fieldDiscovery = {
+      ...buildFieldDiscoveryPayload({
+        fields: mergedFields,
+        itemCount: extracted.itemCount,
+        sampled: extracted.sampled,
+      }),
+      in_progress_only: inProgressOnly,
+      incremental,
+      status_counts: statusCounts,
+      fetched_count: rawItems.length,
+      filtered_count: items.length,
+      watermark_before: watermark?.last_success_at || null,
+    };
+
+    await pool.query(
       `UPDATE engagement_reporting.process
        SET source_payload = COALESCE(source_payload, '{}'::jsonb) || jsonb_build_object('field_discovery', $4::jsonb),
            last_seen_at = now()
@@ -136,7 +217,12 @@ router.post('/sync', async (req, res) => {
       [environment, row.process_id, row.application_id, JSON.stringify(fieldDiscovery)],
     );
 
-    const fields = extracted.fields.map(mapFieldRow);
+    await setWatermark(pool, resourceKey, {
+      lastSuccessAt: new Date(),
+      watermarkValue: new Date(),
+    });
+
+    const fields = mergedFields.map(mapFieldRow);
     return ok(res, req.correlationId, {
       process_id: row.process_id,
       application_id: row.application_id,
@@ -146,6 +232,11 @@ router.post('/sync', async (req, res) => {
       item_count: extracted.itemCount,
       sampled: extracted.sampled,
       synced_at: fieldDiscovery.synced_at,
+      status_counts: statusCounts,
+      fetched_count: rawItems.length,
+      filtered_count: items.length,
+      incremental,
+      in_progress_only: inProgressOnly,
     });
   } catch (err) {
     if (err.code === 'KISSFLOW_CREDENTIALS_MISSING') {

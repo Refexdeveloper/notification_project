@@ -10,7 +10,12 @@ import {
 } from '@/stores/reportSchedulers';
 import { getTemplatesByAppId } from '@/stores/reportTemplates';
 import { isBackendApiMode } from '@/services/backendApi';
-import { describeBackendSchedule, loadSchedulesFromBackend } from '@/services/reportsApi';
+import {
+  createScheduleOnBackend,
+  describeBackendSchedule,
+  loadSchedulesFromBackend,
+  loadTemplatesFromBackend,
+} from '@/services/reportsApi';
 import BackendScheduleEditor from './BackendScheduleEditor';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -28,6 +33,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [backendList, setBackendList] = useState<ReportScheduler[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (!backendMode) return;
@@ -45,13 +51,49 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     };
   }, [app, backendMode, tick]);
 
+  useEffect(() => {
+    if (!backendMode) return;
+    const onFocus = () => setTick((n) => n + 1);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [backendMode]);
+
   const list = useMemo(() => {
     if (backendMode) return backendList;
     void tick;
     return getSchedulersByAppId(app.id);
   }, [app.id, backendList, backendMode, tick]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
+    if (backendMode) {
+      setCreating(true);
+      setLoadError(null);
+      const templatesRes = await loadTemplatesFromBackend(app);
+      const published =
+        templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
+      if (!published) {
+        setCreating(false);
+        navigate(`/applications/${app.id}?tab=templates`);
+        return;
+      }
+      const result = await createScheduleOnBackend(app, {
+        name: `${app.displayName || app.name} schedule`,
+        template_id: published.id,
+        template_name: published.name,
+        cron_expression: '0 9 * * *',
+        timezone: 'Asia/Kolkata',
+        is_active: false,
+      });
+      setCreating(false);
+      if (!result.ok || !result.schedule) {
+        setLoadError(result.error || 'Failed to create schedule');
+        return;
+      }
+      setTick((n) => n + 1);
+      setSelectedId(result.schedule.id);
+      return;
+    }
+
     const templates = getTemplatesByAppId(app.id);
     const published = templates.find((t) => t.status === 'published') || templates[0];
     if (!published) {
@@ -87,6 +129,16 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
             New schedule
           </Button>
         )}
+        {backendMode && (
+          <Button
+            size="sm"
+            disabled={creating}
+            onClick={() => void handleCreate()}
+            leftIcon={<Plus className="w-4 h-4" />}
+          >
+            {creating ? 'Creating…' : 'New schedule'}
+          </Button>
+        )}
       </div>
 
       {loadError && (
@@ -111,8 +163,8 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
               ? 'Schedules will appear here once report_schedule rows exist for this application.'
               : 'Publish an HTML template first, then schedule it to chosen people.'
           }
-          primaryLabel={backendMode ? undefined : 'New schedule'}
-          onPrimary={backendMode ? undefined : handleCreate}
+          primaryLabel={backendMode ? 'New schedule' : undefined}
+          onPrimary={backendMode ? () => void handleCreate() : undefined}
         />
       ) : (
         <div className="space-y-2">
@@ -166,6 +218,10 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
             app={app}
             schedule={selected}
             onUpdated={() => setTick((n) => n + 1)}
+            onDeleted={() => {
+              setSelectedId(null);
+              setTick((n) => n + 1);
+            }}
             onClose={() => setSelectedId(null)}
           />
         </div>

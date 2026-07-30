@@ -7,6 +7,8 @@ const cors = require('cors');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { correlationMiddleware } = require('./middleware/correlation');
+const { resolveCorsOptions } = require('./lib/cors');
+const { ok } = require('./lib/envelope');
 const healthRoutes = require('./routes/health');
 const authRoutes = require('./routes/auth');
 const applicationsRoutes = require('./routes/applications');
@@ -16,16 +18,12 @@ const schedulesRoutes = require('./routes/schedules');
 const usersRoutes = require('./routes/users');
 const historyRoutes = require('./routes/history');
 const fieldsRoutes = require('./routes/fields');
+const platformUsersRoutes = require('./routes/platformUsers');
 
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
-  app.use(
-    cors({
-      origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-      credentials: true,
-    }),
-  );
+  app.use(cors(resolveCorsOptions()));
   app.use(express.json({ limit: '1mb' }));
   app.use(correlationMiddleware);
 
@@ -33,6 +31,7 @@ function createApp() {
   api.use(healthRoutes);
   api.use('/auth', authRoutes);
   api.use('/users', usersRoutes);
+  api.use('/platform-users', platformUsersRoutes);
   api.use('/applications', applicationsRoutes);
   api.use('/applications/:applicationId/engagement', engagementRoutes);
   api.use('/applications/:applicationId/templates', templatesRoutes);
@@ -41,6 +40,18 @@ function createApp() {
   api.use('/applications/:applicationId/history', historyRoutes);
 
   app.use('/api/v1', api);
+
+  app.get('/', (req, res) => {
+    ok(res, req.correlationId, {
+      service: 'refex-backend-api',
+      version: 'v1',
+      health: '/api/v1/health',
+      ready: '/api/v1/ready',
+      session: '/api/v1/auth/session',
+      applications: '/api/v1/applications',
+      note: 'OpenAPI routes live under /api/v1. Use the Admin UI for configuration.',
+    });
+  });
 
   app.use((req, res) => {
     res.status(404).json({

@@ -1,0 +1,29 @@
+# Schedule runner: PostgreSQL schedule_id → render + send (Lead Tracker runbook 18).
+# Build from repo root:
+#   docker build -f services/engagement-pipeline/Dockerfile.schedule-runner -t schedule-runner .
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash curl jq ca-certificates postgresql-client python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sSL -o /usr/local/bin/cloud-sql-proxy \
+    https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.0/cloud-sql-proxy.linux.amd64 \
+    && chmod +x /usr/local/bin/cloud-sql-proxy
+
+WORKDIR /app
+
+COPY ops/runbooks/ ./ops/runbooks/
+COPY services/engagement-pipeline/ops/runbooks/ ./services/engagement-pipeline/ops/runbooks/
+COPY services/engagement-pipeline/entrypoint.py ./entrypoint.py
+COPY templates/ ./templates/
+COPY db/ ./db/
+
+RUN chmod +x ./ops/runbooks/*.sh ./services/engagement-pipeline/ops/runbooks/*.sh
+
+ENV REPO_ROOT=/app
+ENV RUNBOOK_TO_RUN=18-render-and-send-lead-tracker-report.sh
+ENV PORT=8080
+
+EXPOSE 8080
+ENTRYPOINT ["python3", "./entrypoint.py"]

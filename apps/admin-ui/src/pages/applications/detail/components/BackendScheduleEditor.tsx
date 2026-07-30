@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Check, Pause, Play, Save } from 'lucide-react';
+import { Check, Pause, Play, Save, Trash2 } from 'lucide-react';
 import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import { parseEmailList } from '@/stores/reportSchedulers';
-import { describeBackendSchedule, updateScheduleOnBackend } from '@/services/reportsApi';
+import { describeBackendSchedule, deleteScheduleOnBackend, updateScheduleOnBackend } from '@/services/reportsApi';
 import { Button } from '@/components/ui/Button';
 
 interface BackendScheduleEditorProps {
@@ -11,6 +11,7 @@ interface BackendScheduleEditorProps {
   schedule: ReportScheduler;
   onUpdated: () => void;
   onClose: () => void;
+  onDeleted?: () => void;
 }
 
 function normalizeFromEmail(value: string): string {
@@ -26,6 +27,7 @@ export default function BackendScheduleEditor({
   schedule,
   onUpdated,
   onClose,
+  onDeleted,
 }: BackendScheduleEditorProps) {
   const [fromEmail, setFromEmail] = useState(schedule.fromEmail || '');
   const [recipientsText, setRecipientsText] = useState(schedule.recipients.join(', '));
@@ -96,9 +98,23 @@ export default function BackendScheduleEditor({
       setError(result.error || 'Update failed');
       return;
     }
-    setSuccess(nextActive ? 'Schedule activated (paused until GCP scheduler cutover)' : 'Schedule paused');
+    setSuccess(nextActive ? 'Schedule activated in PostgreSQL. Run ops/runbook 32 to sync Cloud Scheduler.' : 'Schedule paused');
     onUpdated();
     setTimeout(() => setSuccess(''), 2500);
+  };
+
+  const removeSchedule = async () => {
+    if (!window.confirm(`Delete schedule "${schedule.name}"?`)) return;
+    setBusy(true);
+    setError('');
+    const result = await deleteScheduleOnBackend(app, schedule.id);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error || 'Delete failed');
+      return;
+    }
+    onDeleted?.();
+    onClose();
   };
 
   return (
@@ -205,6 +221,16 @@ export default function BackendScheduleEditor({
             Activate
           </Button>
         )}
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={busy}
+          onClick={() => void removeSchedule()}
+          leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+          className="text-red-700 border-red-200 hover:bg-red-50"
+        >
+          Delete
+        </Button>
       </div>
     </div>
   );

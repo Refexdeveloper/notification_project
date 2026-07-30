@@ -335,41 +335,41 @@ function personRowKey(person: { emails: string[]; names: string[]; ids: string[]
 
 export function renderLeadReportTableHtml(rows: LeadReportRow[]): string {
   if (!rows.length) {
-    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
-<tr><td style="padding:24px;text-align:center;font-size:13px;color:#64748b;">No users/leads for this team.</td></tr></table>`;
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ececea;border-radius:4px;overflow:hidden;">
+<tr><td style="padding:24px;text-align:center;font-size:13px;color:#888888;">No users/leads for this team.</td></tr></table>`;
   }
 
   const bodyRows = rows
     .map((row, idx) => {
-      const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      const bg = idx % 2 === 0 ? '#ffffff' : '#faf9f7';
       const signIcon = row.loggedInToday
         ? `<span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:#dcfce7;color:#16a34a;font-size:13px;font-weight:bold;text-align:center;">✓</span>`
-        : `<span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:#fee2e2;color:#dc2626;font-size:13px;font-weight:bold;text-align:center;">✕</span>`;
+        : `<span style="display:inline-block;width:22px;height:22px;line-height:22px;border-radius:50%;background:#fee2e2;color:#c8102e;font-size:13px;font-weight:bold;text-align:center;">✕</span>`;
       const emailCell = row.email
-        ? `<a href="mailto:${escapeHtml(row.email)}" style="color:#2563eb;text-decoration:none;font-size:13px;">${escapeHtml(row.email)}</a>`
-        : `<span style="color:#94a3b8;font-size:13px;">—</span>`;
+        ? `<a href="mailto:${escapeHtml(row.email)}" style="color:#1a1a1a;text-decoration:none;font-size:13px;">${escapeHtml(row.email)}</a>`
+        : `<span style="color:#888888;font-size:13px;">—</span>`;
       const lastLogin = formatLoginIST(row.lastSignedIn);
 
       return `<tr style="background:${bg};">
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;">${emailCell}</td>
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#1e293b;font-weight:600;">${escapeHtml(row.name)}</td>
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;text-align:center;font-size:14px;font-weight:700;color:#ea580c;">${row.openLeads}</td>
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;text-align:center;font-size:14px;font-weight:700;color:#059669;">${row.closedLeads}</td>
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;text-align:center;">${signIcon}</td>
-<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#64748b;font-family:Consolas,Monaco,monospace;">${escapeHtml(lastLogin)}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;">${emailCell}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;font-size:13px;color:#1a1a1a;font-weight:600;">${escapeHtml(row.name)}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;font-size:14px;font-weight:700;color:#c8102e;">${row.openLeads}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;font-size:14px;font-weight:700;color:#1a1a1a;">${row.closedLeads}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;text-align:center;">${signIcon}</td>
+<td style="padding:10px 12px;border-bottom:1px solid #ececea;font-size:12px;color:#888888;font-family:Consolas,Monaco,monospace;">${escapeHtml(lastLogin)}</td>
 </tr>`;
     })
     .join('');
 
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;border-collapse:separate;">
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ececea;border-radius:4px;overflow:hidden;border-collapse:separate;">
 <thead>
-<tr style="background:linear-gradient(135deg,#1e293b 0%,#334155 100%);">
-<th style="padding:12px 14px;text-align:left;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Sales Person Email</th>
-<th style="padding:12px 14px;text-align:left;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Sales Person Name</th>
-<th style="padding:12px 14px;text-align:center;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Open Leads</th>
-<th style="padding:12px 14px;text-align:center;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Closed Leads</th>
-<th style="padding:12px 14px;text-align:center;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Signed In Today</th>
-<th style="padding:12px 14px;text-align:left;font-size:10px;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:0.06em;">Last Signed In</th>
+<tr style="background:#faf9f7;">
+<th style="padding:10px 12px;text-align:left;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Sales Person Email</th>
+<th style="padding:10px 12px;text-align:left;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Sales Person Name</th>
+<th style="padding:10px 12px;text-align:center;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Open Leads</th>
+<th style="padding:10px 12px;text-align:center;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Closed Leads</th>
+<th style="padding:10px 12px;text-align:center;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Signed In Today</th>
+<th style="padding:10px 12px;text-align:left;font-size:10px;font-weight:700;color:#888888;text-transform:uppercase;letter-spacing:0.06em;">Last Signed In</th>
 </tr>
 </thead>
 <tbody>${bodyRows}</tbody>

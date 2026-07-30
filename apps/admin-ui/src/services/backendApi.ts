@@ -57,7 +57,12 @@ export async function apiV1Fetch<T>(
       ok: false,
       status: 0,
       data: null,
-      error: err instanceof Error ? err.message : String(err),
+      error:
+        err instanceof Error && err.message === 'Failed to fetch'
+          ? 'Network error — check API URL and CORS (Admin UI must reach backend-api).'
+          : err instanceof Error
+            ? err.message
+            : String(err),
     };
   }
 }

@@ -62,6 +62,9 @@ Do **not** start MySQL or the archived prototype API.
 | 29 | `29-shadow-compare-cloud-vs-legacy.sh` | Read-only cloud vs legacy counts |
 | 30 | `30-iap-load-balancer-setup.sh` | IAP + HTTPS LB (production auth) |
 | 31 | `31-scheduler-cutover-checklist.sh` | Scheduler cutover (requires CUTover_APPROVED) |
+| 32 | `32-deploy-schedule-runner.sh` | Deploy `refex-schedule-runner` Cloud Run |
+| 32 | `32-provision-schedulers-from-postgresql.sh` | Sync Cloud Scheduler jobs from PostgreSQL |
+| 33 | `33-test-schedule-send.sh` | Manual test send for one `SCHEDULE_ID` |
 
 Legacy pipeline runbooks 01–18 remain under `services/engagement-pipeline/ops/runbooks/`.
 

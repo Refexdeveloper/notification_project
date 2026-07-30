@@ -182,6 +182,23 @@ async function registerApplication(client, { input, idempotencyKey, correlationI
   );
 
   for (const processId of input.processIds) {
+    const existingProcess = await client.query(
+      `SELECT process_id, application_id, is_current
+       FROM engagement_reporting.process
+       WHERE environment = $1 AND process_id = $2`,
+      [input.environment, processId],
+    );
+    if (
+      existingProcess.rows.length &&
+      existingProcess.rows[0].application_id !== input.applicationId &&
+      existingProcess.rows[0].is_current
+    ) {
+      throw new RegistrationConflictError(
+        'PROCESS_ALREADY_REGISTERED',
+        `Process ${processId} is already registered under application ${existingProcess.rows[0].application_id}`,
+      );
+    }
+
     await client.query(
       `INSERT INTO engagement_reporting.process
          (environment, process_id, application_id, process_name, first_seen_at, last_seen_at, is_current, source_payload)
@@ -229,8 +246,52 @@ async function registerApplication(client, { input, idempotencyKey, correlationI
   return { item, idempotent_replay: false };
 }
 
+async function deleteApplication(client, { environment, applicationId, actorSubject, correlationId }) {
+  const { rows } = await client.query(
+    `SELECT application_id, application_name
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+  if (!rows.length) {
+    const err = new Error('Application not found');
+    err.code = 'APPLICATION_NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+
+  await client.query(
+    `UPDATE engagement_reporting.application
+     SET is_current = false, last_seen_at = now()
+     WHERE environment = $1 AND application_id = $2`,
+    [environment, applicationId],
+  );
+
+  await client.query(
+    `UPDATE engagement_reporting.process
+     SET is_current = false, last_seen_at = now()
+     WHERE environment = $1 AND application_id = $2`,
+    [environment, applicationId],
+  );
+
+  await client.query(
+    `INSERT INTO engagement_reporting.audit_event
+       (actor_subject, action, resource_type, resource_id, correlation_id, evidence)
+     VALUES ($1, 'DELETE_APPLICATION', 'application', $2, $3, $4::jsonb)`,
+    [
+      actorSubject,
+      applicationId,
+      correlationId,
+      JSON.stringify({ application_name: rows[0].application_name }),
+    ],
+  );
+
+  return { application_id: applicationId, environment, deleted: true };
+}
+
 module.exports = {
   RegistrationConflictError,
   normalizeRegistrationBody,
   registerApplication,
+  deleteApplication,
 };

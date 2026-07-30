@@ -4,6 +4,7 @@ import subprocess
 import time
 import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 PORT = int(os.environ.get("PORT", "8080"))
 RUNBOOK = os.environ.get("RUNBOOK_TO_RUN", "06-render-html-report.sh")
@@ -40,6 +41,19 @@ class Handler(BaseHTTPRequestHandler):
             env = os.environ.copy()
             env["PGHOST"] = "127.0.0.1"
             env["PGPORT"] = "5432"
+            env.setdefault("REPO_ROOT", "/app")
+
+            parsed = urlparse(self.path)
+            query = parse_qs(parsed.query)
+            schedule_id = (
+                (query.get("schedule_id") or [None])[0]
+                or (query.get("scheduleId") or [None])[0]
+                or env.get("SCHEDULE_ID")
+            )
+            if schedule_id:
+                env["SCHEDULE_ID"] = str(schedule_id)
+                print(f"Using SCHEDULE_ID={schedule_id}", flush=True)
+
             result = subprocess.run(
                 ["bash", f"./ops/runbooks/{RUNBOOK}"],
                 capture_output=True, text=True, timeout=850, env=env,

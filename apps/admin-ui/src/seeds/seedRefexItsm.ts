@@ -61,55 +61,128 @@ export const REFEX_ITSM_SNAPSHOT = {
 
 const REFEX_ENGAGEMENT_HTML = `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>{{ReportTitle}}</title></head>
-<body style="margin:0; padding:0; background-color:#f4f4f2; font-family:Arial, Helvetica, sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f2; padding:24px 0;">
-<tr><td align="center">
-<table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border:1px solid #e5e5e0; border-radius:6px; overflow:hidden;">
-<tr><td style="background-color:#ffffff; padding:24px 32px; border-bottom:3px solid #c8102e;">
+<head>
+<meta charset="UTF-8">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<title>{{ReportTitle}}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#eef0f2 !important;" bgcolor="#eef0f2">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef0f2 !important;" bgcolor="#eef0f2">
+<tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff !important; border-radius:10px; overflow:hidden; box-shadow:0 4px 18px rgba(0,0,0,0.10);" bgcolor="#ffffff">
+
+<tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{CompanyName}}</td>
-<td align="right" style="font-size:12px; color:#888888;">Live IT Service Request &middot; IT Service Management</td>
-</tr></table></td></tr>
-<tr><td style="padding:28px 32px 8px 32px;">
-<div style="font-size:18px; font-weight:bold; color:#1a1a1a;">{{ReportTitle}}</div>
-<div style="font-size:13px; color:#888888; margin-top:4px;">Generated {{ReportDate}} &middot; Refex tickets only</div>
+<td width="120" valign="middle">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png" alt="Refex" width="100" style="display:block; max-width:100px; height:auto;">
+</td>
+<td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
+<div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">{{ReportTitle}}</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; IT Service Management</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated {{ReportDate}} &middot; Refex tickets only</div>
+</td>
+</tr></table>
 </td></tr>
-<tr><td style="padding:20px 32px 8px 32px;">
+
+<tr><td style="padding:0; line-height:0;">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif" alt="" width="680" height="6" style="display:block; width:100%; height:6px; border:0;">
+</td></tr>
+
+<tr><td style="padding:24px 32px 6px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">User Sign-in Overview</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="18%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{TotalUsers}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Assigned Users</div></td>
-<td width="1%"></td>
-<td width="18%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{SignedInUsers}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Signed In</div></td>
-<td width="1%"></td>
-<td width="18%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#c8102e;">{{SignInRate}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Sign-in Rate</div></td>
-<td width="1%"></td>
-<td width="18%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{OpenTickets}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Open Tickets</div></td>
-<td width="1%"></td>
-<td width="18%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{ClosedTickets}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Closed Tickets</div></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{SignedInUsers}}</div>
+<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Signed In (Overall)</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{SignInRate}}</div>
+<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Sign-in Rate (Overall)</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{SignedInToday}}</div>
+<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Signed In Today</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
+<div style="font-size:20px; font-weight:bold; color:#1a8c5c !important;">{{SignInRateToday}}</div>
+<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Sign-in Rate Today</div></td>
 </tr></table></td></tr>
-<tr><td style="padding:16px 32px 0 32px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fff7f0; border:1px solid #f3d9c4; border-radius:4px;">
-<tr><td style="padding:10px 14px; font-size:12.5px; color:#7a4a1a;">
+
+<tr><td style="padding:16px 32px 0 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(90deg,#fff7f0 0%,#fef2e6 100%) !important; border:1px solid #f3d9c4; border-radius:8px;" bgcolor="#fff7f0">
+<tr><td style="padding:14px 18px; font-size:12.5px; color:#7a4a1a !important;">
 <b>{{NeverSignedIn}} of {{TotalUsers}} users</b> have never signed in to Kissflow.
 </td></tr></table></td></tr>
-<tr><td style="padding:20px 32px 24px 32px; font-size:13px; color:#5b5b5b; line-height:1.55;">
+
+<tr><td style="padding:0 32px;">
+<div style="height:1px; background-color:#ececea; margin-top:24px;"></div>
+</td></tr>
+
+<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Overall ITSM Ticket Summary</div>
+</td></tr>
+<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{TotalTickets}}</div>
+<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">All Tickets</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(180,120,20,0.07);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{OpenTickets}}</div>
+<div style="font-size:10.5px; color:#9a7a3a !important; margin-top:4px;">Open Tickets</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
+<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{ClosedTickets}}</div>
+<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Closed Tickets</div></td>
+<td width="2.6%"></td>
+<td width="23%" align="center" style="background:linear-gradient(180deg,#fff5f5 0%,#ffe9e9 100%) !important; border:1px solid #f3cccc; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(200,16,46,0.08);">
+<div style="font-size:20px; font-weight:bold; color:#c8102e !important;">{{SlaBreachedTotal}}</div>
+<div style="font-size:10.5px; color:#a35560 !important; margin-top:4px;">SLA Breached</div>
+<div style="font-size:9.5px; color:#a35560 !important; margin-top:2px;">Open {{SlaBreachedOpen}} &middot; Closed {{SlaBreachedClosed}}</div></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Today's Ticket Activity</div>
+</td></tr>
+<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="48%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fdecd0 100%) !important; border:1px solid #f0d9a8; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(180,120,20,0.10);">
+<div style="font-size:30px; font-weight:bold; color:#9a7a3a !important;">{{OpenedToday}}</div>
+<div style="font-size:12px; color:#9a7a3a !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Opened Today</div></td>
+<td width="4%"></td>
+<td width="48%" align="center" style="background:linear-gradient(180deg,#f2f6fb 0%,#dfeafa 100%) !important; border:1px solid #bcd6f0; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(30,80,160,0.10);">
+<div style="font-size:30px; font-weight:bold; color:#3468a8 !important;">{{ClosedToday}}</div>
+<div style="font-size:12px; color:#3468a8 !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Closed Today</div></td>
+</tr></table></td></tr>
+
+<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with open or recent activity</td></tr>
+<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12.5px; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">
+<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">User</td>
+<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>
+<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Open Tickets</td>
+<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Closed Tickets</td>
+</tr>
+{{UserTableHtml}}
+</table></td></tr>
+
+<tr><td style="padding:4px 32px 24px 32px; font-size:11px; color:#a0a0a0 !important; line-height:1.6;" bgcolor="#ffffff">
 {{ReportBody}}
 </td></tr>
-<tr><td style="background-color:#faf9f7; padding:16px 32px; border-top:1px solid #ececea; font-size:11px; color:#a0a0a0;">
+
+<tr><td style="background-color:#faf9f7 !important; padding:18px 32px; border-top:1px solid #ececea; font-size:11px; color:#a0a0a0 !important;" bgcolor="#faf9f7">
 Refex User Engagement Report &middot; Automated &middot; Do not reply to this email
 </td></tr>
-</table></td></tr></table>
-</body></html>`;
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
 
 function upsertTemplate(tpl: ReportTemplate) {
   const raw = localStorage.getItem(TEMPLATES_KEY);
