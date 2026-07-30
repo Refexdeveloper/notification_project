@@ -1,0 +1,17 @@
+steps:
+  - id: migration-advisory-lock
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "Migration job uses migrator identity with advisory lock"
+        echo "Apply db/migrations/*.sql in order — never from backend startup"
+        # psql via Cloud SQL Auth Proxy — executed only in approved release pipeline
+
+substitutions:
+  _MIGRATOR_IDENTITY: engagement-report-migrator@${PROJECT_ID}.iam
+
+options:
+  logging: CLOUD_LOGGING_ONLY

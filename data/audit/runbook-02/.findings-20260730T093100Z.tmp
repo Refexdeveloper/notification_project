@@ -1,0 +1,31 @@
+BLOCKER|hardcoded_credential|HEAD:NotifictaionEngine/server/config/config.js|hardcoded_db_password_fallback|true|Remove fallback password from config.js; require env/Secret Manager; rotate DB password if ever used
+BLOCKER|hardcoded_credential|HEAD:NotifictaionEngine/server/scripts/activateLeadTracker505.js|default_admin_password|true|Remove hardcoded passwords from seed scripts; use one-time bootstrap via Secret Manager
+BLOCKER|hardcoded_credential|HEAD:NotifictaionEngine/server/scripts/create_users.js|default_admin_password|true|Remove hardcoded passwords from seed scripts; use one-time bootstrap via Secret Manager
+BLOCKER|hardcoded_credential|HEAD:NotifictaionEngine/server/scripts/seed.js|default_admin_password|true|Remove hardcoded passwords from seed scripts; use one-time bootstrap via Secret Manager
+BLOCKER|hardcoded_credential|HEAD:NotifictaionEngine/server/scripts/seed.js|default_admin_password|true|Remove hardcoded passwords from seed scripts; use one-time bootstrap via Secret Manager
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/mocks/connection.ts|kissflow_secret_column|true|Remove credential columns; store Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|kissflow_secret_column|true|Remove credential columns; store Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|kissflow_secret_column|true|Remove credential columns; store Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/models/Application.js|kissflow_secret_column|true|Remove credential columns; store Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/client/src/pages/settings/page.tsx|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/controllers/adminController.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/models/SMTPConfig.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/scripts/seed.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/services/emailService.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|credential_column|HEAD:NotifictaionEngine/server/services/emailService.js|smtp_password_column|true|Remove SMTP password storage; use Secret Manager reference only
+HIGH|untracked_local_secret_file|NotifictaionEngine/server/.env|dotenv_present_on_disk|false|Ensure file remains gitignored; rotate secrets if disk exposure risk; never commit
+HIGH|untracked_local_secret_file|NotifictaionEngine/client/.env.local|dotenv_present_on_disk|false|Ensure file remains gitignored; rotate secrets if disk exposure risk; never commit

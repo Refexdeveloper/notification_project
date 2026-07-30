@@ -23,3 +23,14 @@ venv/
 *.log
 dist/
 out/
+
+# Customer / generated artifacts (Runbook 02b)
+**/data/discovery/
+**/templates/generated/
+*.tar.gz
+google-cloud-cli-*
+# Customer / generated artifacts (Runbook 02b)
+**/data/discovery/
+**/templates/generated/
+*.tar.gz
+google-cloud-cli-*
