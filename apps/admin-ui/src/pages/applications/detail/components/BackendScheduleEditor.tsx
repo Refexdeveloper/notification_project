@@ -4,6 +4,13 @@ import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import { parseEmailList } from '@/stores/reportSchedulers';
 import { describeBackendSchedule, deleteScheduleOnBackend, updateScheduleOnBackend } from '@/services/reportsApi';
+import {
+  cadenceStateToCron,
+  cronToCadenceState,
+  DEFAULT_TIMEZONE,
+  type ScheduleCadenceState,
+} from '@/services/scheduleCadence';
+import ScheduleCadenceFields from '@/components/schedules/ScheduleCadenceFields';
 import { Button } from '@/components/ui/Button';
 
 interface BackendScheduleEditorProps {
@@ -22,6 +29,11 @@ function isValidEmail(value: string): boolean {
   return Boolean(value) && value.includes('@');
 }
 
+function scheduleToCadenceState(schedule: ReportScheduler): ScheduleCadenceState {
+  const cron = schedule.cadence.cronExpression || '0 9 * * *';
+  return cronToCadenceState(cron, schedule.timezone || DEFAULT_TIMEZONE);
+}
+
 export default function BackendScheduleEditor({
   app,
   schedule,
@@ -32,6 +44,7 @@ export default function BackendScheduleEditor({
   const [fromEmail, setFromEmail] = useState(schedule.fromEmail || '');
   const [recipientsText, setRecipientsText] = useState(schedule.recipients.join(', '));
   const [ccText, setCcText] = useState(schedule.cc.join(', '));
+  const [cadence, setCadence] = useState<ScheduleCadenceState>(() => scheduleToCadenceState(schedule));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -40,9 +53,10 @@ export default function BackendScheduleEditor({
     setFromEmail(schedule.fromEmail || '');
     setRecipientsText(schedule.recipients.join(', '));
     setCcText(schedule.cc.join(', '));
+    setCadence(scheduleToCadenceState(schedule));
     setError('');
     setSuccess('');
-  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc]);
+  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone]);
 
   const buildPayload = (extra?: { is_active?: boolean }) => {
     const normalizedFrom = normalizeFromEmail(fromEmail);
@@ -50,6 +64,8 @@ export default function BackendScheduleEditor({
       from_email: normalizedFrom,
       recipients_to: parseEmailList(recipientsText),
       recipients_cc: parseEmailList(ccText),
+      cron_expression: cadenceStateToCron(cadence),
+      timezone: cadence.timezone || DEFAULT_TIMEZONE,
       ...extra,
     };
   };
@@ -62,6 +78,10 @@ export default function BackendScheduleEditor({
     }
     if (fromEmail.trim() && !isValidEmail(normalizedFrom)) {
       setError('From email must be a valid address.');
+      return false;
+    }
+    if (cadence.pattern === 'cron' && !cadence.cronExpression.trim()) {
+      setError('Enter a cron expression or choose a preset schedule.');
       return false;
     }
     return true;
@@ -78,9 +98,9 @@ export default function BackendScheduleEditor({
       setError(result.error || 'Save failed');
       return;
     }
-    setSuccess('Schedule email settings saved to PostgreSQL');
+    setSuccess('Schedule saved to PostgreSQL. Run ops/runbook 32 to sync Cloud Scheduler if active.');
     onUpdated();
-    setTimeout(() => setSuccess(''), 2500);
+    setTimeout(() => setSuccess(''), 3500);
   };
 
   const toggleActive = async (nextActive: boolean) => {
@@ -98,9 +118,13 @@ export default function BackendScheduleEditor({
       setError(result.error || 'Update failed');
       return;
     }
-    setSuccess(nextActive ? 'Schedule activated in PostgreSQL. Run ops/runbook 32 to sync Cloud Scheduler.' : 'Schedule paused');
+    setSuccess(
+      nextActive
+        ? 'Schedule activated. Run ops/runbook 32 to sync Cloud Scheduler with the new time.'
+        : 'Schedule paused',
+    );
     onUpdated();
-    setTimeout(() => setSuccess(''), 2500);
+    setTimeout(() => setSuccess(''), 3500);
   };
 
   const removeSchedule = async () => {
@@ -135,11 +159,6 @@ export default function BackendScheduleEditor({
         </button>
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-        From, To, and Cc are stored in PostgreSQL. Pipeline runbook 07 uses{' '}
-        <code className="font-mono">from_email</code> from the schedule when wired for production send.
-      </div>
-
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>
       )}
@@ -149,6 +168,15 @@ export default function BackendScheduleEditor({
           {success}
         </div>
       )}
+
+      <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
+        <ScheduleCadenceFields value={cadence} onChange={setCadence} disabled={busy} />
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+        From, To, and Cc are stored in PostgreSQL. After changing send time, run ops/runbook 32 so Cloud Scheduler
+        matches.
+      </div>
 
       <div>
         <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
@@ -196,7 +224,7 @@ export default function BackendScheduleEditor({
           onClick={() => void saveSettings()}
           leftIcon={<Save className="w-3.5 h-3.5" />}
         >
-          Save email settings
+          Save schedule
         </Button>
         {schedule.status === 'active' ? (
           <Button

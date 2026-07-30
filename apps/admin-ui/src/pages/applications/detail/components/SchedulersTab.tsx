@@ -121,7 +121,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       <div className="flex items-center justify-between gap-3 mb-4">
         <p className="text-sm text-foreground-500">
           {backendMode
-            ? 'Schedules and recipients are stored in PostgreSQL. Click a schedule to edit recipients.'
+            ? 'Schedules, send times, and recipients are stored in PostgreSQL. Click a schedule to edit timing and email settings.'
             : 'Bind a template for this app to a cadence and recipients.'}
         </p>
         {!backendMode && (

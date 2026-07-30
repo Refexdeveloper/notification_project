@@ -8,6 +8,16 @@ const { createSchedule, deleteSchedule } = require('../lib/scheduleRepository');
 
 const router = express.Router({ mergeParams: true });
 
+function isValidCronExpression(expr) {
+  const parts = String(expr || '').trim().split(/\s+/);
+  return parts.length >= 5;
+}
+
+function normalizeTimezone(tz) {
+  const value = String(tz || 'Asia/Kolkata').trim();
+  return value || 'Asia/Kolkata';
+}
+
 const SCHEDULES_QUERY = `
 SELECT
   rs.report_schedule_id::text AS id,
@@ -326,13 +336,15 @@ router.patch('/:scheduleId', async (req, res) => {
   const hasRecipientsCc = Object.prototype.hasOwnProperty.call(body, 'recipients_cc');
   const hasIsActive = Object.prototype.hasOwnProperty.call(body, 'is_active');
   const hasFromEmail = Object.prototype.hasOwnProperty.call(body, 'from_email');
+  const hasCronExpression = Object.prototype.hasOwnProperty.call(body, 'cron_expression');
+  const hasTimezone = Object.prototype.hasOwnProperty.call(body, 'timezone');
 
-  if (!hasRecipientsTo && !hasRecipientsCc && !hasIsActive && !hasFromEmail) {
+  if (!hasRecipientsTo && !hasRecipientsCc && !hasIsActive && !hasFromEmail && !hasCronExpression && !hasTimezone) {
     return fail(
       res,
       req.correlationId,
       'UPDATE_FIELDS_REQUIRED',
-      'Provide from_email, recipients_to, recipients_cc, and/or is_active',
+      'Provide from_email, recipients_to, recipients_cc, cron_expression, timezone, and/or is_active',
       400,
     );
   }
@@ -341,6 +353,18 @@ router.patch('/:scheduleId', async (req, res) => {
   const recipientsCc = hasRecipientsCc ? normalizeEmailList(body.recipients_cc) : null;
   const isActive = hasIsActive ? Boolean(body.is_active) : null;
   const fromEmail = hasFromEmail ? normalizeSingleEmail(body.from_email) : null;
+  const cronExpression = hasCronExpression ? String(body.cron_expression || '').trim() : null;
+  const timezone = hasTimezone ? normalizeTimezone(body.timezone) : null;
+
+  if (hasCronExpression && !isValidCronExpression(cronExpression)) {
+    return fail(
+      res,
+      req.correlationId,
+      'CRON_INVALID',
+      'cron_expression must include minute, hour, day-of-month, month, and day-of-week',
+      400,
+    );
+  }
 
   const client = await getPool().connect();
   try {
@@ -454,6 +478,25 @@ router.patch('/:scheduleId', async (req, res) => {
       await client.query(
         'UPDATE engagement_reporting.report_schedule SET is_active = $2 WHERE report_schedule_id = $1::uuid',
         [scheduleId, isActive],
+      );
+    }
+
+    if (hasCronExpression || hasTimezone) {
+      const sets = [];
+      const params = [scheduleId];
+      let paramIndex = 2;
+      if (hasCronExpression) {
+        sets.push(`cron_expression = $${paramIndex}::text`);
+        params.push(cronExpression);
+        paramIndex += 1;
+      }
+      if (hasTimezone) {
+        sets.push(`timezone = $${paramIndex}::text`);
+        params.push(timezone);
+      }
+      await client.query(
+        `UPDATE engagement_reporting.report_schedule SET ${sets.join(', ')} WHERE report_schedule_id = $1::uuid`,
+        params,
       );
     }
 

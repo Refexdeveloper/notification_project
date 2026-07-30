@@ -2,7 +2,12 @@ import type { KissflowApplication } from '@/mocks/applications';
 import { resolveBackendApplicationId, toDbEnvironment } from '@/services/applicationsApi';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import type { ReportTemplate } from '@/stores/reportTemplates';
-import { describeCadence } from '@/stores/reportSchedulers';
+import {
+  cadenceStateToReportCadence,
+  cronToCadenceState,
+  describeScheduleCadence,
+  DEFAULT_TIMEZONE,
+} from '@/services/scheduleCadence';
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
 
 export type BackendTemplateRow = {
@@ -73,15 +78,21 @@ function mapTemplateRow(row: BackendTemplateRow, app: KissflowApplication): Repo
 }
 
 function mapScheduleRow(row: BackendScheduleRow, app: KissflowApplication): ReportScheduler {
+  const timezone = row.timezone || DEFAULT_TIMEZONE;
+  const cadenceState = cronToCadenceState(row.cron_expression, timezone);
   return {
     id: row.id,
     applicationId: app.id,
     name: row.name,
-    description: `${row.cron_expression} (${row.timezone})`,
+    description: describeScheduleCadence(cadenceState),
     status: row.status,
     templateId: row.template_id || '',
     templateName: row.template_name || '—',
-    cadence: { type: 'cron', cronExpression: row.cron_expression },
+    cadence: {
+      ...cadenceStateToReportCadence(cadenceState),
+      cronExpression: row.cron_expression,
+    },
+    timezone,
     recipients: row.recipients,
     cc: row.cc || [],
     fromEmail: row.from_email || '',
@@ -147,10 +158,9 @@ export async function loadSchedulesFromBackend(app: KissflowApplication): Promis
 }
 
 export function describeBackendSchedule(sch: ReportScheduler): string {
-  if (sch.cadence.type === 'cron' && sch.cadence.cronExpression) {
-    return sch.cadence.cronExpression;
-  }
-  return describeCadence(sch.cadence);
+  if (sch.description) return sch.description;
+  const cron = sch.cadence.cronExpression || '0 9 * * *';
+  return describeScheduleCadence(cronToCadenceState(cron, sch.timezone || DEFAULT_TIMEZONE));
 }
 
 export type ScheduleUpdatePayload = {
@@ -158,6 +168,8 @@ export type ScheduleUpdatePayload = {
   recipients_to?: string[];
   recipients_cc?: string[];
   is_active?: boolean;
+  cron_expression?: string;
+  timezone?: string;
 };
 
 export type ScheduleUpdateResult = {
