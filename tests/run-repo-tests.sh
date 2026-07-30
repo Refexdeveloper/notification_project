@@ -67,10 +67,15 @@ else
 fi
 
 # 8. Frontend runtime API config
-if grep -q 'VITE_API_BASE_URL' apps/admin-ui/.env.example; then
-  pass "admin ui env example has API base"
+if grep -q 'VITE_USE_BACKEND_API' apps/admin-ui/.env.example; then
+  pass "admin ui backend api flag documented"
 else
-  fail "admin ui env example has API base"
+  fail "admin ui backend api flag documented"
+fi
+if [[ -f apps/admin-ui/src/services/backendApi.ts ]]; then
+  pass "backendApi client exists"
+else
+  fail "backendApi client exists"
 fi
 
 # 9. Canonical layout
@@ -83,6 +88,16 @@ if [[ -d services/engagement-pipeline ]]; then
   pass "engagement-pipeline exists"
 else
   fail "engagement-pipeline exists"
+fi
+if [[ -d services/backend-api ]]; then
+  pass "backend-api exists"
+else
+  fail "backend-api exists"
+fi
+if [[ -f services/backend-api/Dockerfile ]]; then
+  pass "backend-api Dockerfile exists"
+else
+  fail "backend-api Dockerfile exists"
 fi
 
 echo ""

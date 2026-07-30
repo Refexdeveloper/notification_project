@@ -73,6 +73,10 @@ export interface UserEngagementRow {
   completed: number;
   rejected: number;
   other: number;
+  /** Application-scoped Kissflow app roles from principal_user */
+  appRoleNames?: string[];
+  hasAssignment?: boolean;
+  hasAppRole?: boolean;
   kissflowRaw?: Record<string, unknown>;
   byResource: {
     resourceType: ResourceType;

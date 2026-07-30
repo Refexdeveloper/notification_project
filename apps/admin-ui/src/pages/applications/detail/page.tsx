@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -18,6 +18,9 @@ import {
 import Layout from '@/components/feature/Layout';
 import { getApplicationById, saveDiscoveredFields } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadApplicationFromBackend } from '@/services/applicationsApi';
+import type { KissflowApplication } from '@/mocks/applications';
 import OverviewTab from './components/OverviewTab';
 import ConnectionTab from './components/ConnectionTab';
 import DiscoveryTab from './components/DiscoveryTab';
@@ -53,11 +56,32 @@ export default function ApplicationDetail() {
   const [appRevision, setAppRevision] = useState(0);
   const [headerSyncing, setHeaderSyncing] = useState(false);
   const [headerSyncError, setHeaderSyncError] = useState('');
+  const [loading, setLoading] = useState(isBackendApiMode());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [backendApp, setBackendApp] = useState<KissflowApplication | undefined>();
+
+  useEffect(() => {
+    if (!id || !isBackendApiMode()) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    loadApplicationFromBackend(id).then((result) => {
+      if (cancelled) return;
+      setBackendApp(result.application ?? undefined);
+      setLoadError(result.error || null);
+      setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, appRevision]);
 
   const app = useMemo(() => {
     void appRevision;
-    return id ? getApplicationById(id) : undefined;
-  }, [id, appRevision]);
+    if (!id) return undefined;
+    if (isBackendApiMode()) return backendApp;
+    return getApplicationById(id);
+  }, [id, appRevision, backendApp]);
 
   const activeTab = useMemo(() => {
     const t = searchParams.get('tab') as TabId | null;
@@ -87,13 +111,24 @@ export default function ApplicationDetail() {
     setHeaderSyncing(false);
   };
 
+  if (loading) {
+    return (
+      <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Loading…' }]}>
+        <div className="surface p-8 text-center text-sm text-foreground-500">Loading application…</div>
+      </Layout>
+    );
+  }
+
   if (!app) {
     return (
       <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Not found' }]}>
         <EmptyState
           variant="apps"
           title="Application not found"
-          description="This application may have been removed. Go back and pick another one."
+          description={
+            loadError ||
+            'This application may have been removed. Go back and pick another one.'
+          }
           primaryLabel="Back to applications"
           onPrimary={() => navigate('/applications')}
         />

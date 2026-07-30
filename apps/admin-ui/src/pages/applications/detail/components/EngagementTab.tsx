@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { KissflowApplication } from '@/mocks/applications';
 import {
   buildEngagementReport,
@@ -8,6 +9,8 @@ import {
   type EngagementReport,
   type UserEngagementRow,
 } from '@/services/userAnalytics';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadEngagementFromBackend } from '@/services/engagementApi';
 import {
   kissflowExtraDetailEntries,
   kissflowUserDetailEntries,
@@ -18,14 +21,15 @@ interface EngagementTabProps {
   app: KissflowApplication;
 }
 
-type LoginFilter = 'all' | 'today' | 'inactive' | 'never' | 'assigned';
+type LoginFilter = 'all' | 'today' | 'inactive' | 'never' | 'assigned' | 'role';
 
 const FILTER_PILLS: { value: LoginFilter; label: string }[] = [
   { value: 'all', label: 'All' },
+  { value: 'assigned', label: 'Has assignments' },
+  { value: 'role', label: 'App role' },
   { value: 'today', label: 'Logged in today' },
   { value: 'inactive', label: 'Inactive' },
   { value: 'never', label: 'Never' },
-  { value: 'assigned', label: 'Has assignments' },
 ];
 
 function matchesFilter(u: UserEngagementRow, filter: LoginFilter): boolean {
@@ -34,6 +38,7 @@ function matchesFilter(u: UserEngagementRow, filter: LoginFilter): boolean {
   if (filter === 'inactive') return !u.loggedInToday && !!u.lastLogin;
   if (filter === 'never') return !u.lastLogin;
   if (filter === 'assigned') return u.assigned > 0;
+  if (filter === 'role') return Boolean(u.hasAppRole || (u.appRoleNames && u.appRoleNames.length > 0));
   return true;
 }
 
@@ -49,6 +54,22 @@ export default function EngagementTab({ app }: EngagementTabProps) {
     setLoading(true);
     setErrorBanner('');
     try {
+      if (isBackendApiMode()) {
+        const result = await loadEngagementFromBackend(app);
+        if (!result.report) {
+          setReport(null);
+          setErrorBanner(result.error || 'Could not load engagement from backend-api');
+          return;
+        }
+        setReport(result.report);
+        if (result.warning) {
+          setErrorBanner(result.warning);
+        } else if (result.report.errors.length) {
+          setErrorBanner(result.report.errors.slice(0, 3).join(' · '));
+        }
+        return;
+      }
+
       const next = await buildEngagementReport(app);
       setReport(next);
       if (next.errors.length && !next.users.length) {
@@ -64,6 +85,10 @@ export default function EngagementTab({ app }: EngagementTabProps) {
   }, [app]);
 
   useEffect(() => {
+    if (isBackendApiMode()) {
+      void refresh();
+      return;
+    }
     const cached = loadCachedEngagement(app.id);
     setReport(cached);
     if (!cached) {
@@ -140,12 +165,22 @@ export default function EngagementTab({ app }: EngagementTabProps) {
         <div>
           <h2 className="text-base font-semibold text-foreground-950">User Engagement</h2>
           <p className="text-xs text-foreground-500 mt-0.5">
-            Assigned workload and login activity across processes, boards, and dataforms
+            {isBackendApiMode()
+              ? 'Users with assignments or app roles in this application only — not the full account directory.'
+              : 'Assigned workload and login activity across processes, boards, and dataforms'}
             {report?.generatedAt
               ? ` · Updated ${new Date(report.generatedAt).toLocaleString()}`
               : ''}
             {report?.source === 'cache' ? ' · cached' : ''}
           </p>
+          {isBackendApiMode() && (
+            <p className="text-xs text-primary-700 mt-1">
+              Full user list:{' '}
+              <Link to="/users" className="font-semibold hover:underline">
+                Workspace → Users
+              </Link>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -212,6 +247,15 @@ export default function EngagementTab({ app }: EngagementTabProps) {
             onClick={() => setLoginFilter('assigned')}
             hint="Users with ≥1 assignment"
           />
+          {isBackendApiMode() && (
+            <Stat
+              label="App members"
+              value={report.totals.totalUsers}
+              active={loginFilter === 'all'}
+              onClick={() => setLoginFilter('all')}
+              hint="Assignments or app roles in this application"
+            />
+          )}
         </div>
       )}
 
@@ -274,6 +318,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               <tr className="border-b border-background-200/70 bg-background-50 text-left text-[11px] uppercase tracking-wide text-foreground-400">
                 <th className="px-3 py-2.5 font-medium">User</th>
                 <th className="px-3 py-2.5 font-medium">Email</th>
+                {isBackendApiMode() && <th className="px-3 py-2.5 font-medium">App roles</th>}
                 <th className="px-3 py-2.5 font-medium text-right">Assigned</th>
                 <th className="px-3 py-2.5 font-medium text-right">Open</th>
                 <th className="px-3 py-2.5 font-medium text-right">Pending</th>
@@ -314,6 +359,20 @@ export default function EngagementTab({ app }: EngagementTabProps) {
                       <span className="text-foreground-400">—</span>
                     )}
                   </td>
+                  {isBackendApiMode() && (
+                    <td className="px-3 py-2.5 text-xs text-foreground-600 max-w-[180px]">
+                      {u.appRoleNames?.length ? (
+                        <span className="line-clamp-2" title={u.appRoleNames.join(', ')}>
+                          {u.appRoleNames.slice(0, 2).join(', ')}
+                          {u.appRoleNames.length > 2 ? ` +${u.appRoleNames.length - 2}` : ''}
+                        </span>
+                      ) : u.assigned > 0 ? (
+                        <span className="chip-muted">Assigned only</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{u.assigned}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-foreground-700">{u.open}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-foreground-700">{u.pending}</td>
@@ -417,6 +476,11 @@ function UserDrillDown({
   useEffect(() => {
     let cancelled = false;
     if (!user.userId) return;
+    if (isBackendApiMode()) {
+      setDetailRaw(user.kissflowRaw);
+      setLoadingDetail(false);
+      return;
+    }
     setLoadingDetail(true);
     void fetchKissflowUserDetail(app, user.userId).then((detail) => {
       if (cancelled) return;
@@ -426,7 +490,7 @@ function UserDrillDown({
     return () => {
       cancelled = true;
     };
-  }, [app, user.userId]);
+  }, [app, user.userId, user.kissflowRaw]);
 
   const allFields = useMemo(() => kissflowUserDetailEntries(detailRaw), [detailRaw]);
   const extraFields = useMemo(() => kissflowExtraDetailEntries(detailRaw), [detailRaw]);
