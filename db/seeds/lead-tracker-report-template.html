@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>{{ReportTitle}}</title></head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;padding:28px 12px;">
+<tr><td align="center">
+<table role="presentation" width="720" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(15,23,42,0.06);">
+<tr><td style="background:linear-gradient(135deg,#ea580c 0%,#f97316 50%,#fb923c 100%);padding:28px 32px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td>
+<div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.85);">{{CompanyName}}</div>
+<div style="font-size:22px;font-weight:800;color:#ffffff;margin-top:6px;line-height:1.25;">{{ReportTitle}}</div>
+<div style="font-size:13px;color:rgba(255,255,255,0.92);margin-top:8px;">Team: <strong>{{GroupName}}</strong> &middot; {{ReportDate}}</div>
+</td>
+<td align="right" valign="middle" style="font-size:12px;color:rgba(255,255,255,0.88);">Lead Tracker</td>
+</tr></table></td></tr>
+<tr><td style="padding:24px 32px 8px 32px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="23%" align="center" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:16px 8px;">
+<div style="font-size:24px;font-weight:800;color:#ea580c;">{{TotalLeads}}</div>
+<div style="font-size:11px;color:#9a3412;margin-top:4px;font-weight:600;">Total Leads</div></td>
+<td width="2%"></td>
+<td width="23%" align="center" style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:16px 8px;">
+<div style="font-size:24px;font-weight:800;color:#ea580c;">{{OpenLeads}}</div>
+<div style="font-size:11px;color:#9a3412;margin-top:4px;font-weight:600;">Open Leads</div></td>
+<td width="2%"></td>
+<td width="23%" align="center" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:16px 8px;">
+<div style="font-size:24px;font-weight:800;color:#059669;">{{ClosedLeads}}</div>
+<div style="font-size:11px;color:#047857;margin-top:4px;font-weight:600;">Closed Leads</div></td>
+<td width="2%"></td>
+<td width="23%" align="center" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 8px;">
+<div style="font-size:24px;font-weight:800;color:#2563eb;">{{SignedInToday}}</div>
+<div style="font-size:11px;color:#1d4ed8;margin-top:4px;font-weight:600;">Signed In Today</div></td>
+</tr></table></td></tr>
+<tr><td style="padding:20px 32px 8px 32px;">
+<div style="font-size:14px;font-weight:700;color:#1e293b;margin-bottom:4px;">Sales team overview</div>
+<div style="font-size:12px;color:#64748b;margin-bottom:16px;">Users from Kissflow group <strong>{{GroupName}}</strong> with leads assigned to them (Open / Closed status from Lead Tracker).</div>
+{{LeadTableHtml}}
+</td></tr>
+<tr><td style="padding:8px 32px 24px 32px;font-size:12px;color:#64748b;line-height:1.55;">
+{{ReportBody}}
+</td></tr>
+<tr><td style="background:#f8fafc;padding:16px 32px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;">
+Lead Tracker Report &middot; Automated from Kissflow &middot; Do not reply
+</td></tr>
+</table></td></tr></table>
+</body></html>

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createApplicationFromForm, type AddApplicationInput } from '@/mocks/applications';
+import { createApplicationOnBackend, toDbEnvironment } from '@/services/applicationsApi';
+import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 
 interface AddApplicationFormProps {
@@ -56,7 +58,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
     onClose();
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!form.accountId.trim()) {
       setError('Account ID is required.');
@@ -76,6 +78,37 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
     }
 
     setSaving(true);
+    setError('');
+
+    if (isBackendApiMode()) {
+      const result = await createApplicationOnBackend({
+        kissflow_account_id: form.accountId.trim(),
+        application_id: form.appId.trim(),
+        application_name: form.name.trim() || form.appId.trim(),
+        display_name: form.name.trim() || `Refex ${form.environment}`,
+        subdomain: form.subdomain.trim(),
+        region: form.region,
+        environment: toDbEnvironment(form.environment),
+        description: form.description.trim(),
+        access_key_id: form.accessKeyId.trim(),
+        access_key_secret: form.accessKeySecret.trim(),
+        process_ids: processIds.filter((id) => id.trim()),
+        dataform_ids: dataformIds.filter((id) => id.trim()),
+        board_ids: boardIds.filter((id) => id.trim()),
+        dataset_ids: datasetIds.filter((id) => id.trim()),
+      });
+      setSaving(false);
+      if (!result.ok || !result.routeId) {
+        setError(result.error || 'Registration failed');
+        return;
+      }
+      const routeId = result.routeId;
+      handleClose();
+      onCreated?.();
+      navigate(`/applications/${routeId}?tab=overview`);
+      return;
+    }
+
     const app = createApplicationFromForm({
       ...form,
       processIds: processIds.filter((id) => id.trim()).join(','),
@@ -98,7 +131,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
               </div>
               <h2 className="text-xl font-heading font-semibold text-foreground-950">Connect application</h2>
               <p className="text-sm text-foreground-500 mt-1 leading-relaxed max-w-md">
-                Enter your Kissflow account details. We’ll sync fields and unlock templates & schedules.
+                Enter your Kissflow account details. We’ll register the app in PostgreSQL and unlock templates & schedules.
               </p>
             </div>
             <button

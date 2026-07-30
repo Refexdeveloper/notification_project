@@ -1,0 +1,21 @@
+{
+  "runbook": "25-seed-lead-tracker-report-config",
+  "timestamp": "20260730T132307Z",
+  "environment": "production",
+  "application_id": "Lead_Trcaker_A00",
+  "process_id": "Lead_tracker_1_A00",
+  "template_name": "Lead Tracker Sales Report",
+  "content_ref": "db/seeds/lead-tracker-report-template.html",
+  "checksum": "bc3efab93e5f11b0ec33b24bceabd5b9",
+  "template_rows_linked": 4,
+  "schedule_rows": 4,
+  "cron_expression": "5 17 * * *",
+  "timezone": "Asia/Kolkata",
+  "sales_groups": [
+    {"group_name": "3i Sales Team", "website_filter": "3iMedtech", "slug": "3i"},
+    {"group_name": "Sales Team Modepro", "website_filter": "Modepro", "slug": "modepro"},
+    {"group_name": "Sales Team Adonis", "website_filter": "Adonis", "slug": "adonis"},
+    {"group_name": "Sales Team Refex Mobility", "website_filter": "Refex Mobility", "slug": "refex-mobility"}
+  ],
+  "schedule_active": false
+}

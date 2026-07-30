@@ -3,7 +3,8 @@
  */
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
-require('dotenv').config({ path: path.join(__dirname, '../../client/.env.local') });
+const adminUiEnv = path.join(__dirname, '../../../apps/admin-ui/.env.local');
+require('dotenv').config({ path: adminUiEnv });
 
 const PROCESS_ID = 'Lead_tracker_1_A00';
 const PAGE_SIZE = 1000;
@@ -96,7 +97,7 @@ function getKissflowConfig() {
     'AcCMptlq60zH';
   const keyId = process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_ID || '';
   const keySecret = process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_SECRET || '';
-  if (!keyId || !keySecret) throw new Error('Missing prod Kissflow keys in client/.env.local');
+  if (!keyId || !keySecret) throw new Error('Missing prod Kissflow keys in apps/admin-ui/.env.local');
   return { host, accountId, keyId, keySecret };
 }
 

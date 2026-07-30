@@ -14,7 +14,7 @@ cat > "${OUT}" <<EOF
 {
   "generated_at": "${TIMESTAMP}",
   "mode": "DRY_RUN",
-  "source": "services/prototype-mysql-api (MySQL Sequelize models — not connected)",
+  "source": "archive/prototype-mysql-api (MySQL Sequelize models — archived, not connected)",
   "target": "engagement_reporting PostgreSQL",
   "mappings": {
     "applications": "account + application + process rows + credential_binding (Secret Manager ref only)",

@@ -1,8 +1,8 @@
-import type { RouteObject } from "react-router-dom";
-import { Navigate } from "react-router-dom";
+import { Navigate, type RouteObject } from "react-router-dom";
+import PrototypeOnlyGate from "@/components/routing/PrototypeOnlyGate";
 import ApplicationsPage from "@/pages/applications/page";
 import ApplicationDetail from "@/pages/applications/detail/page";
-import ResourceWorkspacePage from "@/pages/applications/resource-workspace/page";
+import ResourceWorkspaceRoute from "@/components/routing/ResourceWorkspaceRoute";
 import DataformRedirect from "@/pages/applications/DataformRedirect";
 import TemplatesPage from "@/pages/templates/page";
 import TemplateDetailPage from "@/pages/templates/detail/page";
@@ -22,7 +22,7 @@ const routes: RouteObject[] = [
   { path: "/applications", element: <ApplicationsPage /> },
   {
     path: "/applications/:id/resources/:resourceId",
-    element: <ResourceWorkspacePage />,
+    element: <ResourceWorkspaceRoute />,
   },
   {
     path: "/applications/:id/dataforms/:formId",
@@ -31,13 +31,48 @@ const routes: RouteObject[] = [
   { path: "/applications/:id", element: <ApplicationDetail /> },
   { path: "/users", element: <UsersPage /> },
   { path: "/templates/:id", element: <TemplateDetailPage /> },
-  { path: "/templates", element: <TemplatesPage /> },
-  { path: "/schedulers/:id", element: <SchedulerDetailPage /> },
-  { path: "/schedulers", element: <SchedulersPage /> },
-  { path: "/history", element: <HistoryPage /> },
-  { path: "/logs", element: <LogsPage /> },
-  { path: "/audit-logs", element: <AuditLogsPage /> },
-  { path: "/settings", element: <SettingsPage /> },
+  {
+    path: "/templates",
+    element: (
+      <PrototypeOnlyGate>
+        <TemplatesPage />
+      </PrototypeOnlyGate>
+    ),
+  },
+  {
+    path: "/schedulers/:id",
+    element: (
+      <PrototypeOnlyGate>
+        <SchedulerDetailPage />
+      </PrototypeOnlyGate>
+    ),
+  },
+  {
+    path: "/schedulers",
+    element: (
+      <PrototypeOnlyGate>
+        <SchedulersPage />
+      </PrototypeOnlyGate>
+    ),
+  },
+  {
+    path: "/history",
+    element: (
+      <PrototypeOnlyGate>
+        <HistoryPage />
+      </PrototypeOnlyGate>
+    ),
+  },
+  { path: "/logs", element: <PrototypeOnlyGate><LogsPage /></PrototypeOnlyGate> },
+  { path: "/audit-logs", element: <PrototypeOnlyGate><AuditLogsPage /></PrototypeOnlyGate> },
+  {
+    path: "/settings",
+    element: (
+      <PrototypeOnlyGate>
+        <SettingsPage />
+      </PrototypeOnlyGate>
+    ),
+  },
   { path: "*", element: <NotFound /> },
 ];
 

@@ -11,15 +11,15 @@ FAIL=0
 pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-# 1. No hardcoded DB password in prototype backend config
-if ! grep -rq 'RefexAdmin' services/prototype-mysql-api/config/ 2>/dev/null; then
+# 1. No hardcoded DB password in archived prototype backend config
+if ! grep -rq 'RefexAdmin' archive/prototype-mysql-api/config/ 2>/dev/null; then
   pass "no RefexAdmin in prototype config"
 else
   fail "no RefexAdmin in prototype config"
 fi
 
 # 2. No password123 in seed scripts
-if ! grep -rq 'password123' services/prototype-mysql-api/scripts/ 2>/dev/null; then
+if ! grep -rq 'password123' archive/prototype-mysql-api/scripts/ 2>/dev/null; then
   pass "no password123 in seed scripts"
 else
   fail "no password123 in seed scripts"
@@ -98,6 +98,30 @@ if [[ -f services/backend-api/Dockerfile ]]; then
   pass "backend-api Dockerfile exists"
 else
   fail "backend-api Dockerfile exists"
+fi
+if [[ -f apps/admin-ui/Dockerfile ]]; then
+  pass "admin-ui Dockerfile exists"
+else
+  fail "admin-ui Dockerfile exists"
+fi
+
+# 10. MySQL prototype archived (not under services/)
+if [[ -d archive/prototype-mysql-api ]]; then
+  pass "mysql prototype archived"
+else
+  fail "mysql prototype archived"
+fi
+if [[ ! -d services/prototype-mysql-api ]]; then
+  pass "mysql prototype removed from services/"
+else
+  fail "mysql prototype removed from services/"
+fi
+
+# 11. No legacy Vite proxy to MySQL API
+if ! grep -q 'localhost:4000' apps/admin-ui/vite.config.ts 2>/dev/null; then
+  pass "no vite proxy to mysql api"
+else
+  fail "no vite proxy to mysql api"
 fi
 
 echo ""

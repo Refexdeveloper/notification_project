@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || true)}"
+if [[ -z "${REPO_ROOT}" || ! -f "${REPO_ROOT}/ops/runbooks/load-smtp-creds.sh" ]]; then
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+fi
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/load-smtp-creds.sh"
+
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-${REPO_ROOT}}"
 REPORT_FILE="${REPORT_FILE_OVERRIDE:-${REPO_ROOT}/templates/generated/report-latest.html}"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-07"
 
 RECIPIENT="${RECIPIENT:-mugesh.m@refex.co.in}"
 SUBJECT="${SUBJECT:-Kissflow - User Signin Report}"
+FROM_EMAIL="${FROM_EMAIL:-${SMTP_FROM:-${SMTP_USER}}}"
 
 TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
 AUDIT_FILE="${AUDIT_DIR}/runbook-07-${TIMESTAMP}.json"
@@ -24,6 +33,7 @@ SMTP_USER="${SMTP_USER:-}"
 SMTP_APP_PASSWORD="${SMTP_APP_PASSWORD:-}"
 
 [[ -n "${SMTP_USER}" ]] || stop "Failed to retrieve SMTP user from Secret Manager."
+[[ -n "${FROM_EMAIL}" ]] || stop "Failed to resolve From email (set FROM_EMAIL or SMTP_USER)."
 [[ -n "${SMTP_APP_PASSWORD}" ]] || stop "Failed to retrieve SMTP app password from Secret Manager."
 
 log "Building MIME email"
@@ -32,7 +42,7 @@ MIME_FILE="$(mktemp)"
 trap 'rm -f "${MIME_FILE}"; unset SMTP_USER SMTP_APP_PASSWORD' EXIT
 
 {
-  echo "From: ${SMTP_USER}"
+  echo "From: ${FROM_EMAIL}"
   echo "To: ${RECIPIENT}"
   echo "Cc: srivaths.varadharajan@refex.co.in, gowtham.s@refex.co.in, pravinkumar.raja@refex.co.in, mohamedaasik.m@refex.co.in"
   echo "Subject: ${SUBJECT}"
@@ -47,7 +57,7 @@ log "Sending via Gmail SMTP"
 if curl --silent --show-error \
   --url "smtps://smtp.gmail.com:465" \
   --ssl-reqd \
-  --mail-from "${SMTP_USER}" \
+  --mail-from "${FROM_EMAIL}" \
   --mail-rcpt "${RECIPIENT}" \
   --mail-rcpt "srivaths.varadharajan@refex.co.in" \
   --mail-rcpt "gowtham.s@refex.co.in" \

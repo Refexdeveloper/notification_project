@@ -3,8 +3,30 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
+const { resolveSession } = require('../lib/session');
+const {
+  RegistrationConflictError,
+  normalizeRegistrationBody,
+  registerApplication,
+} = require('../lib/applicationRegistration');
 
 const router = express.Router();
+
+const APPLICATIONS_QUERY = `
+SELECT
+  environment,
+  application_id,
+  application_name,
+  last_seen_at,
+  is_current,
+  source_payload->>'kissflow_account_id' AS kissflow_account_id,
+  source_payload->>'subdomain' AS subdomain,
+  source_payload->>'region' AS region,
+  source_payload->>'description' AS description
+FROM engagement_reporting.application
+WHERE is_current = true
+ORDER BY application_name
+`;
 
 function dbNotConfigured(res, correlationId) {
   return ok(res, correlationId, {
@@ -20,12 +42,7 @@ router.get('/', async (req, res) => {
     return dbNotConfigured(res, req.correlationId);
   }
   try {
-    const { rows } = await getPool().query(
-      `SELECT environment, application_id, application_name, last_seen_at, is_current
-       FROM engagement_reporting.application
-       WHERE is_current = true
-       ORDER BY application_name`,
-    );
+    const { rows } = await getPool().query(APPLICATIONS_QUERY);
     ok(res, req.correlationId, { items: rows, count: rows.length });
   } catch (err) {
     if (err.code === '42P01') {
@@ -51,13 +68,52 @@ router.post('/', async (req, res) => {
   if (!idempotencyKey || String(idempotencyKey).length < 8) {
     return fail(res, req.correlationId, 'IDEMPOTENCY_KEY_REQUIRED', 'Idempotency-Key header required', 400);
   }
-  fail(
-    res,
-    req.correlationId,
-    'NOT_IMPLEMENTED',
-    'Application registration will persist credential_binding refs only — not yet implemented',
-    501,
-  );
+
+  if (!isDatabaseConfigured()) {
+    return fail(
+      res,
+      req.correlationId,
+      'DATABASE_NOT_CONFIGURED',
+      'PostgreSQL is required to register applications',
+      503,
+    );
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const { errors, input } = normalizeRegistrationBody(req.body);
+  if (errors.length) {
+    return fail(res, req.correlationId, 'VALIDATION_FAILED', errors.join('; '), 400);
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await registerApplication(client, {
+      input,
+      idempotencyKey: String(idempotencyKey),
+      correlationId: req.correlationId,
+      actorSubject: session.subject,
+    });
+    await client.query('COMMIT');
+
+    const status = result.idempotent_replay ? 200 : 201;
+    return ok(res, req.correlationId, result, status);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err instanceof RegistrationConflictError) {
+      return fail(res, req.correlationId, err.code, err.message, err.status);
+    }
+    if (err.code === '42P01') {
+      return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
+    }
+    return fail(res, req.correlationId, 'APPLICATION_REGISTER_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
 });
 
 router.get('/:applicationId/processes', async (req, res) => {
@@ -66,7 +122,16 @@ router.get('/:applicationId/processes', async (req, res) => {
   }
   try {
     const { rows } = await getPool().query(
-      `SELECT environment, process_id, application_id, process_name, last_seen_at, is_current
+      `SELECT
+         environment,
+         process_id,
+         application_id,
+         process_name,
+         last_seen_at,
+         is_current,
+         source_payload->'field_discovery'->>'synced_at' AS field_sync_at,
+         COALESCE((source_payload->'field_discovery'->>'item_count')::int, 0) AS field_item_count,
+         COALESCE(jsonb_array_length(source_payload->'field_discovery'->'fields'), 0) AS field_count
        FROM engagement_reporting.process
        WHERE application_id = $1 AND is_current = true
        ORDER BY process_name`,

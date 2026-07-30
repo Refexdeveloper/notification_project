@@ -1,0 +1,19 @@
+{
+  "action": "RENDER_HTML_REPORT",
+  "generated_at": "2026-07-30T11:53:49Z",
+  "output_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/services/engagement-pipeline/templates/generated/report-20260730T115348Z.html",
+  "mutation_performed": false,
+  "summary": {
+    "total_users": 329,
+    "signed_in_users": 157,
+    "signed_in_today": 24,
+    "never_logged_in": 172,
+    "opened_today": 17,
+    "closed_today": 23,
+    "total_tickets": 196,
+    "sla_breached_open": 7,
+    "sla_breached_closed": 47,
+    "total_open": 7,
+    "total_closed": 189
+  }
+}

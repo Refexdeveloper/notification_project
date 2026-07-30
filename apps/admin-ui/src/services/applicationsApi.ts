@@ -12,7 +12,30 @@ import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
   if (lower === 'production' || lower === 'prod') return 'Production';
+  if (lower === 'uat') return 'UAT';
+  if (lower === 'staging') return 'Staging';
   return 'Development';
+}
+
+function toDbEnvironment(env: RefexEnvironment | string): string {
+  const lower = String(env).toLowerCase();
+  if (lower === 'production' || lower === 'prod') return 'production';
+  if (lower === 'uat') return 'uat';
+  if (lower === 'staging') return 'staging';
+  return 'development';
+}
+
+/** Backend APIs use registered Kissflow application_id (not legacy process id). */
+export function resolveBackendApplicationId(app: KissflowApplication): string {
+  const appId = (app.appId || '').trim();
+  if (
+    appId === 'Lead_tracker_1_A00' ||
+    app.id.includes('lead-tracker') ||
+    app.name.toLowerCase().includes('lead tracker')
+  ) {
+    return 'Lead_Trcaker_A00';
+  }
+  return appId;
 }
 
 function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
@@ -24,21 +47,21 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
 
   return {
     id: `${row.environment}-${row.application_id}`,
-    accountId: envConfig.accountId,
+    accountId: row.kissflow_account_id || envConfig.accountId,
     appId: row.application_id,
-    subdomain: envConfig.subdomain,
+    subdomain: row.subdomain || envConfig.subdomain,
     name: row.application_name,
     displayName: row.application_name,
-    description: `Synced from engagement_reporting · ${row.environment}`,
-    region: 'com',
+    description: row.description || `Synced from engagement_reporting · ${row.environment}`,
+    region: (row.region as 'com' | 'eu') || 'com',
     environment,
     status: row.is_current ? 'Active' : 'Inactive',
     processIds: [],
     dataformIds: [],
     boardIds: [],
     datasetIds: [],
-    accessKeyId: '',
-    accessKeySecret: '',
+    accessKeyId: envConfig.accessKeyId || '',
+    accessKeySecret: envConfig.accessKeySecret || '',
     icon: 'ri-apps-line',
     owner: '—',
     created: lastSync,
@@ -110,10 +133,14 @@ function attachProcesses(
   const envLower = environment.toLowerCase();
   const forEnv = processes.filter((p) => p.environment.toLowerCase() === envLower);
   const processIds = forEnv.map((p) => p.process_id);
+  const primary = forEnv[0];
+
   return {
     ...app,
     processIds,
     processesCount: processIds.length,
+    lastFieldSyncAt: primary?.field_sync_at || undefined,
+    discoveredItemCount: primary?.field_item_count || undefined,
     description:
       forEnv.length === 1
         ? forEnv[0].process_name
@@ -158,9 +185,90 @@ export async function loadApplicationFromBackend(routeId: string): Promise<Appli
     application = attachProcesses(application, parsed.environment, processesRes.data.items);
   }
 
+  const primaryProcessId = application.processIds?.[0];
+  if (primaryProcessId) {
+    const { loadFieldsFromBackend } = await import('./fieldsApi');
+    const fieldsRes = await loadFieldsFromBackend(application, primaryProcessId);
+    if (fieldsRes.ok && fieldsRes.fields.length) {
+      application = {
+        ...application,
+        discoveredFields: fieldsRes.fields,
+        discoveredItemCount: fieldsRes.itemCount,
+        lastFieldSyncAt: fieldsRes.syncedAt,
+      };
+    }
+  }
+
   return {
     application,
     warning: processesRes.data?.warning || processesRes.data?.hint || appsRes.data.warning,
     error: !processesRes.ok ? processesRes.error : undefined,
   };
 }
+
+export type ApplicationRegistrationPayload = {
+  kissflow_account_id: string;
+  application_id: string;
+  application_name?: string;
+  display_name?: string;
+  subdomain: string;
+  region?: string;
+  environment: string;
+  description?: string;
+  access_key_id: string;
+  access_key_secret: string;
+  process_ids?: string[];
+  dataform_ids?: string[];
+  board_ids?: string[];
+  dataset_ids?: string[];
+};
+
+export type ApplicationRegistrationResult = {
+  ok: boolean;
+  routeId?: string;
+  item?: {
+    route_id: string;
+    application_id: string;
+    application_name: string;
+    environment: string;
+  };
+  error?: string;
+  idempotentReplay?: boolean;
+};
+
+function idempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
+/** Register a Kissflow application in PostgreSQL (backend-api mode). */
+export async function createApplicationOnBackend(
+  payload: ApplicationRegistrationPayload,
+): Promise<ApplicationRegistrationResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const res = await apiV1Fetch<{
+    item: { route_id: string; application_id: string; application_name: string; environment: string };
+    idempotent_replay?: boolean;
+  }>('/applications', {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to register application' };
+  }
+
+  return {
+    ok: true,
+    routeId: res.data.item.route_id,
+    item: res.data.item,
+    idempotentReplay: Boolean(res.data.idempotent_replay),
+  };
+}
+
+export { toDbEnvironment };

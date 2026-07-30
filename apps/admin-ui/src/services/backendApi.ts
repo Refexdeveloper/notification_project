@@ -76,6 +76,10 @@ export type BackendApplicationRow = {
   application_name: string;
   last_seen_at: string;
   is_current: boolean;
+  kissflow_account_id?: string | null;
+  subdomain?: string | null;
+  region?: string | null;
+  description?: string | null;
 };
 
 export type ApplicationsListResponse = {
@@ -92,6 +96,9 @@ export type BackendProcessRow = {
   process_name: string;
   last_seen_at: string;
   is_current: boolean;
+  field_sync_at?: string | null;
+  field_item_count?: number;
+  field_count?: number;
 };
 
 export type ProcessesListResponse = {

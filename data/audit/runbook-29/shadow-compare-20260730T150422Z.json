@@ -1,0 +1,30 @@
+{
+  "generated_at": "20260730T150422Z",
+  "mode": "SHADOW_COMPARE_READ_ONLY",
+  "backend_url": "https://refex-backend-api-645830234926.asia-south1.run.app",
+  "database_ready": True,
+  "cloud_api_counts": {
+    "applications": 6,
+    "lead_tracker_processes": 1,
+    "lead_tracker_fields": 63,
+    "lead_tracker_engagement_users": 17,
+    "lead_tracker_templates": 3,
+    "lead_tracker_schedules": 4
+  },
+  "legacy_pipeline": {
+    "cloud_run_service": "aasik-refex-report-itsm-a00-svcreq-a00-full-pipeline",
+    "scheduler_job": "aasik-refex-report-itsm-a00-svcreq-a00-scheduler",
+    "scheduler_state": "ENABLED"
+  },
+  "expected_baseline_from_local_ingest": {
+    "lead_tracker_fields": 63,
+    "lead_tracker_users": 17,
+    "lead_tracker_templates_min": 1,
+    "lead_tracker_schedules_min": 1
+  },
+  "cutover_gate": "Do not pause legacy scheduler until report checksum + test-recipient send match",
+  "next_runbooks": [
+    "30-iap-load-balancer-setup.sh plan",
+    "31-scheduler-cutover-checklist.sh plan"
+  ]
+}

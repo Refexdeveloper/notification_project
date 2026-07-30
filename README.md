@@ -1,25 +1,27 @@
 # Refex User Engagement Report Engine
 
-Production-grade monorepo converging Raghul's Admin UI and Ashiq's PostgreSQL engagement pipeline into a deployable platform.
+Production-grade monorepo: Admin UI + PostgreSQL engagement pipeline on GCP.
 
-## Architecture
+## Architecture (consolidated)
 
 ```
-Kissflow APIs → ingestion-worker → Cloud SQL (engagement_reporting)
-              → report-orchestrator → email-renderer → GCS artifact
-              → notification_outbox → email-dispatcher → delivery ledger
-              → async BigQuery publication
-
-Admin UI (apps/admin-ui) → backend-api (OpenAPI v1) ONLY
+Kissflow APIs → engagement-pipeline runbooks → Cloud SQL (engagement_reporting)
+Admin UI (apps/admin-ui) → backend-api (OpenAPI v1) → PostgreSQL ONLY
 ```
+
+**Single production path:** GCP + PostgreSQL + `backend-api` + `admin-ui` (backend mode).  
+MySQL prototype is archived under `archive/prototype-mysql-api/`.
+
+See `docs/architecture/consolidation-stack.md` for full stack decision.
 
 ## Repository layout
 
 | Path | Purpose |
 |------|---------|
-| `apps/admin-ui/` | React Admin UI (Raghul) |
-| `services/engagement-pipeline/` | Bash/Python ingest + render + send (Ashiq) |
-| `services/prototype-mysql-api/` | Legacy MySQL prototype — **salvage only, not production** |
+| `apps/admin-ui/` | React Admin UI — **backend-api mode only** in dev/prod |
+| `services/backend-api/` | Authoritative OpenAPI v1 API (Express, PostgreSQL) |
+| `services/engagement-pipeline/` | Bash/Python ingest + render + send (legacy until cutover) |
+| `archive/prototype-mysql-api/` | **Archived** MySQL prototype — salvage only |
 | `db/migrations/` | PostgreSQL canonical schema |
 | `openapi/backend-api.yaml` | Authoritative FE/BE contract v1 |
 | `config/secrets.manifest.yaml` | Secret Manager bindings (no values) |
@@ -33,16 +35,19 @@ Admin UI (apps/admin-ui) → backend-api (OpenAPI v1) ONLY
 ```bash
 # Backend API (PostgreSQL — OpenAPI v1)
 cd services/backend-api
-cp .env.example .env   # set PG* vars if PostgreSQL available
+cp .env.example .env   # set PG* vars
 npm install
 npm run dev            # http://localhost:8080/api/v1/health
 
-# Admin UI (proxies /api/v1 → backend-api, /api → legacy prototype)
+# Admin UI (proxies /api/v1 → backend-api only)
 cd apps/admin-ui
 cp .env.example .env.local
 # VITE_API_BASE_URL=http://localhost:8080/api/v1
-npm install && npm run dev
+# VITE_USE_BACKEND_API=true
+npm install && npm run dev   # http://localhost:3000
 ```
+
+Do **not** start MySQL or the archived prototype API.
 
 ## Runbooks
 
@@ -53,12 +58,24 @@ npm install && npm run dev
 | 02b | `02b-remediate-secret-blockers.sh` | Remove blockers from index + source |
 | 03 | `03-frontend-backend-repository-convergence.sh` | Monorepo layout |
 | 05 | `05-mysql-prototype-salvage-dry-run.sh` | MySQL → PostgreSQL dry-run |
+| 28 | `28-deploy-backend-api-and-admin-ui-shadow.sh` | **Shadow GCP deploy** (no scheduler cutover) |
+| 29 | `29-shadow-compare-cloud-vs-legacy.sh` | Read-only cloud vs legacy counts |
+| 30 | `30-iap-load-balancer-setup.sh` | IAP + HTTPS LB (production auth) |
+| 31 | `31-scheduler-cutover-checklist.sh` | Scheduler cutover (requires CUTover_APPROVED) |
 
-Legacy pipeline runbooks 01–13 remain under `services/engagement-pipeline/ops/runbooks/`.
+Legacy pipeline runbooks 01–18 remain under `services/engagement-pipeline/ops/runbooks/`.
 
 ## Deployment
 
-Cloud Build definitions in `cloudbuild/` prepare validation and image builds. **Do not deploy or activate schedulers without controlled cutover** — see `docs/architecture/deployment-and-cutover.md`.
+Cloud Build: `cloudbuild/services.yaml` builds `backend-api`, `admin-ui`, `engagement-pipeline`.
+
+**Shadow deploy (requires `DEPLOY_APPROVED=true`):**
+
+```bash
+bash ops/runbooks/28-deploy-backend-api-and-admin-ui-shadow.sh plan
+```
+
+Do **not** activate schedulers or delete the legacy full-pipeline service without controlled cutover — see `docs/architecture/deployment-and-cutover.md`.
 
 ## Security
 
@@ -69,4 +86,6 @@ Cloud Build definitions in `cloudbuild/` prepare validation and image builds. **
 
 ## Status
 
-This branch prepares a reviewable convergence PR. Production readiness requires shadow comparison, idempotency tests, DLQ recovery validation, and scheduler cutover — not yet executed.
+- **Done:** UI wired to backend-api; prototype tabs hidden; Lead Tracker end-to-end on PostgreSQL
+- **Done:** MySQL prototype archived; single local dev proxy path
+- **Next:** Shadow deploy runbook 28 → cutover validation → retire legacy Cloud Run pipeline

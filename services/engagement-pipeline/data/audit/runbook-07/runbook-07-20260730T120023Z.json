@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-30T12:00:28Z",
+  "recipient": "mohamedaasik.m@refex.co.in",
+  "subject": "Kissflow - Project Task Report",
+  "status": "SENT",
+  "report_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/services/engagement-pipeline/templates/generated/pm-report-latest.html",
+  "mutation_performed": false
+}

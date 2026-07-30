@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   saveDiscoveredFields,
   type KissflowApplication,
 } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
+import { isBackendApiMode } from '@/services/backendApi';
+import { syncFieldsOnBackend } from '@/services/fieldsApi';
 
 interface DiscoveryTabProps {
   app: KissflowApplication;
@@ -15,8 +17,18 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const [lastMessage, setLastMessage] = useState('');
+  const [fields, setFields] = useState(app.discoveredFields || []);
+  const [itemCount, setItemCount] = useState(app.discoveredItemCount);
+  const [lastSyncAt, setLastSyncAt] = useState(app.lastFieldSyncAt);
 
-  const fields = app.discoveredFields || [];
+  const adminProcessId = (app.processIds || [])[0] || app.appId;
+
+  useEffect(() => {
+    setFields(app.discoveredFields || []);
+    setItemCount(app.discoveredItemCount);
+    setLastSyncAt(app.lastFieldSyncAt);
+  }, [app.discoveredFields, app.discoveredItemCount, app.lastFieldSyncAt]);
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return fields;
@@ -28,12 +40,31 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
     );
   }, [fields, filter]);
 
-  const runFieldSync = async () => {
+  const runFieldSync = useCallback(async () => {
     setSyncing(true);
     setError('');
     setLastMessage('');
 
-    const result = await syncFieldsFromAdminItems(app);
+    if (isBackendApiMode()) {
+      const result = await syncFieldsOnBackend(app, adminProcessId);
+      if (!result.ok) {
+        setError(result.error || 'Sync failed');
+        setSyncing(false);
+        return;
+      }
+      setFields(result.fields);
+      setItemCount(result.itemCount);
+      setLastSyncAt(result.syncedAt);
+      setLastMessage(
+        `Synced ${result.fields.length} fields from ${result.sampled} sampled item(s)` +
+          (result.itemCount ? ` · ${result.itemCount} total items` : ''),
+      );
+      onSynced?.();
+      setSyncing(false);
+      return;
+    }
+
+    const result = await syncFieldsFromAdminItems(app, { processId: adminProcessId });
     if (!result.ok) {
       setError(result.error || 'Sync failed');
       setSyncing(false);
@@ -41,16 +72,19 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
     }
 
     saveDiscoveredFields(app.id, result.fields, result.itemCount, {
-      resourceId: (app.processIds || [])[0],
-      adminProcessId: (app.appId || '').trim(),
+      resourceId: adminProcessId,
+      adminProcessId,
     });
+    setFields(result.fields);
+    setItemCount(result.itemCount);
+    setLastSyncAt(new Date().toISOString());
     setLastMessage(
       `Synced ${result.fields.length} fields from ${result.sampled} sampled item(s)` +
         (result.itemCount ? ` · ${result.itemCount} total items` : ''),
     );
     onSynced?.();
     setSyncing(false);
-  };
+  }, [app, adminProcessId, onSynced]);
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -64,7 +98,7 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
           </div>
           <button
             onClick={runFieldSync}
-            disabled={syncing || !app.appId}
+            disabled={syncing || !adminProcessId}
             className="h-9 px-3.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             {syncing ? (
@@ -83,12 +117,12 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
 
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <Stat label="Account ID" value={app.accountId || '—'} mono />
-          <Stat label="App ID" value={app.appId || 'Not set'} mono />
+          <Stat label="App ID" value={adminProcessId || 'Not set'} mono />
           <Stat
             label="Last field sync"
             value={
-              app.lastFieldSyncAt
-                ? new Date(app.lastFieldSyncAt).toLocaleString('en-US', {
+              lastSyncAt
+                ? new Date(lastSyncAt).toLocaleString('en-US', {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
@@ -99,9 +133,9 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
           />
         </div>
 
-        {!app.appId && (
+        {!adminProcessId && (
           <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-800">
-            Set <strong>App ID</strong> under Settings (e.g. <code className="font-mono">Lead_tracker_1_A00</code>), then sync.
+            No process linked yet. Register the app with a process ID under Connect, then sync.
           </div>
         )}
 
@@ -117,7 +151,7 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
         )}
 
         <p className="mt-3 text-[11px] text-foreground-400 font-mono break-all">
-          GET /process/2/{app.accountId || '{account_id}'}/admin/{app.appId || '{app_id}'}
+          GET /process/2/{app.accountId || '{account_id}'}/admin/{adminProcessId || '{process_id}'}
           /item?page_number=1&page_size=1000&apply_preference=1
         </p>
       </div>
@@ -128,9 +162,7 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
             <h3 className="text-sm font-semibold text-foreground-900">Discovered fields</h3>
             <p className="text-[11px] text-foreground-400 mt-0.5">
               {fields.length} field{fields.length === 1 ? '' : 's'}
-              {app.discoveredItemCount != null && app.discoveredItemCount > 0
-                ? ` · ${app.discoveredItemCount} items reported`
-                : ''}
+              {itemCount != null && itemCount > 0 ? ` · ${itemCount} items reported` : ''}
             </p>
           </div>
           <div className="relative">

@@ -27,6 +27,8 @@ export interface ReportScheduler {
   recipients: string[];
   /** Optional CC */
   cc: string[];
+  /** Sender address for scheduled reports (backend / PostgreSQL mode) */
+  fromEmail?: string;
   /** Lead Tracker: filter leads by Website field value before grouping by sales person */
   websiteFilter?: string;
   /** Lead Tracker: filter Kissflow users by Groups membership */

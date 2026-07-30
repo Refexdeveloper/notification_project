@@ -1,0 +1,15 @@
+{
+  "runbook": "24-seed-pm-report-config",
+  "timestamp": "20260730T115938Z",
+  "environment": "production",
+  "application_id": "Project_Management_Tracker_A00",
+  "process_id": "Project_Sub_Task_A01",
+  "template_name": "Project Task Engagement Report",
+  "content_ref": "db/seeds/pm-engagement-template.html",
+  "checksum": "eb7afea8e7293f1e62f8c8aadaba9695",
+  "template_rows_linked": 1,
+  "schedule_rows": 1,
+  "cron_expression": "0 9 * * *",
+  "timezone": "Asia/Kolkata",
+  "schedule_active": false
+}

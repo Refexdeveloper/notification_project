@@ -1,0 +1,15 @@
+{
+  "runbook": "23-seed-itsm-report-config",
+  "timestamp": "20260730T114656Z",
+  "environment": "production",
+  "application_id": "IT_Service_Management_A00",
+  "process_id": "Live_IT_Service_Request_A00",
+  "template_name": "Kissflow User Engagement Report",
+  "content_ref": "db/seeds/itsm-engagement-template.html",
+  "checksum": "c3ded8eb043a75e556153848f0ff9655",
+  "template_rows_linked": 1,
+  "schedule_rows": 1,
+  "cron_expression": "0 9 * * *",
+  "timezone": "Asia/Kolkata",
+  "schedule_active": false
+}

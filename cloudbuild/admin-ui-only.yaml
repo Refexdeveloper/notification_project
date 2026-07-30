@@ -1,0 +1,23 @@
+steps:
+  - id: build-admin-ui
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/admin-ui:${COMMIT_SHA}
+      - --build-arg
+      - VITE_API_BASE_URL=${_API_BASE_URL}
+      - --build-arg
+      - VITE_USE_BACKEND_API=true
+      - -f
+      - apps/admin-ui/Dockerfile
+      - apps/admin-ui
+
+images:
+  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/admin-ui:${COMMIT_SHA}
+
+substitutions:
+  _API_BASE_URL: https://backend-api-placeholder.run.app/api/v1
+
+options:
+  logging: CLOUD_LOGGING_ONLY

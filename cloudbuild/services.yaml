@@ -4,7 +4,7 @@ steps:
     args:
       - build
       - -t
-      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/backend-api:${COMMIT_SHA}
+      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/backend-api:${COMMIT_SHA}
       - -f
       - services/backend-api/Dockerfile
       - .
@@ -14,9 +14,11 @@ steps:
     args:
       - build
       - -t
-      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/admin-ui:${COMMIT_SHA}
+      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/admin-ui:${COMMIT_SHA}
       - --build-arg
       - VITE_API_BASE_URL=${_API_BASE_URL}
+      - --build-arg
+      - VITE_USE_BACKEND_API=${_VITE_USE_BACKEND_API}
       - -f
       - apps/admin-ui/Dockerfile
       - apps/admin-ui
@@ -26,18 +28,19 @@ steps:
     args:
       - build
       - -t
-      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/engagement-pipeline:${COMMIT_SHA}
+      - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/engagement-pipeline:${COMMIT_SHA}
       - -f
       - services/engagement-pipeline/Dockerfile
       - services/engagement-pipeline
 
 images:
-  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/backend-api:${COMMIT_SHA}
-  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/admin-ui:${COMMIT_SHA}
-  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-report/engagement-pipeline:${COMMIT_SHA}
+  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/backend-api:${COMMIT_SHA}
+  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/admin-ui:${COMMIT_SHA}
+  - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/engagement-pipeline:${COMMIT_SHA}
 
 substitutions:
   _API_BASE_URL: https://backend-api-placeholder.run.app/api/v1
+  _VITE_USE_BACKEND_API: "true"
 
 options:
   logging: CLOUD_LOGGING_ONLY

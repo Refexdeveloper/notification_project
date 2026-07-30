@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-30T13:23:30Z",
+  "recipient": "murugesh.k@refex.co.in",
+  "subject": "Lead Tracker — Sales Team Modepro sales report",
+  "status": "SENT",
+  "report_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/templates/generated/lead-tracker-modepro-latest.html",
+  "mutation_performed": false
+}

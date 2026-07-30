@@ -1,0 +1,15 @@
+{
+  "action": "RENDER_PM_HTML_REPORT",
+  "generated_at": "2026-07-30T11:59:40Z",
+  "output_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/services/engagement-pipeline/templates/generated/pm-report-20260730T115939Z.html",
+  "mutation_performed": false,
+  "summary": {
+    "total_tasks": 406,
+    "assigned_tasks": 331,
+    "pending_tasks": 161,
+    "completed_tasks": 245,
+    "opened_today": 18,
+    "closed_today": 18
+  },
+  "active_users_in_table": 21
+}

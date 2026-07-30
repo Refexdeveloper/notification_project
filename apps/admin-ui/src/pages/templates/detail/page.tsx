@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Check,
@@ -16,6 +16,14 @@ import {
   renderPreviewHtml,
   updateTemplate,
 } from '@/stores/reportTemplates';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadApplicationFromBackend } from '@/services/applicationsApi';
+import {
+  deleteTemplateOnBackend,
+  loadTemplateFromBackend,
+  updateTemplateOnBackend,
+} from '@/services/reportsApi';
+import type { KissflowApplication } from '@/mocks/applications';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -23,25 +31,138 @@ import { EmptyState } from '@/components/ui/EmptyState';
 export default function TemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const existing = id ? getTemplateById(id) : undefined;
+  const [searchParams] = useSearchParams();
+  const backendMode = isBackendApiMode();
+  const appRouteId = searchParams.get('app') || '';
 
-  const [name, setName] = useState(existing?.name || '');
-  const [subject, setSubject] = useState(existing?.subject || '');
-  const [description, setDescription] = useState(existing?.description || '');
-  const [html, setHtml] = useState(existing?.html || '');
-  const [status, setStatus] = useState(existing?.status || 'draft');
-  const [applicationId, setApplicationId] = useState(existing?.applicationId || '');
+  const [loading, setLoading] = useState(backendMode);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [backendApp, setBackendApp] = useState<KissflowApplication | undefined>();
+  const [name, setName] = useState('');
+  const [subject, setSubject] = useState('');
+  const [description, setDescription] = useState('');
+  const [html, setHtml] = useState('');
+  const [status, setStatus] = useState<'draft' | 'published' | 'archived'>('draft');
+  const [applicationId, setApplicationId] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [saving, setSaving] = useState(false);
+
+  const localExisting = !backendMode && id ? getTemplateById(id) : undefined;
+
+  useEffect(() => {
+    if (!backendMode || !id) return;
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setLoadError(null);
+
+      let app: KissflowApplication | undefined;
+      if (appRouteId) {
+        const appResult = await loadApplicationFromBackend(appRouteId);
+        app = appResult.application || undefined;
+        if (!app) {
+          if (!cancelled) {
+            setLoadError(appResult.error || 'Application not found');
+            setLoading(false);
+          }
+          return;
+        }
+      }
+
+      const result = await loadTemplateFromBackend(
+        app || ({ id: appRouteId, environment: 'Production' } as KissflowApplication),
+        id!,
+      );
+
+      if (cancelled) return;
+
+      if (!result.ok || !result.template) {
+        setLoadError(result.error || 'Template not found');
+        setLoading(false);
+        return;
+      }
+
+      if (app) setBackendApp(app);
+      setApplicationId(app?.id || appRouteId);
+      setName(result.template.name);
+      setSubject(result.template.subject);
+      setDescription(result.template.description);
+      setHtml(result.template.html);
+      setStatus(result.template.status);
+      setLoading(false);
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendMode, id, appRouteId]);
+
+  useEffect(() => {
+    if (backendMode || !localExisting) return;
+    setName(localExisting.name);
+    setSubject(localExisting.subject);
+    setDescription(localExisting.description);
+    setHtml(localExisting.html);
+    setStatus(localExisting.status);
+    setApplicationId(localExisting.applicationId);
+  }, [backendMode, localExisting]);
 
   const apps = useMemo(() => getApplications(), []);
-  const app = applicationId ? getApplicationById(applicationId) : undefined;
+  const app = backendMode
+    ? backendApp
+    : applicationId
+      ? getApplicationById(applicationId)
+      : undefined;
 
   const previewHtml = useMemo(() => renderPreviewHtml(html), [html]);
 
   const persist = useCallback(
-    (publish = false) => {
-      if (!id || !existing) return;
+    async (publish = false) => {
+      if (!id) return;
+      setSaving(true);
+      setSaveMsg('');
+
+      if (backendMode) {
+        if (!backendApp && !appRouteId) {
+          setLoadError('Missing application context. Open the template from an application tab.');
+          setSaving(false);
+          return;
+        }
+
+        const appForSave =
+          backendApp ||
+          ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+
+        const result = await updateTemplateOnBackend(appForSave, id, {
+          name,
+          subject,
+          description,
+          html,
+          status: publish ? 'published' : 'draft',
+        });
+
+        setSaving(false);
+        if (!result.ok) {
+          setLoadError(result.error || 'Save failed');
+          return;
+        }
+
+        if (result.template) {
+          setHtml(result.template.html);
+          setStatus(result.template.status);
+        } else if (publish) {
+          setStatus('published');
+        }
+
+        setSaveMsg(publish ? 'Published' : 'Saved');
+        setTimeout(() => setSaveMsg(''), 2000);
+        return;
+      }
+
+      if (!localExisting) return;
       updateTemplate(id, {
         name,
         subject,
@@ -50,26 +171,63 @@ export default function TemplateDetailPage() {
         applicationId,
         status: publish ? 'published' : 'draft',
       });
-      if (publish) {
-        setStatus('published');
-      } else {
-        setStatus('draft');
-      }
+      setStatus(publish ? 'published' : 'draft');
       setSaveMsg(publish ? 'Published' : 'Saved');
+      setSaving(false);
       setTimeout(() => setSaveMsg(''), 2000);
     },
-    [id, existing, name, subject, description, html, status, applicationId],
+    [
+      id,
+      backendMode,
+      backendApp,
+      appRouteId,
+      name,
+      subject,
+      description,
+      html,
+      applicationId,
+      localExisting,
+    ],
   );
 
-  if (!existing) {
+  const handleDelete = async () => {
+    if (!id || !confirm('Delete this template?')) return;
+
+    if (backendMode) {
+      const appForDelete =
+        backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+      const result = await deleteTemplateOnBackend(appForDelete, id);
+      if (!result.ok) {
+        setLoadError(result.error || 'Delete failed');
+        return;
+      }
+      navigate(appRouteId ? `/applications/${appRouteId}?tab=templates` : '/templates');
+      return;
+    }
+
+    deleteTemplate(id);
+    navigate('/templates');
+  };
+
+  if (loading) {
+    return (
+      <Layout breadcrumbs={[{ label: 'Templates', path: '/templates' }, { label: 'Loading…' }]}>
+        <div className="surface p-8 text-center text-sm text-foreground-500">Loading template…</div>
+      </Layout>
+    );
+  }
+
+  if ((!backendMode && !localExisting) || (backendMode && loadError && !html)) {
     return (
       <Layout breadcrumbs={[{ label: 'Templates', path: '/templates' }, { label: 'Not found' }]}>
         <EmptyState
           variant="templates"
           title="Template not found"
-          description="This template may have been deleted."
+          description={loadError || 'This template may have been deleted.'}
           primaryLabel="Back to templates"
-          onPrimary={() => navigate('/templates')}
+          onPrimary={() =>
+            navigate(appRouteId ? `/applications/${appRouteId}?tab=templates` : '/templates')
+          }
         />
       </Layout>
     );
@@ -84,7 +242,14 @@ export default function TemplateDetailPage() {
     >
       <div className="mb-5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/templates')} leftIcon={<ArrowLeft className="w-4 h-4" />}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              navigate(appRouteId ? `/applications/${appRouteId}?tab=templates` : '/templates')
+            }
+            leftIcon={<ArrowLeft className="w-4 h-4" />}
+          >
             Back
           </Button>
           <div className="min-w-0">
@@ -92,6 +257,7 @@ export default function TemplateDetailPage() {
             <p className="text-xs text-foreground-500">
               {app?.displayName || app?.name || 'Application'} ·{' '}
               <span className="capitalize">{status}</span>
+              {backendMode && <span className="ml-1">· PostgreSQL</span>}
               {saveMsg && (
                 <span className="ml-2 text-accent-700 font-semibold inline-flex items-center gap-1">
                   <Check className="w-3 h-3" />
@@ -127,43 +293,57 @@ export default function TemplateDetailPage() {
           <Button
             variant="danger"
             size="sm"
-            onClick={() => {
-              if (confirm('Delete this template?')) {
-                deleteTemplate(id!);
-                navigate('/templates');
-              }
-            }}
+            onClick={handleDelete}
             leftIcon={<Trash2 className="w-3.5 h-3.5" />}
           >
             Delete
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => persist(false)} leftIcon={<Save className="w-3.5 h-3.5" />}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void persist(false)}
+            loading={saving}
+            leftIcon={!saving ? <Save className="w-3.5 h-3.5" /> : undefined}
+          >
             Save draft
           </Button>
-          <Button size="sm" onClick={() => persist(true)} leftIcon={<Check className="w-3.5 h-3.5" />}>
+          <Button
+            size="sm"
+            onClick={() => void persist(true)}
+            loading={saving}
+            leftIcon={!saving ? <Check className="w-3.5 h-3.5" /> : undefined}
+          >
             Publish
           </Button>
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {loadError}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
         <div className="surface p-4 space-y-3.5 h-fit">
           <Input label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Email subject" value={subject} onChange={(e) => setSubject(e.target.value)} hint="Use {{ReportTitle}} etc." />
-          <div>
-            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Application</label>
-            <select
-              value={applicationId}
-              onChange={(e) => setApplicationId(e.target.value)}
-              className="field-input"
-            >
-              {apps.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.displayName || a.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!backendMode && (
+            <div>
+              <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Application</label>
+              <select
+                value={applicationId}
+                onChange={(e) => setApplicationId(e.target.value)}
+                className="field-input"
+              >
+                {apps.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.displayName || a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Description</label>
             <textarea
