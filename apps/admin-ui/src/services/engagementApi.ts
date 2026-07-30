@@ -114,15 +114,27 @@ export type EngagementLoadResult = {
 };
 
 /** Load user engagement from backend-api PostgreSQL snapshot. */
-export async function loadEngagementFromBackend(app: KissflowApplication): Promise<EngagementLoadResult> {
+export async function loadEngagementFromBackend(
+  app: KissflowApplication,
+  options?: { live?: boolean },
+): Promise<EngagementLoadResult> {
   if (!isBackendApiMode()) {
     return { report: null };
   }
 
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
-  const path = `/applications/${encodeURIComponent(applicationId)}/engagement?environment=${encodeURIComponent(environment)}`;
-  const res = await apiV1Fetch<EngagementListResponse>(path);
+  const params = new URLSearchParams({
+    environment,
+    _: String(Date.now()),
+  });
+  if (options?.live) {
+    params.set('refresh', 'live');
+  }
+  const path = `/applications/${encodeURIComponent(applicationId)}/engagement?${params.toString()}`;
+  const res = await apiV1Fetch<EngagementListResponse & { data_source?: string }>(path, {
+    cache: 'no-store',
+  });
 
   if (!res.ok || !res.data) {
     return {
@@ -132,6 +144,10 @@ export async function loadEngagementFromBackend(app: KissflowApplication): Promi
   }
 
   const users = res.data.items.map(mapRow);
+  const liveNote =
+    res.data.data_source === 'live'
+      ? 'Live data from Kissflow (Asia/Kolkata for sign-in today).'
+      : undefined;
   return {
     report: {
       applicationId: app.id,
@@ -145,8 +161,8 @@ export async function loadEngagementFromBackend(app: KissflowApplication): Promi
         totalAssigned: res.data.totals.total_assigned,
       },
       errors: res.data.warning ? [res.data.warning] : [],
-      source: 'live',
+      source: res.data.data_source === 'live' ? 'live' : 'cache',
     },
-    warning: res.data.warning || res.data.hint,
+    warning: liveNote || res.data.warning || res.data.hint,
   };
 }

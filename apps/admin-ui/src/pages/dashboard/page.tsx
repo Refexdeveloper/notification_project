@@ -66,7 +66,12 @@ function AppMetricsPanel({ app, onOpen }: { app: DashboardApplication; onOpen: (
           </h3>
           <p className="text-xs text-foreground-500 mt-0.5">
             {m.total_users} users
-            {app.snapshot_at ? ` · Snapshot ${formatWhen(app.snapshot_at)}` : ''}
+            {app.data_source === 'live' && app.fetched_at
+              ? ` · Live ${formatWhen(app.fetched_at)}`
+              : app.snapshot_at
+                ? ` · Snapshot ${formatWhen(app.snapshot_at)}`
+                : ''}
+            {app.snapshot_stale ? ' · stale' : ''}
           </p>
         </div>
         <button
@@ -114,11 +119,15 @@ export default function DashboardPage() {
   const [applications, setApplications] = useState<DashboardApplication[]>([]);
   const [recentSends, setRecentSends] = useState<DashboardSendRow[]>([]);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [refreshMode, setRefreshMode] = useState<'live' | 'snapshot' | null>(null);
+  const [refreshWarnings, setRefreshWarnings] = useState<string[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (live = false) => {
+    if (live) setRefreshing(true);
+    else setLoading(true);
     setError('');
-    const result = await loadDashboard('production');
+    const result = await loadDashboard('production', { live });
     if (!result.ok || !result.data) {
       setError(result.error || 'Could not load dashboard');
       setApplications([]);
@@ -127,12 +136,15 @@ export default function DashboardPage() {
       setApplications(result.data.applications);
       setRecentSends(result.data.recent_sends);
       setGeneratedAt(result.data.generated_at || null);
+      setRefreshMode(result.data.refresh_mode || (live ? 'live' : 'snapshot'));
+      setRefreshWarnings(result.data.warnings || []);
     }
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
-    void load();
+    void load(false);
   }, [load]);
 
   if (!backendMode) {
@@ -158,15 +170,24 @@ export default function DashboardPage() {
             <h1 className="page-title">Dashboard</h1>
           </div>
           <p className="page-subtitle">
-            Live engagement metrics and recent report sends across all applications.
-            {generatedAt ? ` Updated ${formatWhen(generatedAt)}.` : ''}
+            Engagement metrics pulled from Kissflow on refresh; recent sends from PostgreSQL.
+            {generatedAt ? ` Last loaded ${formatWhen(generatedAt)}` : ''}
+            {refreshMode === 'live' ? ' · Live refresh' : refreshMode === 'snapshot' ? ' · Cached snapshot' : ''}
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void load()} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
+        <Button variant="secondary" onClick={() => void load(true)} disabled={loading || refreshing}>
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing…' : 'Refresh from Kissflow'}
         </Button>
       </div>
+
+      {refreshWarnings.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-1">
+          {refreshWarnings.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+        </div>
+      )}
 
       {error ? (
         <EmptyState

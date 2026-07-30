@@ -22,6 +22,9 @@ export type DashboardApplication = {
   application_id: string;
   application_name: string;
   snapshot_at: string | null;
+  fetched_at?: string | null;
+  data_source?: 'live' | 'snapshot';
+  snapshot_stale?: boolean;
   metrics: DashboardAppMetrics;
   metric_labels: DashboardMetricLabels;
 };
@@ -39,19 +42,31 @@ export type DashboardData = {
   applications: DashboardApplication[];
   recent_sends: DashboardSendRow[];
   generated_at?: string;
+  refresh_mode?: 'live' | 'snapshot';
+  timezone?: string;
+  warnings?: string[];
   warning?: string;
 };
 
 export async function loadDashboard(
   environment: 'production' | 'development' = 'production',
+  options?: { live?: boolean },
 ): Promise<{ ok: boolean; data?: DashboardData; error?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
   }
 
-  const res = await apiV1Fetch<DashboardData>(
-    `/dashboard?environment=${encodeURIComponent(environment)}`,
-  );
+  const params = new URLSearchParams({
+    environment,
+    _: String(Date.now()),
+  });
+  if (options?.live) {
+    params.set('refresh', 'live');
+  }
+
+  const res = await apiV1Fetch<DashboardData>(`/dashboard?${params.toString()}`, {
+    cache: 'no-store',
+  });
 
   if (!res.ok || !res.data) {
     return { ok: false, error: res.error || 'Failed to load dashboard' };

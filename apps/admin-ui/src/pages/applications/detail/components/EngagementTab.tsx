@@ -122,12 +122,12 @@ export default function EngagementTab({ app }: EngagementTabProps) {
   const [selected, setSelected] = useState<UserEngagementRow | null>(null);
   const [errorBanner, setErrorBanner] = useState('');
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (live = false) => {
     setLoading(true);
     setErrorBanner('');
     try {
       if (isBackendApiMode()) {
-        const result = await loadEngagementFromBackend(app);
+        const result = await loadEngagementFromBackend(app, { live });
         if (result.report?.users.length) {
           setReport(result.report);
           if (result.warning) setErrorBanner(result.warning);
@@ -182,7 +182,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
 
   useEffect(() => {
     if (isBackendApiMode()) {
-      void refresh();
+      void refresh(false);
       return;
     }
     const cached = loadCachedEngagement(app.id);
@@ -297,7 +297,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           </button>
           <button
             type="button"
-            onClick={() => void refresh()}
+            onClick={() => void refresh(isBackendApiMode())}
             disabled={loading}
             className="h-8 px-3 rounded-lg bg-primary-500 text-white text-xs font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5"
           >

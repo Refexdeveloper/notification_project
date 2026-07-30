@@ -4,6 +4,8 @@ const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { APP_ENGAGEMENT_QUERY, buildEngagementTotals } = require('../lib/engagementSummary');
+const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
+const { snapshotAgeHours, DEFAULT_REPORT_TIMEZONE } = require('../lib/reportTimezone');
 
 const router = express.Router();
 
@@ -62,20 +64,63 @@ router.get('/', async (req, res) => {
   }
 
   const environment = normalizeEnvironment(req.query.environment);
+  const liveRefresh = String(req.query.refresh || '').toLowerCase() === 'live';
 
   try {
     const pool = getPool();
     const { rows: apps } = await pool.query(APPLICATIONS_QUERY, [environment]);
 
     const applications = [];
+    const refreshWarnings = [];
+
     for (const app of apps) {
+      if (liveRefresh) {
+        try {
+          const live = await fetchLiveAppMetrics(environment, app.application_id);
+          applications.push({
+            environment: app.environment,
+            application_id: app.application_id,
+            application_name: app.application_name,
+            snapshot_at: live.snapshot_at,
+            fetched_at: live.fetched_at,
+            data_source: 'live',
+            metrics: live.metrics,
+            metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
+              ? {
+                  sign_in_today: 'Signed in today',
+                  sign_in_rate_overall: 'Sign-in rate (overall)',
+                  sign_in_rate_today: 'Sign-in rate today',
+                  open_tickets: 'Open tickets',
+                  closed_tickets: 'Closed tickets',
+                }
+              : {
+                  sign_in_today: 'Active today',
+                  sign_in_rate_overall: 'Login rate (overall)',
+                  sign_in_rate_today: 'Login rate today',
+                  open_tickets: 'Open items',
+                  closed_tickets: 'Completed items',
+                },
+          });
+          continue;
+        } catch (liveErr) {
+          refreshWarnings.push(
+            `${app.application_name}: live refresh failed (${liveErr.message || liveErr.code || 'error'}) — showing cached snapshot`,
+          );
+        }
+      }
+
       const { rows } = await pool.query(APP_ENGAGEMENT_QUERY, [environment, app.application_id]);
       const totals = buildEngagementTotals(rows);
+      const snapshotAt = rows[0]?.snapshot_at || null;
+      const ageHours = snapshotAgeHours(snapshotAt);
       applications.push({
         environment: app.environment,
         application_id: app.application_id,
         application_name: app.application_name,
-        snapshot_at: rows[0]?.snapshot_at || null,
+        snapshot_at: snapshotAt,
+        fetched_at: null,
+        data_source: 'snapshot',
+        snapshot_stale: ageHours != null && ageHours > 24,
         metrics: {
           total_users: totals.total_users,
           sign_in_today: totals.active_today,
@@ -116,6 +161,9 @@ router.get('/', async (req, res) => {
       applications,
       recent_sends: recentSends,
       generated_at: new Date().toISOString(),
+      refresh_mode: liveRefresh ? 'live' : 'snapshot',
+      timezone: DEFAULT_REPORT_TIMEZONE,
+      warnings: refreshWarnings.length ? refreshWarnings : undefined,
     });
   } catch (err) {
     if (err.code === '42P01') {

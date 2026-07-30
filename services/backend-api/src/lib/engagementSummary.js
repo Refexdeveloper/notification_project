@@ -160,16 +160,10 @@ WHERE u.environment = $1
 ORDER BY u.user_name NULLS LAST, u.email NULLS LAST
 `;
 
+const { isLoggedInToday: isLoggedInTodayTz } = require('./reportTimezone');
+
 function isLoggedInToday(lastSignIn) {
-  if (!lastSignIn) return false;
-  const login = new Date(lastSignIn);
-  if (Number.isNaN(login.getTime())) return false;
-  const now = new Date();
-  return (
-    login.getFullYear() === now.getFullYear() &&
-    login.getMonth() === now.getMonth() &&
-    login.getDate() === now.getDate()
-  );
+  return isLoggedInTodayTz(lastSignIn);
 }
 
 function buildEngagementTotals(rows) {

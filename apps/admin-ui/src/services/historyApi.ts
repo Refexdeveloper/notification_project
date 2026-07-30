@@ -80,7 +80,7 @@ export async function loadGlobalDeliveryHistory(
     return { items: [], total: 0 };
   }
 
-  const path = `/history?environment=${encodeURIComponent(environment)}&limit=200`;
+  const path = `/history?environment=${encodeURIComponent(environment)}&limit=200&_=${Date.now()}`;
   const res = await apiV1Fetch<{
     items: Array<{
       id: string;
@@ -93,7 +93,7 @@ export async function loadGlobalDeliveryHistory(
     }>;
     total: number;
     warning?: string;
-  }>(path);
+  }>(path, { cache: 'no-store' });
 
   if (!res.ok || !res.data) {
     return {

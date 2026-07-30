@@ -153,8 +153,131 @@ async function kissflowGet({
   return { data, accountId: account, subdomain: creds.subdomain };
 }
 
+function extractArray(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    for (const key of ['Data', 'data', 'Users', 'users', 'Items', 'items', 'Result']) {
+      if (Array.isArray(data[key])) return data[key];
+    }
+  }
+  return [];
+}
+
+async function kissflowGetUrl({ environment, urlPath, credentials }) {
+  const creds = credentials || (await resolveKissflowCredentials(environment));
+  if (!creds.keyId || !creds.secret) {
+    const err = new Error('Kissflow credentials not configured');
+    err.code = 'KISSFLOW_CREDENTIALS_MISSING';
+    throw err;
+  }
+  const url = `${creds.baseUrl}${urlPath.startsWith('/') ? urlPath : `/${urlPath}`}`;
+  const res = await fetch(url, {
+    headers: {
+      'X-Access-Key-Id': creds.keyId,
+      'X-Access-Key-Secret': creds.secret,
+      Accept: 'application/json',
+    },
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const err = new Error(`Kissflow request failed: HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return { data, credentials: creds };
+}
+
+async function fetchAllKissflowUsers({ environment, accountId, credentials }) {
+  const pageSize = 500;
+  const all = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const qs = new URLSearchParams({
+      page_number: String(page),
+      page_size: String(pageSize),
+      user_type: 'User',
+      invited_user: 'false',
+    });
+    const { data } = await kissflowGetUrl({
+      environment,
+      credentials,
+      urlPath: `/user/2/${encodeURIComponent(accountId)}/?${qs.toString()}`,
+    });
+    const batch = extractArray(data);
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return all;
+}
+
+async function fetchAllProcessItems({ environment, accountId, processId, credentials }) {
+  const pageSize = 500;
+  const all = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const { data } = await kissflowGet({
+      environment,
+      accountId,
+      processId,
+      pageNumber: page,
+      pageSize,
+      applyPreference: false,
+      credentials,
+    });
+    const batch = extractArray(data.data);
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return all;
+}
+
+function pickString(obj, keys) {
+  for (const key of keys) {
+    const val = obj[key];
+    if (typeof val === 'string' && val.trim()) return val.trim();
+  }
+  return '';
+}
+
+function pickDateTime(obj, keys) {
+  for (const key of keys) {
+    const val = obj[key];
+    if (typeof val === 'string' && val.trim()) return val.trim();
+  }
+  return null;
+}
+
+function normalizeProcessStatus(raw) {
+  const value = String(
+    raw?._status ||
+      raw?.Status ||
+      raw?.status ||
+      raw?.Process_Status ||
+      raw?.process_status ||
+      '',
+  ).trim();
+  const lower = value.toLowerCase();
+  if (lower.includes('progress') || lower === 'open' || lower === 'pending') return 'InProgress';
+  if (lower.includes('complete') || lower === 'closed' || lower === 'done') return 'Completed';
+  if (lower.includes('withdraw') || lower.includes('reject')) return 'Withdrawn';
+  return value || 'other';
+}
+
 module.exports = {
   normalizeEnvironment,
   resolveKissflowCredentials,
   kissflowGet,
+  kissflowGetUrl,
+  fetchAllKissflowUsers,
+  fetchAllProcessItems,
+  extractArray,
+  pickString,
+  pickDateTime,
+  normalizeProcessStatus,
 };
