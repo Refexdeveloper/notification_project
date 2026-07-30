@@ -27,8 +27,10 @@ SELECT
   rs.created_at,
   rd.name AS definition_name,
   rdv.config->>'application_id' AS application_id,
+  rdv.config->>'process_id' AS process_id,
   rdv.config->>'template_id' AS template_id,
   rdv.config->>'template_name' AS template_name,
+  rdv.config->>'subject' AS subject,
   rdv.config->>'from_email' AS from_email,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
@@ -74,8 +76,10 @@ SELECT
   rs.created_at,
   rd.name AS definition_name,
   rdv.config->>'application_id' AS application_id,
+  rdv.config->>'process_id' AS process_id,
   rdv.config->>'template_id' AS template_id,
   rdv.config->>'template_name' AS template_name,
+  rdv.config->>'subject' AS subject,
   rdv.config->>'from_email' AS from_email,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
@@ -158,8 +162,10 @@ function mapScheduleRow(row) {
     id: row.id,
     name: row.definition_name,
     application_id: row.application_id || null,
+    process_id: row.process_id || null,
     template_id: row.template_id || null,
     template_name: row.template_name || null,
+    subject: row.subject || null,
     from_email: row.from_email || null,
     website_filter: row.website_filter || null,
     user_group_filter: row.user_group_filter || null,
@@ -338,13 +344,32 @@ router.patch('/:scheduleId', async (req, res) => {
   const hasFromEmail = Object.prototype.hasOwnProperty.call(body, 'from_email');
   const hasCronExpression = Object.prototype.hasOwnProperty.call(body, 'cron_expression');
   const hasTimezone = Object.prototype.hasOwnProperty.call(body, 'timezone');
+  const hasTemplateId = Object.prototype.hasOwnProperty.call(body, 'template_id');
+  const hasTemplateName = Object.prototype.hasOwnProperty.call(body, 'template_name');
+  const hasProcessId = Object.prototype.hasOwnProperty.call(body, 'process_id');
+  const hasWebsiteFilter = Object.prototype.hasOwnProperty.call(body, 'website_filter');
+  const hasUserGroupFilter = Object.prototype.hasOwnProperty.call(body, 'user_group_filter');
+  const hasSubject = Object.prototype.hasOwnProperty.call(body, 'subject');
 
-  if (!hasRecipientsTo && !hasRecipientsCc && !hasIsActive && !hasFromEmail && !hasCronExpression && !hasTimezone) {
+  if (
+    !hasRecipientsTo &&
+    !hasRecipientsCc &&
+    !hasIsActive &&
+    !hasFromEmail &&
+    !hasCronExpression &&
+    !hasTimezone &&
+    !hasTemplateId &&
+    !hasTemplateName &&
+    !hasProcessId &&
+    !hasWebsiteFilter &&
+    !hasUserGroupFilter &&
+    !hasSubject
+  ) {
     return fail(
       res,
       req.correlationId,
       'UPDATE_FIELDS_REQUIRED',
-      'Provide from_email, recipients_to, recipients_cc, cron_expression, timezone, and/or is_active',
+      'Provide from_email, recipients, cron/timezone, template_id, process_id, filters, subject, and/or is_active',
       400,
     );
   }
@@ -497,6 +522,54 @@ router.patch('/:scheduleId', async (req, res) => {
       await client.query(
         `UPDATE engagement_reporting.report_schedule SET ${sets.join(', ')} WHERE report_schedule_id = $1::uuid`,
         params,
+      );
+    }
+
+    if (
+      hasTemplateId ||
+      hasTemplateName ||
+      hasProcessId ||
+      hasWebsiteFilter ||
+      hasUserGroupFilter ||
+      hasSubject
+    ) {
+      const configPatch = {};
+      if (hasTemplateId) {
+        const nextTemplateId = String(body.template_id || '').trim();
+        if (!nextTemplateId) {
+          await client.query('ROLLBACK');
+          return fail(res, req.correlationId, 'TEMPLATE_ID_REQUIRED', 'template_id cannot be empty', 400);
+        }
+        configPatch.template_id = nextTemplateId;
+      }
+      if (hasTemplateName) {
+        configPatch.template_name = String(body.template_name || '').trim();
+      }
+      if (hasProcessId) {
+        const processId = String(body.process_id || '').trim();
+        if (processId) configPatch.process_id = processId;
+        else configPatch.process_id = null;
+      }
+      if (hasWebsiteFilter) {
+        const filter = String(body.website_filter || '').trim();
+        if (filter) configPatch.website_filter = filter;
+        else configPatch.website_filter = null;
+      }
+      if (hasUserGroupFilter) {
+        const filter = String(body.user_group_filter || '').trim();
+        if (filter) configPatch.user_group_filter = filter;
+        else configPatch.user_group_filter = null;
+      }
+      if (hasSubject) {
+        const subject = String(body.subject || '').trim();
+        if (subject) configPatch.subject = subject;
+        else configPatch.subject = null;
+      }
+      await client.query(
+        `UPDATE engagement_reporting.report_definition_version
+         SET config = COALESCE(config, '{}'::jsonb) || $2::jsonb
+         WHERE report_definition_version_id = $1::uuid`,
+        [definitionVersionId, JSON.stringify(configPatch)],
       );
     }
 

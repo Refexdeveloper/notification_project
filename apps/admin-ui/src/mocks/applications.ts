@@ -26,6 +26,9 @@ export interface KissflowApplication {
   datasetIds: string[];
   accessKeyId: string;
   accessKeySecret: string;
+  /** Backend mode: Kissflow keys live in GCP Secret Manager (never returned by API) */
+  credentialsConfigured?: boolean;
+  credentialsSecretHints?: string[];
   /** Fields discovered from Admin Get-all-items sync */
   discoveredFields?: DiscoveredField[];
   /** Per Kissflow resource ID (process/board/dataform) */

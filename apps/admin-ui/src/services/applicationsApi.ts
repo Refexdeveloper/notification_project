@@ -60,8 +60,9 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
     dataformIds: [],
     boardIds: [],
     datasetIds: [],
-    accessKeyId: envConfig.accessKeyId || '',
-    accessKeySecret: envConfig.accessKeySecret || '',
+    accessKeyId: '',
+    accessKeySecret: '',
+    credentialsConfigured: undefined,
     icon: 'ri-apps-line',
     owner: '—',
     created: lastSync,
@@ -347,6 +348,36 @@ export type ApplicationUpdatePayload = {
   subdomain?: string;
   region?: string;
 };
+
+export type CredentialsStatusResult = {
+  credentials_configured: boolean;
+  kissflow_account_id?: string | null;
+  provider?: string;
+  secret_hints?: string[];
+  credentials_bound_at?: string | null;
+  note?: string;
+  warning?: string;
+};
+
+export async function loadCredentialsStatusFromBackend(
+  app: KissflowApplication,
+): Promise<{ ok: boolean; status?: CredentialsStatusResult; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const res = await apiV1Fetch<CredentialsStatusResult>(
+    `/applications/${encodeURIComponent(applicationId)}/credentials-status?environment=${encodeURIComponent(environment)}`,
+  );
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Failed to load credential status' };
+  }
+
+  return { ok: true, status: res.data };
+}
 
 export async function updateApplicationOnBackend(
   app: KissflowApplication,

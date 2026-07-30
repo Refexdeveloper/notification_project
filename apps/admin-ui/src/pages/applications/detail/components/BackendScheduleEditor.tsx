@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { Check, Pause, Play, Save, Trash2 } from 'lucide-react';
 import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
+import type { ReportTemplate } from '@/stores/reportTemplates';
 import { parseEmailList } from '@/stores/reportSchedulers';
-import { describeBackendSchedule, deleteScheduleOnBackend, updateScheduleOnBackend } from '@/services/reportsApi';
+import { describeBackendSchedule, deleteScheduleOnBackend, loadTemplatesFromBackend, updateScheduleOnBackend } from '@/services/reportsApi';
 import {
   cadenceStateToCron,
   cronToCadenceState,
@@ -12,6 +13,9 @@ import {
 } from '@/services/scheduleCadence';
 import ScheduleCadenceFields from '@/components/schedules/ScheduleCadenceFields';
 import ScheduleFromEmailField from '@/components/schedules/ScheduleFromEmailField';
+import ScheduleReportIdentityFields, {
+  type ScheduleReportIdentityValue,
+} from '@/components/schedules/ScheduleReportIdentityFields';
 import { Button } from '@/components/ui/Button';
 
 interface BackendScheduleEditorProps {
@@ -35,6 +39,17 @@ function scheduleToCadenceState(schedule: ReportScheduler): ScheduleCadenceState
   return cronToCadenceState(cron, schedule.timezone || DEFAULT_TIMEZONE);
 }
 
+function scheduleToIdentity(schedule: ReportScheduler, app: KissflowApplication): ScheduleReportIdentityValue {
+  return {
+    templateId: schedule.templateId,
+    templateName: schedule.templateName,
+    processId: schedule.processId || app.processIds?.[0] || '',
+    websiteFilter: schedule.websiteFilter || '',
+    userGroupFilter: schedule.userGroupFilter || '',
+    subject: schedule.subject || schedule.templateName || schedule.name,
+  };
+}
+
 export default function BackendScheduleEditor({
   app,
   schedule,
@@ -42,6 +57,10 @@ export default function BackendScheduleEditor({
   onClose,
   onDeleted,
 }: BackendScheduleEditorProps) {
+  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
+  const [reportIdentity, setReportIdentity] = useState<ScheduleReportIdentityValue>(() =>
+    scheduleToIdentity(schedule, app),
+  );
   const [fromEmail, setFromEmail] = useState(schedule.fromEmail || '');
   const [recipientsText, setRecipientsText] = useState(schedule.recipients.join(', '));
   const [ccText, setCcText] = useState(schedule.cc.join(', '));
@@ -51,13 +70,25 @@ export default function BackendScheduleEditor({
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
+    loadTemplatesFromBackend(app).then((result) => {
+      if (cancelled) return;
+      setTemplates(result.templates);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [app]);
+
+  useEffect(() => {
+    setReportIdentity(scheduleToIdentity(schedule, app));
     setFromEmail(schedule.fromEmail || '');
     setRecipientsText(schedule.recipients.join(', '));
     setCcText(schedule.cc.join(', '));
     setCadence(scheduleToCadenceState(schedule));
     setError('');
     setSuccess('');
-  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone]);
+  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.subject, schedule.templateName, schedule.name]);
 
   const buildPayload = (extra?: { is_active?: boolean }) => {
     const normalizedFrom = normalizeFromEmail(fromEmail);
@@ -67,12 +98,22 @@ export default function BackendScheduleEditor({
       recipients_cc: parseEmailList(ccText),
       cron_expression: cadenceStateToCron(cadence),
       timezone: cadence.timezone || DEFAULT_TIMEZONE,
+      template_id: reportIdentity.templateId,
+      template_name: reportIdentity.templateName,
+      process_id: reportIdentity.processId || undefined,
+      website_filter: reportIdentity.websiteFilter || undefined,
+      user_group_filter: reportIdentity.userGroupFilter || undefined,
+      subject: reportIdentity.subject || undefined,
       ...extra,
     };
   };
 
   const validate = (requireFrom = false) => {
     const normalizedFrom = normalizeFromEmail(fromEmail);
+    if (!reportIdentity.templateId) {
+      setError('Select an HTML template for this schedule.');
+      return false;
+    }
     if (requireFrom && !isValidEmail(normalizedFrom)) {
       setError('From email is required before activating.');
       return false;
@@ -148,7 +189,8 @@ export default function BackendScheduleEditor({
         <div>
           <h3 className="text-sm font-semibold text-foreground-900">{schedule.name}</h3>
           <p className="text-xs text-foreground-500 mt-0.5">
-            {describeBackendSchedule(schedule)} · {schedule.templateName}
+            {describeBackendSchedule(schedule)}
+            {schedule.processId ? ` · Process: ${schedule.processId}` : ''}
           </p>
         </div>
         <button
@@ -169,6 +211,14 @@ export default function BackendScheduleEditor({
           {success}
         </div>
       )}
+
+      <ScheduleReportIdentityFields
+        app={app}
+        templates={templates}
+        value={reportIdentity}
+        onChange={setReportIdentity}
+        disabled={busy}
+      />
 
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-4">
         <ScheduleCadenceFields value={cadence} onChange={setCadence} disabled={busy} />

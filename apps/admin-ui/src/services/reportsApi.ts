@@ -38,8 +38,10 @@ export type BackendScheduleRow = {
   id: string;
   name: string;
   application_id: string | null;
+  process_id?: string | null;
   template_id: string | null;
   template_name: string | null;
+  subject?: string | null;
   cron_expression: string;
   timezone: string;
   is_active: boolean;
@@ -88,6 +90,8 @@ function mapScheduleRow(row: BackendScheduleRow, app: KissflowApplication): Repo
     status: row.status,
     templateId: row.template_id || '',
     templateName: row.template_name || '—',
+    processId: row.process_id || undefined,
+    subject: row.subject || undefined,
     cadence: {
       ...cadenceStateToReportCadence(cadenceState),
       cronExpression: row.cron_expression,
@@ -170,6 +174,12 @@ export type ScheduleUpdatePayload = {
   is_active?: boolean;
   cron_expression?: string;
   timezone?: string;
+  template_id?: string;
+  template_name?: string;
+  process_id?: string;
+  website_filter?: string;
+  user_group_filter?: string;
+  subject?: string;
 };
 
 export type ScheduleUpdateResult = {
@@ -189,6 +199,9 @@ export type ScheduleCreatePayload = {
   recipients_cc?: string[];
   is_active?: boolean;
   process_id?: string;
+  subject?: string;
+  website_filter?: string;
+  user_group_filter?: string;
 };
 
 export type ScheduleCreateResult = {

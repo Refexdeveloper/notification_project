@@ -19,6 +19,7 @@ import {
 import BackendScheduleEditor from './BackendScheduleEditor';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import Modal from '@/components/ui/Modal';
 
 interface SchedulersTabProps {
   app: KissflowApplication;
@@ -34,6 +35,10 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
   const [backendList, setBackendList] = useState<ReportScheduler[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createTemplates, setCreateTemplates] = useState<ReportTemplate[]>([]);
+  const [createTemplateId, setCreateTemplateId] = useState('');
+  const [createProcessId, setCreateProcessId] = useState('');
 
   useEffect(() => {
     if (!backendMode) return;
@@ -64,33 +69,26 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     return getSchedulersByAppId(app.id);
   }, [app.id, backendList, backendMode, tick]);
 
+  const openCreateDialog = async () => {
+    setCreating(true);
+    setLoadError(null);
+    const templatesRes = await loadTemplatesFromBackend(app);
+    setCreating(false);
+    if (!templatesRes.templates.length) {
+      navigate(`/applications/${app.id}?tab=templates`);
+      return;
+    }
+    const published =
+      templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
+    setCreateTemplates(templatesRes.templates);
+    setCreateTemplateId(published?.id || '');
+    setCreateProcessId(app.processIds?.[0] || '');
+    setCreateDialogOpen(true);
+  };
+
   const handleCreate = async () => {
     if (backendMode) {
-      setCreating(true);
-      setLoadError(null);
-      const templatesRes = await loadTemplatesFromBackend(app);
-      const published =
-        templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
-      if (!published) {
-        setCreating(false);
-        navigate(`/applications/${app.id}?tab=templates`);
-        return;
-      }
-      const result = await createScheduleOnBackend(app, {
-        name: `${app.displayName || app.name} schedule`,
-        template_id: published.id,
-        template_name: published.name,
-        cron_expression: '0 9 * * *',
-        timezone: 'Asia/Kolkata',
-        is_active: false,
-      });
-      setCreating(false);
-      if (!result.ok || !result.schedule) {
-        setLoadError(result.error || 'Failed to create schedule');
-        return;
-      }
-      setTick((n) => n + 1);
-      setSelectedId(result.schedule.id);
+      await openCreateDialog();
       return;
     }
 
@@ -109,6 +107,34 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     });
     setTick((n) => n + 1);
     navigate(`/schedulers/${sch.id}`);
+  };
+
+  const confirmCreate = async () => {
+    const tpl = createTemplates.find((t) => t.id === createTemplateId);
+    if (!tpl) {
+      setLoadError('Select a template for the new schedule.');
+      return;
+    }
+    setCreating(true);
+    setLoadError(null);
+    const result = await createScheduleOnBackend(app, {
+      name: `${tpl.name} · ${app.displayName || app.name}`,
+      template_id: tpl.id,
+      template_name: tpl.name,
+      process_id: createProcessId || undefined,
+      subject: tpl.subject || tpl.name,
+      cron_expression: '0 9 * * *',
+      timezone: 'Asia/Kolkata',
+      is_active: false,
+    });
+    setCreating(false);
+    if (!result.ok || !result.schedule) {
+      setLoadError(result.error || 'Failed to create schedule');
+      return;
+    }
+    setCreateDialogOpen(false);
+    setTick((n) => n + 1);
+    setSelectedId(result.schedule.id);
   };
 
   const cadenceLabel = (sch: ReportScheduler) =>
@@ -187,8 +213,16 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
                 <CalendarClock className="w-4 h-4" />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-sm font-semibold text-foreground-900 truncate">{sch.name}</h4>
+                  <span className="chip-muted text-[10px] truncate max-w-[12rem]" title={sch.templateName}>
+                    Template: {sch.templateName}
+                  </span>
+                  {sch.processId && (
+                    <span className="chip-muted text-[10px] font-mono truncate max-w-[10rem]" title={sch.processId}>
+                      {sch.processId}
+                    </span>
+                  )}
                   <span
                     className={
                       sch.status === 'active'
@@ -202,9 +236,11 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
                   </span>
                 </div>
                 <p className="text-xs text-foreground-500 mt-0.5">
-                  {cadenceLabel(sch)} · {sch.templateName} · {sch.recipients.length} recipients
+                  {cadenceLabel(sch)} · {sch.recipients.length} recipients
+                  {sch.subject ? ` · Subject: ${sch.subject}` : ''}
                   {backendMode && sch.fromEmail ? ` · from ${sch.fromEmail}` : ''}
-                  {backendMode && sch.websiteFilter ? ` · ${sch.websiteFilter}` : ''}
+                  {backendMode && sch.userGroupFilter ? ` · Group: ${sch.userGroupFilter}` : ''}
+                  {backendMode && sch.websiteFilter ? ` · Website: ${sch.websiteFilter}` : ''}
                 </p>
               </div>
             </button>
@@ -226,6 +262,54 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
           />
         </div>
       )}
+
+      <Modal open={createDialogOpen} onClose={() => !creating && setCreateDialogOpen(false)} className="max-w-lg">
+        <div className="px-6 py-5 border-b border-background-200/70">
+          <h2 className="text-lg font-heading font-semibold text-foreground-950">New schedule</h2>
+          <p className="text-sm text-foreground-500 mt-1">
+            Choose which HTML template and process this schedule will send.
+          </p>
+        </div>
+        <div className="px-6 py-4 space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">HTML template</label>
+            <select
+              value={createTemplateId}
+              onChange={(e) => setCreateTemplateId(e.target.value)}
+              className="field-input w-full"
+            >
+              {createTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.status})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Kissflow process</label>
+            <select
+              value={createProcessId}
+              onChange={(e) => setCreateProcessId(e.target.value)}
+              className="field-input w-full font-mono text-xs"
+            >
+              <option value="">— Optional —</option>
+              {(app.processIds || []).map((pid) => (
+                <option key={pid} value={pid}>
+                  {pid}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="px-6 py-4 flex items-center justify-end gap-2.5 bg-background-50/40">
+          <Button type="button" variant="ghost" disabled={creating} onClick={() => setCreateDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={creating || !createTemplateId} onClick={() => void confirmCreate()}>
+            {creating ? 'Creating…' : 'Create schedule'}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
