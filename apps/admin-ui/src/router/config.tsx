@@ -12,6 +12,7 @@ import HistoryPage from "@/pages/history/page";
 import LogsPage from "@/pages/logs/page";
 import AuditLogsPage from "@/pages/audit-logs/page";
 import SettingsPage from "@/pages/settings/page";
+import UsersPage from "@/pages/users/page";
 import LoginPage from "@/pages/login/page";
 import NotFound from "@/pages/NotFound";
 
@@ -28,6 +29,7 @@ const routes: RouteObject[] = [
     element: <DataformRedirect />,
   },
   { path: "/applications/:id", element: <ApplicationDetail /> },
+  { path: "/users", element: <UsersPage /> },
   { path: "/templates/:id", element: <TemplateDetailPage /> },
   { path: "/templates", element: <TemplatesPage /> },
   { path: "/schedulers/:id", element: <SchedulerDetailPage /> },
