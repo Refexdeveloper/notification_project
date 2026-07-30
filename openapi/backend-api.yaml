@@ -1,0 +1,252 @@
+openapi: 3.1.0
+info:
+  title: Refex User Engagement Report API
+  version: 1.0.0
+  description: |
+    Authoritative backend API for the Admin UI.
+    Frontend must consume this contract only — no direct Cloud SQL, BigQuery, Kissflow, or SMTP access.
+servers:
+  - url: /api/v1
+    description: Backend API (Cloud Run)
+tags:
+  - name: health
+  - name: auth
+  - name: accounts
+  - name: applications
+  - name: sync
+  - name: reports
+  - name: schedules
+  - name: delivery
+  - name: audit
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service alive
+  /ready:
+    get:
+      tags: [health]
+      summary: Readiness probe (DB + Secret Manager)
+      responses:
+        '200':
+          description: Ready for traffic
+        '503':
+          description: Not ready
+  /auth/session:
+    get:
+      tags: [auth]
+      summary: Current session context (IAP / corporate identity)
+      responses:
+        '200':
+          description: Authenticated session
+        '401':
+          description: Unauthenticated
+  /accounts:
+    get:
+      tags: [accounts]
+      summary: List Kissflow accounts
+      responses:
+        '200':
+          description: Account list
+  /applications:
+    get:
+      tags: [applications]
+      summary: List connected applications
+      responses:
+        '200':
+          description: Application list
+    post:
+      tags: [applications]
+      summary: Register application (credential ref only)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '201':
+          description: Created
+        '409':
+          description: Conflict
+  /applications/{applicationId}/processes:
+    get:
+      tags: [applications]
+      summary: List processes/resources for application
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Process list
+  /applications/{applicationId}/schema/discover:
+    post:
+      tags: [applications]
+      summary: Trigger schema discovery (async)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Discovery accepted
+  /sync/runs:
+    get:
+      tags: [sync]
+      summary: List sync runs
+      responses:
+        '200':
+          description: Sync run list
+    post:
+      tags: [sync]
+      summary: Trigger sync run
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Sync accepted
+  /sync/runs/{syncRunId}/replay:
+    post:
+      tags: [sync]
+      summary: Replay failed sync
+      responses:
+        '202':
+          description: Replay accepted
+  /reports/definitions:
+    get:
+      tags: [reports]
+      summary: List report definitions
+      responses:
+        '200':
+          description: Definition list
+    post:
+      tags: [reports]
+      summary: Create report definition draft
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Created
+  /reports/definitions/{definitionId}/versions/{version}/preview:
+    post:
+      tags: [reports]
+      summary: Generate report preview (async)
+      responses:
+        '202':
+          description: Preview job accepted
+  /reports/definitions/{definitionId}/versions/{version}/freeze:
+    post:
+      tags: [reports]
+      summary: Freeze report definition version
+      responses:
+        '200':
+          description: Frozen
+        '409':
+          description: Preview not validated
+  /schedules:
+    get:
+      tags: [schedules]
+      summary: List report schedules
+      responses:
+        '200':
+          description: Schedule list
+    post:
+      tags: [schedules]
+      summary: Create schedule (requires frozen definition)
+      responses:
+        '201':
+          description: Created
+        '422':
+          description: Definition not frozen
+  /schedules/{scheduleId}/activate:
+    post:
+      tags: [schedules]
+      summary: Activate schedule (explicit release step)
+      responses:
+        '200':
+          description: Activated
+  /report-runs:
+    get:
+      tags: [reports]
+      summary: List report runs
+      responses:
+        '200':
+          description: Report run list
+  /report-runs/{reportRunId}/artifact:
+    get:
+      tags: [reports]
+      summary: Get rendered artifact metadata (signed GCS URL)
+      responses:
+        '200':
+          description: Artifact metadata
+  /delivery/history:
+    get:
+      tags: [delivery]
+      summary: Recipient-level delivery ledger
+      responses:
+        '200':
+          description: Delivery history
+  /delivery/dead-letter:
+    get:
+      tags: [delivery]
+      summary: List DLQ events
+      responses:
+        '200':
+          description: DLQ list
+  /delivery/dead-letter/{eventId}/replay:
+    post:
+      tags: [delivery]
+      summary: Request DLQ replay (preserves original failure)
+      responses:
+        '202':
+          description: Replay requested
+  /audit/events:
+    get:
+      tags: [audit]
+      summary: Platform audit events
+      responses:
+        '200':
+          description: Audit event list
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+  schemas:
+    ApiEnvelope:
+      type: object
+      required: [success, correlation_id]
+      properties:
+        success:
+          type: boolean
+        correlation_id:
+          type: string
+        data:
+          type: object
+        error:
+          $ref: '#/components/schemas/ApiError'
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: SCHEDULE_DEFINITION_NOT_FROZEN
+        message:
+          type: string
+        retryable:
+          type: boolean
+        details:
+          type: object

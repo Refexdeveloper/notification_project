@@ -1,0 +1,6 @@
+Runbook 03: frontend/backend repository convergence @ 20260730T093233Z
+MOVED: NotifictaionEngine/client -> apps/admin-ui
+MOVED: NotifictaionEngine/server -> services/prototype-mysql-api
+MOVED: refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report -> services/engagement-pipeline
+MOVED: NotifictaionEngine/project_plan.md -> docs/architecture/notification-engine-project-plan.md
+Runbook 03 complete.

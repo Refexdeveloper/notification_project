@@ -1,0 +1,15 @@
+{
+  "name": "refex-user-engagement-report-engine",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Refex User Engagement Report platform — admin UI, backend API, ingestion, rendering, delivery",
+  "workspaces": [
+    "apps/admin-ui",
+    "services/prototype-mysql-api",
+    "packages/*"
+  ],
+  "scripts": {
+    "preflight:secrets": "bash ops/runbooks/02-secret-and-sensitive-data-preflight.sh",
+    "test:repo": "bash tests/run-repo-tests.sh"
+  }
+}

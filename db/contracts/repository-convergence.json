@@ -1,0 +1,50 @@
+{
+  "contract_version": "1.0.0",
+  "generated_at": "20260730T092511Z",
+  "runbook_id": "runbook-01",
+  "git": {
+    "root": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data",
+    "branch": "feature/repository-convergence-inspection",
+    "sha": "84b4c652cbf0e5558def769ba4806c848d644810",
+    "remote_origin": "https://github.com/Refexdeveloper/notification_project.git",
+    "dirty_file_count": 3,
+    "tracked_file_count": 1357
+  },
+  "discovered_roots": {
+    "frontend_admin_ui": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/NotifictaionEngine/client",
+    "prototype_mysql_backend": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/NotifictaionEngine/server",
+    "legacy_engagement_pipeline": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report"
+  },
+  "frameworks": {
+    "frontend": "react-vite-typescript",
+    "prototype_backend": "express-sequelize-mysql",
+    "legacy_pipeline": "bash-runbooks-python-http-entrypoint"
+  },
+  "runbooks": {
+    "repository_root_count": 1,
+    "legacy_pipeline_count": 13,
+    "legacy_runbook_range": "01-13"
+  },
+  "deployment_artifacts": {
+    "root_dockerfile": false,
+    "legacy_dockerfile": true,
+    "cloudbuild_present": false
+  },
+  "schema_authority": {
+    "postgresql_migration": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/db/migrations/001-canonical-engagement-model.sql",
+    "mysql_prototype_sync": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/NotifictaionEngine/server/scripts/sync_db.js",
+    "canonical_operational_store": "postgresql engagement_reporting",
+    "prototype_config_store": "mysql notification_engine"
+  },
+  "convergence_risks": {
+    "hardcoded_db_password_fallback": true,
+    "kissflow_credentials_in_mysql_model": true,
+    "customer_discovery_payload_tracked": true,
+    "customer_discovery_file_count": 1143,
+    "frontend_direct_kissflow_proxy": true,
+    "binary_artifact_tracked": true
+  },
+  "duplicate_package_roots": "NotifictaionEngine/{client,server} under single monorepo folder",
+  "next_runbook": "02-secret-and-sensitive-data-preflight",
+  "stop_conditions_triggered": []
+}

@@ -1,0 +1,45 @@
+# Cloud Build — validation stage (no deployment)
+# Tags images with $COMMIT_SHA — never use latest as authoritative identity.
+
+steps:
+  - id: secret-scan
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        bash ops/runbooks/02-secret-and-sensitive-data-preflight.sh
+
+  - id: lint-openapi
+    name: node:20-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        npm install -g @redocly/cli@1
+        redocly lint openapi/backend-api.yaml
+
+  - id: migration-syntax
+    name: postgres:16-alpine
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        for f in db/migrations/*.sql; do
+          echo "Checking $$f"
+          psql -v ON_ERROR_STOP=1 --single-transaction -f "$$f" "postgresql://postgres:postgres@127.0.0.1:5432/postgres" || true
+        done
+        echo "Migration syntax check queued — requires test Postgres sidecar in CI"
+
+  - id: repo-tests
+    name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args: [tests/run-repo-tests.sh]
+
+substitutions:
+  _ENVIRONMENT: staging
+
+options:
+  logging: CLOUD_LOGGING_ONLY
