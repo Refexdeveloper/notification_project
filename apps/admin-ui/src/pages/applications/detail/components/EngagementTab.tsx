@@ -192,6 +192,13 @@ export default function EngagementTab({ app }: EngagementTabProps) {
     }
   }, [app.id, refresh]);
 
+  const appRoleCount = useMemo(() => {
+    if (!report) return 0;
+    return report.users.filter(
+      (u) => u.hasAppRole || (u.appRoleNames && u.appRoleNames.length > 0),
+    ).length;
+  }, [report]);
+
   const rows = useMemo(() => {
     if (!report) return [];
     return report.users.filter((u) => {
@@ -310,12 +317,17 @@ export default function EngagementTab({ app }: EngagementTabProps) {
       </div>
 
       {report && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className={`grid grid-cols-2 gap-2 ${isBackendApiMode() ? 'md:grid-cols-3 lg:grid-cols-6' : 'md:grid-cols-5'}`}>
           <Stat
-            label="Total users"
+            label={isBackendApiMode() ? 'Users in this app' : 'Total users'}
             value={report.totals.totalUsers}
             active={loginFilter === 'all'}
             onClick={() => setLoginFilter('all')}
+            hint={
+              isBackendApiMode()
+                ? 'People with assignments or app roles in this application only'
+                : 'All users in engagement report'
+            }
           />
           <Stat
             label="Active today"
@@ -345,11 +357,11 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           />
           {isBackendApiMode() && (
             <Stat
-              label="App members"
-              value={report.totals.totalUsers}
-              active={loginFilter === 'all'}
-              onClick={() => setLoginFilter('all')}
-              hint="Assignments or app roles in this application"
+              label="App role"
+              value={appRoleCount}
+              active={loginFilter === 'role'}
+              onClick={() => setLoginFilter('role')}
+              hint="Users with a Kissflow app role on this application"
             />
           )}
         </div>
@@ -493,7 +505,10 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-12 text-center text-sm text-foreground-500">
+                  <td
+                    colSpan={isBackendApiMode() ? 11 : 10}
+                    className="px-3 py-12 text-center text-sm text-foreground-500"
+                  >
                     {filterActive
                       ? 'No users match this filter. Try another card or clear the filter.'
                       : 'No engagement data yet. Click Refresh analytics to pull users and records from Kissflow.'}
@@ -502,7 +517,10 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               )}
               {loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-12 text-center text-sm text-foreground-500">
+                  <td
+                    colSpan={isBackendApiMode() ? 11 : 10}
+                    className="px-3 py-12 text-center text-sm text-foreground-500"
+                  >
                     Aggregating users and records…
                   </td>
                 </tr>

@@ -11,6 +11,7 @@ import {
   type ScheduleCadenceState,
 } from '@/services/scheduleCadence';
 import ScheduleCadenceFields from '@/components/schedules/ScheduleCadenceFields';
+import ScheduleFromEmailField from '@/components/schedules/ScheduleFromEmailField';
 import { Button } from '@/components/ui/Button';
 
 interface BackendScheduleEditorProps {
@@ -178,21 +179,12 @@ export default function BackendScheduleEditor({
         matches.
       </div>
 
-      <div>
-        <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
-          From (required to activate)
-        </label>
-        <input
-          type="email"
-          value={fromEmail}
-          onChange={(e) => setFromEmail(e.target.value)}
-          className="field-input font-mono text-xs w-full"
-          placeholder="reports@refex.co.in"
-        />
-        <p className="text-[11px] text-foreground-400 mt-1">
-          Must match an allowed Gmail / SMTP sender for your workspace.
-        </p>
-      </div>
+      <ScheduleFromEmailField
+        value={fromEmail}
+        onChange={setFromEmail}
+        disabled={busy}
+        required
+      />
 
       <div>
         <label className="block text-xs font-semibold text-foreground-700 mb-1.5">To (required to activate)</label>
