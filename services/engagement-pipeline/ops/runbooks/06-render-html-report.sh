@@ -19,6 +19,9 @@ AUDIT_FILE="${AUDIT_DIR}/runbook-06-${TIMESTAMP}.json"
 LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
 
+ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
+ITSM_PROCESS_ID="${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}"
+
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
@@ -32,7 +35,20 @@ log "Querying summary metrics from PostgreSQL (latest snapshot, Refex entity onl
 SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run ORDER BY created_at DESC LIMIT 1),
+WITH latest AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.snapshot_run
+  WHERE application_id = '${ITSM_APP_ID}'
+    AND process_id = '${ITSM_PROCESS_ID}'
+  ORDER BY created_at DESC
+  LIMIT 1
+),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+),
 sla AS (
   SELECT
     instance_id,
@@ -44,10 +60,10 @@ sla AS (
   WHERE i.snapshot_run_id = l.snapshot_run_id AND i.entity = 'Refex'
 )
 SELECT json_build_object(
-  'total_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id),
-  'signed_in_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND u.ever_logged_in),
-  'signed_in_today', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'never_logged_in', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND NOT u.ever_logged_in),
+  'total_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id),
+  'signed_in_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND u.ever_logged_in),
+  'signed_in_today', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'never_logged_in', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND NOT u.ever_logged_in),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'closed_today', (SELECT count(*) FROM sla WHERE process_status = 'Completed' AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'total_tickets', (SELECT count(*) FROM sla),
@@ -61,15 +77,28 @@ log "Querying per-user breakdown (latest snapshot, Refex entity only)"
 USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run ORDER BY created_at DESC LIMIT 1)
-SELECT json_agg(t) FROM (
+WITH latest AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.snapshot_run
+  WHERE application_id = '${ITSM_APP_ID}'
+    AND process_id = '${ITSM_PROCESS_ID}'
+  ORDER BY created_at DESC
+  LIMIT 1
+),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+)
+SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     u.user_name,
     to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
     u.ever_logged_in,
     COALESCE(open_t.open_count, 0) AS open_count,
     COALESCE(closed_t.closed_count, 0) AS closed_count
-  FROM engagement_reporting.\"user\" u CROSS JOIN latest l
+  FROM engagement_reporting.\"user\" u CROSS JOIN latest_users lu
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS open_count
     FROM engagement_reporting.item_assignment ia
@@ -85,14 +114,14 @@ SELECT json_agg(t) FROM (
       AND snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     GROUP BY (source_payload->'_created_by'->>'_id')
   ) closed_t ON closed_t.user_id = u.user_id
-  WHERE u.snapshot_run_id = l.snapshot_run_id
+  WHERE u.snapshot_run_id = lu.snapshot_run_id
     AND (COALESCE(open_t.open_count,0) > 0 OR COALESCE(closed_t.closed_count,0) > 0)
   ORDER BY open_count DESC, closed_count DESC
 ) t;
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
 [[ -n "${SUMMARY_JSON}" ]] || stop "Failed to retrieve summary metrics."
-[[ -n "${USERS_JSON}" && "${USERS_JSON}" != "null" ]] || stop "Failed to retrieve user breakdown."
+[[ -n "${USERS_JSON}" ]] || stop "Failed to retrieve user breakdown."
 
 log "Rendering HTML report"
 

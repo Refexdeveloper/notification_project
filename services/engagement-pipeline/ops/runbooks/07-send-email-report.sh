@@ -5,7 +5,7 @@ REPORT_FILE="${REPORT_FILE_OVERRIDE:-${REPO_ROOT}/templates/generated/report-lat
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-07"
 
 RECIPIENT="${RECIPIENT:-mugesh.m@refex.co.in}"
-SUBJECT="Kissflow - User Signin Report"
+SUBJECT="${SUBJECT:-Kissflow - User Signin Report}"
 
 TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
 AUDIT_FILE="${AUDIT_DIR}/runbook-07-${TIMESTAMP}.json"
