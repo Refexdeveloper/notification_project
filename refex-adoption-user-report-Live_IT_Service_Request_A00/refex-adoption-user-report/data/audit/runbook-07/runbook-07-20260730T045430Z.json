@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-30T04:54:35Z",
+  "recipient": "mugesh.m@refex.co.in",
+  "subject": "Kissflow - User Signin Report",
+  "status": "SENT",
+  "report_file": "/Users/mohamedasaikilahi/Downloads/My Refex Data/Aasik Data/Projects/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/templates/generated/combined-report-latest.html",
+  "mutation_performed": false
+}

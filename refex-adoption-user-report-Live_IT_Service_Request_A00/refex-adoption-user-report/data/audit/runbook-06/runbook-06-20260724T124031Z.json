@@ -1,0 +1,14 @@
+{
+  "action": "RENDER_HTML_REPORT",
+  "generated_at": "2026-07-24T12:40:38Z",
+  "output_file": "C:/Users/Mohamed Aasik IlahiM/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/templates/generated/report-20260724T124031Z.html",
+  "mutation_performed": false,
+  "summary": {
+    "total_users": 262,
+    "signed_in_users": 149,
+    "never_logged_in": 113,
+    "total_open": 5,
+    "total_closed": 128,
+    "pending_role_count": 0
+  }
+}

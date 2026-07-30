@@ -1,0 +1,15 @@
+{
+  "name": "notification-engine",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Kissflow Notification Engine — client (React) + server (Fastify)",
+  "scripts": {
+    "dev": "npm run dev --prefix client",
+    "dev:client": "npm run dev --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "build": "npm run build --prefix client",
+    "build:client": "npm run build --prefix client",
+    "init:db": "npm run init-db --prefix server",
+    "install:all": "npm install --prefix client && npm install --prefix server"
+  }
+}

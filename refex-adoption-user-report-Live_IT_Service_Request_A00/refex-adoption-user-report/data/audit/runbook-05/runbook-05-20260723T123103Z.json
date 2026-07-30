@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-07-23T12:31:03Z",
+  "action": "LOAD_SNAPSHOT",
+  "snapshot_run_id": "semantic-discovery-20260723T091131Z",
+  "status": "PARTIAL",
+  "mutation_performed": true,
+  "counts": {
+    "users": 46,
+    "roles": 1,
+    "items": 208,
+    "assignments": 69
+  },
+  "role_membership_status": "PENDING",
+  "next_safe_action": "Resolve AppRole membership via Kissflow Application Role API (Runbook 06), then mark snapshot_run COMPLETED"
+}

@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-07-23T09:14:59Z",
+  "status": "CANONICAL_MODEL_ARTIFACTS_GENERATED",
+  "database_mutation_performed": false,
+  "artifacts": {
+    "migration": {
+      "path": "C:/Users/Mohamed Aasik IlahiM/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/db/migrations/001-canonical-engagement-model.sql",
+      "sha256": "ee9b9a87f821e3022a1061422ae48d48c9885aa703b88629093aa09125c908c2"
+    },
+    "load_contract": {
+      "path": "C:/Users/Mohamed Aasik IlahiM/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/db/contracts/canonical-load-contract.json",
+      "sha256": "97f469e846f5bfc7108aef9a9a9cbeaa5cb46da7e18492e8591c60da40254047"
+    }
+  },
+  "next_safe_action": "Provision Cloud SQL PostgreSQL instance, then apply the migration and load one snapshot transactionally."
+}

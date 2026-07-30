@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build
+client/out/
+client/dist/
+server/dist/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# TypeScript / tooling caches
+*.tsbuildinfo
+client/auto-imports.d.ts

@@ -1,0 +1,15 @@
+{
+  "action": "APPLY_MIGRATION",
+  "migration_file": "db/migrations/001-canonical-engagement-model.sql",
+  "target_instance": "aasik-refex-engagement-report-live-it-service-request-a00-pg",
+  "target_database": "engagement_reporting",
+  "region": "asia-south1",
+  "applied_at": "2026-07-23T12:28:16Z",
+  "applied_by": "support@refexone.com",
+  "status": "COMPLETED",
+  "tables_created": 16,
+  "views_created": 2,
+  "mutation_performed": true,
+  "connection_method": "cloud-sql-proxy (127.0.0.1:5432)",
+  "next_safe_action": "Load one snapshot: users, items, assignments from data/discovery/normalized/ into the new schema"
+}

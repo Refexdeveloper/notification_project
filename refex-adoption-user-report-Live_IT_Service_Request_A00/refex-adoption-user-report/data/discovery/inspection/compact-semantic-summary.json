@@ -1,0 +1,145 @@
+{
+  "generated_at": "2026-07-23T09:11:31Z",
+  "snapshot_run_id": "semantic-discovery-20260723T091131Z",
+  "environment": "development",
+  "source_health": {
+    "user_detail_records": 46,
+    "item_detail_records": 208,
+    "user_detail_errors": 0,
+    "item_detail_errors": 1,
+    "complete_without_detail_errors": false
+  },
+  "canonical_business_truth": {
+    "application": {
+      "application_id": "IT_Service_Management_A00",
+      "application_name": "IT Service Management"
+    },
+    "process": {
+      "process_id": "Live_IT_Service_Request_A00",
+      "process_name": "Live IT Service Request"
+    },
+    "user_system_of_truth": "Kissflow User Management",
+    "process_item_system_of_truth": "Kissflow Live IT Service Request",
+    "operational_reporting_store": "PostgreSQL (Cloud SQL)",
+    "analytics_store": "BigQuery"
+  },
+  "user_management": {
+    "normalized_user_count": 46,
+    "last_sign_in_field": "LastLoggedInAt.v",
+    "never_logged_in_count": 21
+  },
+  "assignment_semantics": {
+    "source_field_path": "_current_assigned_to",
+    "cardinality": "PROCESS_ITEM 1:N ASSIGNMENT_PRINCIPAL",
+    "principal_types": [
+      "APP_ROLE",
+      "USER"
+    ],
+    "distinct_role_count": 1,
+    "distinct_roles": [
+      {
+        "role_id": "RoDiFnpbtj4u",
+        "role_name": "IT Agents Refex"
+      }
+    ],
+    "assignment_counts_by_principal": [
+      {
+        "principal_id": "UsDYHFU4f3ES",
+        "principal_name": "Mohamed Aasik Ilahi M",
+        "principal_kind": "USER",
+        "assigned_item_count": 42
+      },
+      {
+        "principal_id": "UsDGmglyEMR9",
+        "principal_name": "Pravin Kumar Raja",
+        "principal_kind": "USER",
+        "assigned_item_count": 8
+      },
+      {
+        "principal_id": "UsCx3vovNk0v",
+        "principal_name": "Gowtham S",
+        "principal_kind": "USER",
+        "assigned_item_count": 5
+      },
+      {
+        "principal_id": "RoDiFnpbtj4u",
+        "principal_name": "IT Agents Refex",
+        "principal_kind": "APP_ROLE",
+        "assigned_item_count": 4
+      },
+      {
+        "principal_id": "UsCy9_Q7B_w9",
+        "principal_name": "Murugesh Kumar",
+        "principal_kind": "USER",
+        "assigned_item_count": 4
+      },
+      {
+        "principal_id": "UsDGmRyKyIZA",
+        "principal_name": "Ramya",
+        "principal_kind": "USER",
+        "assigned_item_count": 3
+      },
+      {
+        "principal_id": "UsCw2I27fXaf",
+        "principal_name": "Karthikaa",
+        "principal_kind": "USER",
+        "assigned_item_count": 2
+      },
+      {
+        "principal_id": "UsCy_sBQil8n",
+        "principal_name": "Reginold J",
+        "principal_kind": "USER",
+        "assigned_item_count": 1
+      }
+    ]
+  },
+  "process_lifecycle": {
+    "lifecycle_status": {
+      "field_path": "_status",
+      "observed_values": [
+        "Completed",
+        "InProgress",
+        "Withdrawn"
+      ],
+      "pending_values": [
+        "InProgress"
+      ],
+      "completed_values": [
+        "Completed"
+      ],
+      "withdrawn_values": [
+        "Withdrawn"
+      ],
+      "withdrawn_handling": "TRACKED_AS_SEPARATE_BUCKET"
+    }
+  },
+  "unresolved_dependencies": [
+    {
+      "dependency": "Kissflow Application Role Membership API",
+      "reason": "_current_assigned_to contains AppRole principal(s) (IT Agents Refex) whose member users are not present in process-item payloads",
+      "blocking": true,
+      "affected_outputs": [
+        "Accurate assigned-user counts",
+        "Pending workload by user",
+        "User adoption ratio"
+      ],
+      "recovery": "Resolve role_id RoDiFnpbtj4u via Role Membership API, store members with snapshot timestamps"
+    }
+  ],
+  "configuration_recommendation": {
+    "assignee_field_id": "_current_assigned_to",
+    "status_field_id": "_status",
+    "pending_status_values": [
+      "InProgress"
+    ],
+    "completed_status_values": [
+      "Completed"
+    ],
+    "withdrawn_status_values": [
+      "Withdrawn"
+    ],
+    "last_sign_in_field_id": "LastLoggedInAt.v",
+    "user_status_field_id": "Status",
+    "assigned_user_source": "DIRECT USER ASSIGNMENT UNION ROLE-MEMBER EXPANSION"
+  }
+}

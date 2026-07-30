@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-23T13:27:57Z",
+  "recipient": "mohamedaasik.m@refex.co.in",
+  "subject": "Kissflow - User Signin Report",
+  "status": "FAILED",
+  "report_file": "C:/Users/Mohamed Aasik IlahiM/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/templates/generated/report-latest.html",
+  "mutation_performed": false
+}

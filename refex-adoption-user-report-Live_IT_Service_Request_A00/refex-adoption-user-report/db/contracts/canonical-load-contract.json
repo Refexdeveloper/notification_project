@@ -1,0 +1,167 @@
+{
+  "generated_at": "2026-07-23T09:14:59Z",
+  "contract_version": "1.0.0",
+  "schema": "engagement_reporting",
+  "canonical_truth": {
+    "kissflow_user_management": "system_of_record_for_users",
+    "kissflow_live_it_service_request": "system_of_record_for_process_items",
+    "postgresql_cloud_sql": "canonical_operational_reporting_store",
+    "bigquery": "derived_analytics_store"
+  },
+  "load_order": [
+    "snapshot_run",
+    "application",
+    "process",
+    "user",
+    "principal",
+    "principal_user_direct_users",
+    "item",
+    "item_field",
+    "item_child_row",
+    "item_child_field",
+    "item_assignment",
+    "role_membership_resolution"
+  ],
+  "idempotency": {
+    "snapshot_identity": "snapshot_run_id",
+    "immutable_source_artifacts": true,
+    "duplicate_policy": "upsert_or_no_op_on_identical_row_hash",
+    "replay_policy": "safe_when_same_snapshot_run_id_and_source_hashes_are_reused"
+  },
+  "role_assignment_policy": {
+    "direct_user": "Create USER principal and one self-mapping principal_user row",
+    "app_role": "Create APP_ROLE principal and PENDING role_membership_resolution row",
+    "analytics_visibility": "Exclude unresolved role assignments from effective user metrics; expose via vw_unresolved_item_assignment"
+  },
+  "failure_policy": {
+    "partial_load": "Mark snapshot_run PARTIAL and retain successfully committed stages",
+    "failed_role_resolution": "Do not infer members; retain FAILED resolution evidence and retry later",
+    "duplicate_execution": "Use primary keys, row hashes and snapshot_run_id to prevent duplicate facts"
+  },
+  "source_manifest": {
+    "snapshot_run_id": "semantic-discovery-20260723T091131Z",
+    "generated_at": "2026-07-23T09:11:31Z",
+    "environment": "development",
+    "application_id": "IT_Service_Management_A00",
+    "process_id": "Live_IT_Service_Request_A00",
+    "counts": {
+      "users": 46,
+      "roles": 1,
+      "items": 208,
+      "assignments": 69,
+      "roles_pending_membership_resolution": 1,
+      "user_detail_errors": 0,
+      "item_detail_errors": 1
+    },
+    "artifacts": {
+      "users": "data/discovery/normalized/kissflow-users.jsonl",
+      "roles": "data/discovery/normalized/kissflow-app-roles.jsonl",
+      "items": "data/discovery/normalized/kissflow-process-items.jsonl",
+      "assignments": "data/discovery/normalized/kissflow-item-assignments.jsonl",
+      "role_membership_resolution_queue": "data/discovery/normalized/role-membership-resolution-queue.jsonl",
+      "semantic_summary": "data/discovery/inspection/compact-semantic-summary.json"
+    },
+    "load_status": "NOT_LOADED_TO_POSTGRESQL",
+    "role_membership_status": "PENDING_ROLE_MEMBER_API"
+  },
+  "discovered_semantics": {
+    "assignment": {
+      "source_field_path": "_current_assigned_to",
+      "cardinality": "PROCESS_ITEM 1:N ASSIGNMENT_PRINCIPAL",
+      "principal_types": [
+        "APP_ROLE",
+        "USER"
+      ],
+      "distinct_role_count": 1,
+      "distinct_roles": [
+        {
+          "role_id": "RoDiFnpbtj4u",
+          "role_name": "IT Agents Refex"
+        }
+      ],
+      "assignment_counts_by_principal": [
+        {
+          "principal_id": "UsDYHFU4f3ES",
+          "principal_name": "Mohamed Aasik Ilahi M",
+          "principal_kind": "USER",
+          "assigned_item_count": 42
+        },
+        {
+          "principal_id": "UsDGmglyEMR9",
+          "principal_name": "Pravin Kumar Raja",
+          "principal_kind": "USER",
+          "assigned_item_count": 8
+        },
+        {
+          "principal_id": "UsCx3vovNk0v",
+          "principal_name": "Gowtham S",
+          "principal_kind": "USER",
+          "assigned_item_count": 5
+        },
+        {
+          "principal_id": "RoDiFnpbtj4u",
+          "principal_name": "IT Agents Refex",
+          "principal_kind": "APP_ROLE",
+          "assigned_item_count": 4
+        },
+        {
+          "principal_id": "UsCy9_Q7B_w9",
+          "principal_name": "Murugesh Kumar",
+          "principal_kind": "USER",
+          "assigned_item_count": 4
+        },
+        {
+          "principal_id": "UsDGmRyKyIZA",
+          "principal_name": "Ramya",
+          "principal_kind": "USER",
+          "assigned_item_count": 3
+        },
+        {
+          "principal_id": "UsCw2I27fXaf",
+          "principal_name": "Karthikaa",
+          "principal_kind": "USER",
+          "assigned_item_count": 2
+        },
+        {
+          "principal_id": "UsCy_sBQil8n",
+          "principal_name": "Reginold J",
+          "principal_kind": "USER",
+          "assigned_item_count": 1
+        }
+      ]
+    },
+    "lifecycle": {
+      "lifecycle_status": {
+        "field_path": "_status",
+        "observed_values": [
+          "Completed",
+          "InProgress",
+          "Withdrawn"
+        ],
+        "pending_values": [
+          "InProgress"
+        ],
+        "completed_values": [
+          "Completed"
+        ],
+        "withdrawn_values": [
+          "Withdrawn"
+        ],
+        "withdrawn_handling": "TRACKED_AS_SEPARATE_BUCKET"
+      }
+    },
+    "unresolved_dependencies": [
+      {
+        "dependency": "Kissflow Application Role Membership API",
+        "reason": "_current_assigned_to contains AppRole principal(s) (IT Agents Refex) whose member users are not present in process-item payloads",
+        "blocking": true,
+        "affected_outputs": [
+          "Accurate assigned-user counts",
+          "Pending workload by user",
+          "User adoption ratio"
+        ],
+        "recovery": "Resolve role_id RoDiFnpbtj4u via Role Membership API, store members with snapshot timestamps"
+      }
+    ]
+  }
+}

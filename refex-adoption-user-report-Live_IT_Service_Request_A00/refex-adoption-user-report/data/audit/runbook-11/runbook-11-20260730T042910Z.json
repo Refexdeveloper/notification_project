@@ -1,0 +1,25 @@
+{
+  "action": "RENDER_COMBINED_HTML_REPORT",
+  "generated_at": "2026-07-30T04:29:12Z",
+  "output_file": "/Users/mohamedasaikilahi/Downloads/My Refex Data/Aasik Data/Projects/refex-adoption-user-report-Live_IT_Service_Request_A00/refex-adoption-user-report/templates/generated/combined-report-20260730T042910Z.html",
+  "mutation_performed": false,
+  "user_summary": {
+    "total_users": 326,
+    "signed_in_users": 153,
+    "signed_in_today": 1,
+    "never_logged_in": 173
+  },
+  "itsm_summary": {
+    "total_tickets": 179,
+    "open_tickets": 7,
+    "closed_tickets": 172,
+    "sla_breached_open": 6,
+    "sla_breached_closed": 47
+  },
+  "pm_summary": {
+    "total_tasks": 369,
+    "assigned_tasks": 332,
+    "pending_tasks": 147,
+    "completed_tasks": 222
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-07-23T07:39:48Z",
+  "environment": "development",
+  "base_url": "https://development-refexgroup.kissflow.com",
+  "account_id": "AcCMptp3yqcn",
+  "process_id": "Live_IT_Service_Request_A00",
+  "user_count": 46,
+  "item_count": 209,
+  "outputs": {
+    "users": "data/discovery/users.jsonl",
+    "user_details": "data/discovery/user-details.jsonl",
+    "user_semantics": "data/discovery/user-semantics-summary.json",
+    "items": "data/discovery/items.jsonl",
+    "item_details": "data/discovery/item-details.jsonl",
+    "item_semantics": "data/discovery/item-semantics-summary.json"
+  }
+}
