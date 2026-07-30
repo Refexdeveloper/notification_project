@@ -22,7 +22,7 @@ COPY db/ ./db/
 RUN chmod +x ./ops/runbooks/*.sh ./services/engagement-pipeline/ops/runbooks/*.sh
 
 ENV REPO_ROOT=/app
-ENV RUNBOOK_TO_RUN=18-render-and-send-lead-tracker-report.sh
+ENV RUNBOOK_TO_RUN=19-dispatch-scheduled-report.sh
 ENV PORT=8080
 
 EXPOSE 8080

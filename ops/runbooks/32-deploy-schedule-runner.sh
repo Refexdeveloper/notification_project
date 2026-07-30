@@ -60,7 +60,7 @@ deploy_service() {
     --port=8080 \
     --no-allow-unauthenticated \
     --add-cloudsql-instances="${CLOUD_SQL_CONNECTION}" \
-    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,REPO_ROOT=/app,RUNBOOK_TO_RUN=18-render-and-send-lead-tracker-report.sh" \
+    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,REPO_ROOT=/app,RUNBOOK_TO_RUN=19-dispatch-scheduled-report.sh" \
     --set-secrets="PGPASSWORD=${PG_SECRET}:latest" \
     --service-account="${SERVICE_ACCOUNT}" \
     --memory=1Gi \
