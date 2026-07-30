@@ -4,6 +4,8 @@ import {
   isBackendApiMode,
   type ApplicationsListResponse,
   type BackendApplicationRow,
+  type BackendProcessRow,
+  type ProcessesListResponse,
 } from './backendApi';
 import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
 
@@ -78,5 +80,87 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     applications: res.data.items.map(mapRowToApplication),
     source: 'backend',
     warning: res.data.warning || res.data.hint,
+  };
+}
+
+export type ApplicationLoadResult = {
+  application: KissflowApplication | null;
+  error?: string;
+  warning?: string;
+};
+
+/** Parse route id `{environment}-{application_id}` from backend list cards. */
+export function parseBackendApplicationRouteId(routeId: string): {
+  environment: string;
+  applicationId: string;
+} | null {
+  const dash = routeId.indexOf('-');
+  if (dash <= 0) return null;
+  const environment = routeId.slice(0, dash);
+  const applicationId = routeId.slice(dash + 1);
+  if (!environment || !applicationId) return null;
+  return { environment, applicationId };
+}
+
+function attachProcesses(
+  app: KissflowApplication,
+  environment: string,
+  processes: BackendProcessRow[],
+): KissflowApplication {
+  const envLower = environment.toLowerCase();
+  const forEnv = processes.filter((p) => p.environment.toLowerCase() === envLower);
+  const processIds = forEnv.map((p) => p.process_id);
+  return {
+    ...app,
+    processIds,
+    processesCount: processIds.length,
+    description:
+      forEnv.length === 1
+        ? forEnv[0].process_name
+        : app.description,
+  };
+}
+
+/** Load one application (and its processes) from backend-api by route id. */
+export async function loadApplicationFromBackend(routeId: string): Promise<ApplicationLoadResult> {
+  if (!isBackendApiMode()) {
+    return { application: null };
+  }
+
+  const parsed = parseBackendApplicationRouteId(routeId);
+  if (!parsed) {
+    return { application: null, error: 'Invalid application id' };
+  }
+
+  const appsRes = await apiV1Fetch<ApplicationsListResponse>('/applications');
+  if (!appsRes.ok || !appsRes.data) {
+    return {
+      application: null,
+      error: appsRes.error || 'Failed to load applications',
+    };
+  }
+
+  const row = appsRes.data.items.find(
+    (item) =>
+      item.application_id === parsed.applicationId &&
+      item.environment.toLowerCase() === parsed.environment.toLowerCase(),
+  );
+  if (!row) {
+    return { application: null, error: 'Application not found in database' };
+  }
+
+  const processesRes = await apiV1Fetch<ProcessesListResponse>(
+    `/applications/${encodeURIComponent(parsed.applicationId)}/processes`,
+  );
+
+  let application = mapRowToApplication(row);
+  if (processesRes.ok && processesRes.data) {
+    application = attachProcesses(application, parsed.environment, processesRes.data.items);
+  }
+
+  return {
+    application,
+    warning: processesRes.data?.warning || processesRes.data?.hint || appsRes.data.warning,
+    error: !processesRes.ok ? processesRes.error : undefined,
   };
 }

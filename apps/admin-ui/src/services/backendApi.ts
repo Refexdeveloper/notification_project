@@ -82,4 +82,21 @@ export type ApplicationsListResponse = {
   items: BackendApplicationRow[];
   count: number;
   warning?: string;
+  hint?: string;
+};
+
+export type BackendProcessRow = {
+  environment: string;
+  process_id: string;
+  application_id: string;
+  process_name: string;
+  last_seen_at: string;
+  is_current: boolean;
+};
+
+export type ProcessesListResponse = {
+  items: BackendProcessRow[];
+  count: number;
+  warning?: string;
+  hint?: string;
 };
