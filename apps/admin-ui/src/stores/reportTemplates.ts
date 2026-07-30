@@ -2,6 +2,14 @@
 
 import { sampleLeadReportTableHtml } from '@/services/leadReport';
 
+function sampleEngagementUserTableHtml(): string {
+  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td></tr>`;
+}
+
+function samplePmUserTableHtml(): string {
+  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 09:40</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>3</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">12</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-28 16:05</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">8</td></tr>`;
+}
+
 export type TemplateStatus = 'draft' | 'published' | 'archived';
 
 export interface ReportTemplate {
@@ -191,27 +199,52 @@ export function publishTemplate(id: string): ReportTemplate | undefined {
 /** Preview with sample placeholder values */
 export function renderPreviewHtml(html: string, overrides: Record<string, string> = {}): string {
   const samples: Record<string, string> = {
-    ReportTitle: 'User engagement report',
-    ReportDate: new Date().toLocaleDateString('en-IN', { dateStyle: 'medium' }),
+    ReportTitle: 'Kissflow User Engagement Report',
+    ReportDate: new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }) + ' IST',
     RecipientName: 'Team',
-    TotalUsers: '262',
-    SignedInUsers: '149',
-    SignInRate: '56%',
-    OpenTickets: '4',
-    ClosedTickets: '128',
-    NeverSignedIn: '113',
-    ReportBody: 'This is a live preview of your HTML report template.',
+    TotalUsers: '326',
+    SignedInUsers: '153',
+    SignInRate: '46%',
+    SignInRateToday: '2%',
+    SignedInToday: '7',
+    OpenTickets: '5',
+    ClosedTickets: '159',
+    TotalTickets: '164',
+    NeverSignedIn: '173',
+    SlaBreachedTotal: '50',
+    SlaBreachedOpen: '4',
+    SlaBreachedClosed: '46',
+    OpenedToday: '5',
+    ClosedToday: '4',
+    TotalTasks: '240',
+    AssignedTasks: '180',
+    PendingTasks: '42',
+    CompletedTasks: '198',
+    UserTableHtml: sampleEngagementUserTableHtml(),
+    ReportBody:
+      "Scoped to Entity = Refex only. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix.",
     CompanyName: 'REFEX',
     WebsiteName: 'Website',
     GroupName: 'Sales Team Modepro',
     TotalLeads: '6',
     OpenLeads: '3',
     ClosedLeads: '4',
-    SignedInToday: '0',
     SalesPersons: '3',
     LeadTableHtml: sampleLeadReportTableHtml(),
     ...overrides,
   };
+  if (html.includes('Project Management Task Report') || html.includes('Project Task')) {
+    samples.ReportTitle = 'Project Management Task Report';
+    samples.UserTableHtml = samplePmUserTableHtml();
+    samples.ReportBody = 'Project Tracker covers all entities group-wide.';
+  }
   return html.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key: string) => {
     const k = key.trim();
     return samples[k] ?? `{{${k}}}`;

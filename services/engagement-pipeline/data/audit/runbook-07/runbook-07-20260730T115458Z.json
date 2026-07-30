@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-30T11:55:03Z",
+  "recipient": "mohamedaasik.m@refex.co.in",
+  "subject": "Kissflow - User Signin Report",
+  "status": "SENT",
+  "report_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/services/engagement-pipeline/templates/generated/report-latest.html",
+  "mutation_performed": false
+}

@@ -1,8 +1,13 @@
+import { useEffect, useState } from 'react';
 import type { KissflowApplication } from '@/mocks/applications';
 import { buildResourcesFromApp } from '../utils/buildResources';
 import { getConnection } from '@/mocks/connection';
 import { getTemplatesByAppId } from '@/stores/reportTemplates';
 import { getSchedulersByAppId } from '@/stores/reportSchedulers';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadSchedulesFromBackend, loadTemplatesFromBackend } from '@/services/reportsApi';
+import type { ReportScheduler } from '@/stores/reportSchedulers';
+import type { ReportTemplate } from '@/stores/reportTemplates';
 
 interface OverviewTabProps {
   app: KissflowApplication;
@@ -10,21 +15,43 @@ interface OverviewTabProps {
 }
 
 export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
+  const backendMode = isBackendApiMode();
+  const [backendTemplates, setBackendTemplates] = useState<ReportTemplate[]>([]);
+  const [backendSchedules, setBackendSchedules] = useState<ReportScheduler[]>([]);
+
+  useEffect(() => {
+    if (!backendMode) return;
+    let cancelled = false;
+    Promise.all([loadTemplatesFromBackend(app), loadSchedulesFromBackend(app)]).then(
+      ([templatesRes, schedulesRes]) => {
+        if (cancelled) return;
+        setBackendTemplates(templatesRes.templates);
+        setBackendSchedules(schedulesRes.schedulers);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [app, backendMode]);
+
   const resources = buildResourcesFromApp(app);
   const connection = getConnection(app.id);
-  const templates = getTemplatesByAppId(app.id);
-  const schedules = getSchedulersByAppId(app.id);
+  const templates = backendMode ? backendTemplates : getTemplatesByAppId(app.id);
+  const schedules = backendMode ? backendSchedules : getSchedulersByAppId(app.id);
   const fieldCount = app.discoveredFields?.length ?? 0;
-  const isConnected = app.connected || connection.lastTestStatus === 'success';
+  const processCount = backendMode ? app.processIds?.length ?? 0 : resources.length;
+  const isConnected = backendMode
+    ? app.connected !== false
+    : app.connected || connection.lastTestStatus === 'success';
   const published = templates.filter((t) => t.status === 'published').length;
 
   const nextSteps = [
     {
       done: isConnected,
-      title: 'Connect Kissflow',
-      hint: 'Test your access keys',
-      tab: 'connection',
-      icon: 'ri-plug-line',
+      title: backendMode ? 'Application registered' : 'Connect Kissflow',
+      hint: backendMode ? 'Stored in PostgreSQL with process links' : 'Test your access keys',
+      tab: backendMode ? 'engagement' : 'connection',
+      icon: backendMode ? 'ri-database-2-line' : 'ri-plug-line',
     },
     {
       done: fieldCount > 0,
@@ -51,11 +78,18 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
 
   return (
     <div className="space-y-5">
+      {backendMode && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          Backend mode: templates, schedules, users, and field sync use PostgreSQL via backend-api.
+          Legacy Connect, Processes workspace, and App settings tabs are hidden.
+        </div>
+      )}
+
       <div className="surface p-5">
         <div className="mb-4">
           <h3 className="text-base font-heading font-semibold text-foreground-950">Get started</h3>
           <p className="text-xs text-foreground-500 mt-0.5">
-            Connect → sync → design templates → schedule to chosen people.
+            Sync fields → design templates → configure schedules and recipients.
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -88,7 +122,11 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <StatCard label="Processes" value={resources.length} onClick={() => onNavigateTab('resources')} />
+        <StatCard
+          label={backendMode ? 'Processes' : 'Resources'}
+          value={processCount}
+          onClick={() => onNavigateTab(backendMode ? 'discovery' : 'resources')}
+        />
         <StatCard label="Fields synced" value={fieldCount} onClick={() => onNavigateTab('discovery')} />
         <StatCard label="Kissflow users" value="→" onClick={() => onNavigateTab('engagement')} />
         <StatCard label="Templates" value={templates.length} onClick={() => onNavigateTab('templates')} />
@@ -99,17 +137,23 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
         <div className="surface p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-heading font-semibold text-foreground-950">App details</h3>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('settings')}
-              className="text-xs font-semibold text-primary-700 cursor-pointer"
-            >
-              Edit
-            </button>
+            {!backendMode && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('settings')}
+                className="text-xs font-semibold text-primary-700 cursor-pointer"
+              >
+                Edit
+              </button>
+            )}
           </div>
           <div className="space-y-2 text-sm">
             <Row label="Account" value={app.accountId} />
-            <Row label="App ID" value={app.appId || '—'} />
+            <Row label="Application ID" value={app.appId || '—'} />
+            <Row
+              label="Process"
+              value={(app.processIds || [])[0] || '—'}
+            />
             <Row label="Host" value={`${app.subdomain}.kissflow.${app.region}`} />
             <Row label="Schedules" value={String(schedules.length)} />
           </div>
@@ -117,16 +161,18 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
         <div className="surface p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-heading font-semibold text-foreground-950">Health</h3>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('connection')}
-              className="text-xs font-semibold text-primary-700 cursor-pointer"
-            >
-              Check connection
-            </button>
+            {!backendMode && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('connection')}
+                className="text-xs font-semibold text-primary-700 cursor-pointer"
+              >
+                Check connection
+              </button>
+            )}
           </div>
           <div className="space-y-3 text-sm">
-            <Row label="Connection" value={isConnected ? 'Ready' : 'Needs setup'} ok={isConnected} />
+            <Row label="Registration" value={isConnected ? 'Ready' : 'Needs setup'} ok={isConnected} />
             <Row
               label="Active schedules"
               value={String(schedules.filter((s) => s.status === 'active').length)}

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createApplicationFromForm, type AddApplicationInput } from '@/mocks/applications';
+import { createApplicationOnBackend, toDbEnvironment, validateApplicationOnBackend } from '@/services/applicationsApi';
+import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 
 interface AddApplicationFormProps {
@@ -35,6 +37,9 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
   const [datasetIds, setDatasetIds] = useState<string[]>(['']);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [validated, setValidated] = useState(false);
 
   const update = <K extends keyof AccountForm>(key: K, value: AccountForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -52,11 +57,75 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
     setForm(emptyAccount);
     resetIds();
     setError('');
-    setSaving(false);
+    setValidationWarnings([]);
+    setValidated(false);
     onClose();
   };
 
-  const handleSubmit = (e?: React.FormEvent) => {
+  const buildPayload = () => ({
+    kissflow_account_id: form.accountId.trim(),
+    application_id: form.appId.trim(),
+    application_name: form.name.trim() || form.appId.trim(),
+    display_name: form.name.trim() || `Refex ${form.environment}`,
+    subdomain: form.subdomain.trim(),
+    region: form.region,
+    environment: toDbEnvironment(form.environment),
+    description: form.description.trim(),
+    access_key_id: form.accessKeyId.trim(),
+    access_key_secret: form.accessKeySecret.trim(),
+    process_ids: processIds.filter((id) => id.trim()),
+    dataform_ids: dataformIds.filter((id) => id.trim()),
+    board_ids: boardIds.filter((id) => id.trim()),
+    dataset_ids: datasetIds.filter((id) => id.trim()),
+  });
+
+  const applyDiscoveredIds = (discovery: {
+    process_ids?: string[];
+    dataform_ids?: string[];
+    board_ids?: string[];
+    dataset_ids?: string[];
+  }) => {
+    if (discovery.process_ids?.length) {
+      setProcessIds(discovery.process_ids);
+    }
+    if (discovery.dataform_ids?.length) {
+      setDataformIds(discovery.dataform_ids);
+    }
+    if (discovery.board_ids?.length) {
+      setBoardIds(discovery.board_ids);
+    }
+    if (discovery.dataset_ids?.length) {
+      setDatasetIds(discovery.dataset_ids);
+    }
+  };
+
+  const handleValidate = async (): Promise<boolean> => {
+    if (!form.accountId.trim() || !form.appId.trim() || !form.subdomain.trim()) {
+      setError('Account ID, App ID, and Subdomain are required before validation.');
+      return false;
+    }
+    if (!form.accessKeyId.trim() || !form.accessKeySecret.trim()) {
+      setError('Access Key ID and Secret are required before validation.');
+      return false;
+    }
+
+    setValidating(true);
+    setError('');
+    setValidationWarnings([]);
+    const result = await validateApplicationOnBackend(buildPayload());
+    setValidating(false);
+    if (!result.ok) {
+      setError(result.error || 'Kissflow validation failed');
+      setValidated(false);
+      return false;
+    }
+    applyDiscoveredIds(result);
+    setValidationWarnings(result.warnings || []);
+    setValidated(true);
+    return true;
+  };
+
+  const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!form.accountId.trim()) {
       setError('Account ID is required.');
@@ -76,6 +145,32 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
     }
 
     setSaving(true);
+    setError('');
+
+    if (isBackendApiMode()) {
+      if (!validated) {
+        const ok = await handleValidate();
+        if (!ok) {
+          setSaving(false);
+          return;
+        }
+      }
+
+      setSaving(true);
+      setError('');
+      const result = await createApplicationOnBackend(buildPayload());
+      setSaving(false);
+      if (!result.ok || !result.routeId) {
+        setError(result.error || 'Registration failed');
+        return;
+      }
+      const routeId = result.routeId;
+      handleClose();
+      onCreated?.();
+      navigate(`/applications/${routeId}?tab=overview`);
+      return;
+    }
+
     const app = createApplicationFromForm({
       ...form,
       processIds: processIds.filter((id) => id.trim()).join(','),
@@ -98,7 +193,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
               </div>
               <h2 className="text-xl font-heading font-semibold text-foreground-950">Connect application</h2>
               <p className="text-sm text-foreground-500 mt-1 leading-relaxed max-w-md">
-                Enter your Kissflow account details. We’ll sync fields and unlock templates & schedules.
+                Enter your Kissflow account details. We’ll register the app in PostgreSQL and unlock templates & schedules.
               </p>
             </div>
             <button
@@ -247,6 +342,21 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
               </p>
             </Section>
 
+            {validationWarnings.length > 0 && (
+              <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-900 space-y-1">
+                <p className="font-medium">Discovery notes</p>
+                {validationWarnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            )}
+
+            {validated && (
+              <div className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-100 text-sm text-emerald-800">
+                Kissflow connection verified. Review discovered resource IDs, then connect.
+              </div>
+            )}
+
             {error && (
               <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700">
                 {error}
@@ -258,7 +368,17 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
             <button type="button" onClick={handleClose} className="btn-ghost">
               Cancel
             </button>
-            <button type="button" disabled={saving} onClick={() => handleSubmit()} className="btn-primary">
+            {isBackendApiMode() && (
+              <button
+                type="button"
+                disabled={validating || saving}
+                onClick={() => void handleValidate()}
+                className="btn-ghost"
+              >
+                {validating ? 'Validating…' : validated ? 'Re-validate' : 'Validate Kissflow'}
+              </button>
+            )}
+            <button type="button" disabled={saving || validating} onClick={() => handleSubmit()} className="btn-primary">
               {saving ? 'Connecting…' : 'Connect application'}
             </button>
           </div>

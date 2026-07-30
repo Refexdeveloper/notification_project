@@ -1,4 +1,5 @@
 import type { KissflowApplication } from '@/mocks/applications';
+import { resolveBackendApplicationId } from '@/services/applicationsApi';
 import type { EngagementReport, UserEngagementRow } from '@/services/userAnalytics';
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
 
@@ -119,7 +120,8 @@ export async function loadEngagementFromBackend(app: KissflowApplication): Promi
   }
 
   const environment = toDbEnvironment(app.environment);
-  const path = `/applications/${encodeURIComponent(app.appId)}/engagement?environment=${encodeURIComponent(environment)}`;
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/engagement?environment=${encodeURIComponent(environment)}`;
   const res = await apiV1Fetch<EngagementListResponse>(path);
 
   if (!res.ok || !res.data) {

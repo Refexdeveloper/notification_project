@@ -114,11 +114,9 @@ export default function ApplicationsPage() {
 
         <div className="flex flex-1 flex-col sm:flex-row sm:items-center gap-3 lg:justify-end">
           <EnvToggle value={environment} onChange={selectEnvironment} />
-          {!isBackendApiMode() && (
-            <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
-              Connect
-            </Button>
-          )}
+          <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
+            Connect
+          </Button>
         </div>
       </div>
 
@@ -185,21 +183,19 @@ export default function ApplicationsPage() {
           title={`No ${environment.toLowerCase()} applications`}
           description={
             isBackendApiMode()
-              ? 'No applications in PostgreSQL for this environment yet. Run ingestion to populate engagement_reporting.application.'
+              ? 'Connect a Kissflow application for this environment. Registration stores account metadata and credential refs in PostgreSQL (secrets are not stored in the database).'
               : 'Connect a Kissflow account for this environment to sync fields and schedule reports.'
           }
-          primaryLabel={isBackendApiMode() ? undefined : 'Connect Application'}
-          onPrimary={isBackendApiMode() ? undefined : () => setFormOpen(true)}
+          primaryLabel="Connect Application"
+          onPrimary={() => setFormOpen(true)}
         />
       )}
 
-      {!isBackendApiMode() && (
-        <AddApplicationForm
-          open={formOpen}
-          onClose={() => setFormOpen(false)}
-          onCreated={() => setTick((t) => t + 1)}
-        />
-      )}
+      <AddApplicationForm
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        onCreated={() => setTick((t) => t + 1)}
+      />
     </Layout>
   );
 }

@@ -57,7 +57,12 @@ export async function apiV1Fetch<T>(
       ok: false,
       status: 0,
       data: null,
-      error: err instanceof Error ? err.message : String(err),
+      error:
+        err instanceof Error && err.message === 'Failed to fetch'
+          ? 'Network error — check API URL and CORS (Admin UI must reach backend-api).'
+          : err instanceof Error
+            ? err.message
+            : String(err),
     };
   }
 }
@@ -76,6 +81,10 @@ export type BackendApplicationRow = {
   application_name: string;
   last_seen_at: string;
   is_current: boolean;
+  kissflow_account_id?: string | null;
+  subdomain?: string | null;
+  region?: string | null;
+  description?: string | null;
 };
 
 export type ApplicationsListResponse = {
@@ -92,6 +101,9 @@ export type BackendProcessRow = {
   process_name: string;
   last_seen_at: string;
   is_current: boolean;
+  field_sync_at?: string | null;
+  field_item_count?: number;
+  field_count?: number;
 };
 
 export type ProcessesListResponse = {

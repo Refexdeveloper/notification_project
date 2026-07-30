@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { navigationItems } from '@/mocks/navigation';
+import { sidebarNavigationItems } from '@/config/backendSurface';
 import { useAuth } from '@/hooks/AuthContext';
 import refexLogo from '@/assets/refex-logo.png';
 import { duration, easeOutExpo } from '@/lib/motion';
@@ -83,7 +83,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </p>
         )}
 
-        {navigationItems.map((item) => {
+        {sidebarNavigationItems().map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
           return (

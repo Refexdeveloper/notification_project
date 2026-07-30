@@ -5,6 +5,10 @@ import {
   updateApplicationFromForm,
   type KissflowApplication,
 } from '@/mocks/applications';
+import { deleteApplicationOnBackend } from '@/services/applicationsApi';
+import { isBackendApiMode } from '@/services/backendApi';
+import Modal from '@/components/ui/Modal';
+import { Button } from '@/components/ui/Button';
 
 interface SettingsTabProps {
   app: KissflowApplication;
@@ -17,6 +21,7 @@ function toRows(ids: string[] | undefined): string[] {
 
 export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
   const navigate = useNavigate();
+  const backendMode = isBackendApiMode();
   const [accountId, setAccountId] = useState(app.accountId);
   const [appId, setAppId] = useState(app.appId || '');
   const [subdomain, setSubdomain] = useState(app.subdomain);
@@ -33,7 +38,8 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
   const [accessKeySecret, setAccessKeySecret] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setAccountId(app.accountId);
@@ -52,11 +58,16 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setAccessKeySecret('');
     setError('');
     setSaved(false);
-    setConfirmDelete(false);
+    setDeleteDialogOpen(false);
+    setDeleting(false);
   }, [app.id, app.lastSync]);
 
   const save = (e?: React.FormEvent) => {
     e?.preventDefault();
+    if (backendMode) {
+      setError('Application metadata editing in PostgreSQL is not enabled yet. Use delete below to remove this app.');
+      return;
+    }
     if (!accountId.trim()) {
       setError('Account ID is required.');
       return;
@@ -107,17 +118,39 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setTimeout(() => setSaved(false), 2500);
   };
 
-  const remove = () => {
-    deleteApplication(app.id);
-    navigate('/applications');
+  const remove = async () => {
+    setDeleting(true);
+    setError('');
+    try {
+      if (backendMode) {
+        const result = await deleteApplicationOnBackend(app.id);
+        if (!result.ok) {
+          setError(result.error || 'Could not delete application');
+          setDeleting(false);
+          return;
+        }
+        setDeleteDialogOpen(false);
+        navigate('/applications');
+        return;
+      }
+      deleteApplication(app.id);
+      setDeleteDialogOpen(false);
+      navigate('/applications');
+    } catch {
+      setError('Could not delete application.');
+      setDeleting(false);
+    }
   };
+
+  const appLabel = app.displayName || app.name;
 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="bg-primary-50 border border-primary-100 rounded-xl px-4 py-3">
         <p className="text-xs text-primary-800">
-          Edit the Kissflow account, resource IDs, and access keys registered for this application.
-          Changes apply to API Explorer, User Engagement, and Connection.
+          {backendMode
+            ? 'View registered Kissflow metadata. Delete removes this application from PostgreSQL (not from Kissflow).'
+            : 'Edit the Kissflow account, resource IDs, and access keys registered for this application. Changes apply to API Explorer, User Engagement, and Connection.'}
         </p>
       </div>
 
@@ -270,34 +303,37 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
         <p className="text-xs text-foreground-500">
           Remove this application from the portal. This does not delete anything in Kissflow.
         </p>
-        {!confirmDelete ? (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            className="h-9 px-3.5 rounded-lg border border-red-200 text-sm font-medium text-red-700 hover:bg-red-50 cursor-pointer"
-          >
-            Delete application
-          </button>
-        ) : (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-red-600">Delete “{app.displayName || app.name}”?</span>
-            <button
-              type="button"
-              onClick={remove}
-              className="h-8 px-3 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 cursor-pointer"
-            >
-              Confirm delete
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(false)}
-              className="h-8 px-3 rounded-[10px] text-xs font-semibold text-foreground-700 bg-white border border-[#D7E6F4] hover:border-primary-300 hover:bg-[#F8FBFF] cursor-pointer"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={() => setDeleteDialogOpen(true)}
+          className="h-9 px-3.5 rounded-lg border border-red-200 text-sm font-medium text-red-700 hover:bg-red-50 cursor-pointer"
+        >
+          Delete application
+        </button>
       </section>
+
+      <Modal open={deleteDialogOpen} onClose={() => !deleting && setDeleteDialogOpen(false)} className="max-w-md">
+        <div className="px-6 py-5 border-b border-background-200/70">
+          <h2 className="text-lg font-heading font-semibold text-foreground-950">Delete application?</h2>
+          <p className="text-sm text-foreground-500 mt-2 leading-relaxed">
+            Do you want to delete <span className="font-semibold text-foreground-800">{appLabel}</span>? This removes
+            the app from the portal and PostgreSQL. Nothing is deleted in Kissflow.
+          </p>
+        </div>
+        <div className="px-6 py-4 flex items-center justify-end gap-2.5 bg-background-50/40">
+          <Button type="button" variant="ghost" disabled={deleting} onClick={() => setDeleteDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={deleting}
+            onClick={() => void remove()}
+            className="bg-red-600 hover:bg-red-700 text-white border-red-600"
+          >
+            {deleting ? 'Deleting…' : 'Yes, delete application'}
+          </Button>
+        </div>
+      </Modal>
 
       <style>{`
         .input {

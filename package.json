@@ -6,7 +6,6 @@
   "workspaces": [
     "apps/admin-ui",
     "services/backend-api",
-    "services/prototype-mysql-api",
     "packages/*"
   ],
   "scripts": {

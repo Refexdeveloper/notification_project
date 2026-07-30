@@ -11,10 +11,12 @@ import {
 } from '@/services/userAnalytics';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadEngagementFromBackend } from '@/services/engagementApi';
+import { buildLeadReport, type LeadReport } from '@/services/leadReport';
 import {
   kissflowExtraDetailEntries,
   kissflowUserDetailEntries,
 } from '@/services/kissflowUserDisplay';
+import { REFEX_ENV_CONFIG } from '@/seeds/refexAppCatalog';
 import Sheet from '@/components/ui/Sheet';
 
 interface EngagementTabProps {
@@ -31,6 +33,76 @@ const FILTER_PILLS: { value: LoginFilter; label: string }[] = [
   { value: 'inactive', label: 'Inactive' },
   { value: 'never', label: 'Never' },
 ];
+
+function withKissflowCredentials(app: KissflowApplication): KissflowApplication {
+  const creds = REFEX_ENV_CONFIG[app.environment];
+  return {
+    ...app,
+    accountId: app.accountId || creds.accountId,
+    subdomain: app.subdomain || creds.subdomain,
+    accessKeyId: app.accessKeyId || creds.accessKeyId,
+    accessKeySecret: app.accessKeySecret || creds.accessKeySecret,
+  };
+}
+
+function hasKissflowCredentials(app: KissflowApplication): boolean {
+  const resolved = withKissflowCredentials(app);
+  return Boolean(resolved.accessKeyId && resolved.accessKeySecret);
+}
+
+function isLeadTrackerApp(app: KissflowApplication): boolean {
+  return (
+    app.id.includes('lead-tracker') ||
+    app.appId.includes('Lead_tracker') ||
+    app.appId.includes('Lead_Trcaker') ||
+    app.name.toLowerCase().includes('lead tracker')
+  );
+}
+
+function leadReportToEngagement(report: LeadReport, app: KissflowApplication): EngagementReport {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  return {
+    applicationId: app.id,
+    generatedAt: report.generatedAt,
+    users: report.rows.map((row) => {
+      const lastLogin = row.lastSignedIn;
+      const loginDate = lastLogin ? new Date(lastLogin) : null;
+      const loggedInToday = Boolean(loginDate && loginDate >= start);
+      return {
+        userId: row.email || row.name,
+        email: row.email,
+        name: row.name,
+        role: '',
+        department: '',
+        status: 'Active',
+        lastLogin,
+        loggedInToday,
+        daysSinceLogin:
+          loginDate && !Number.isNaN(loginDate.getTime())
+            ? Math.floor((Date.now() - loginDate.getTime()) / (1000 * 60 * 60 * 24))
+            : null,
+        assigned: row.openLeads + row.closedLeads,
+        open: row.openLeads,
+        pending: 0,
+        closed: 0,
+        completed: row.closedLeads,
+        rejected: 0,
+        other: 0,
+        byResource: [],
+      };
+    }),
+    totals: {
+      totalUsers: report.rows.length,
+      activeToday: report.rows.filter((r) => r.loggedInToday).length,
+      inactive: report.rows.filter((r) => r.lastSignedIn && !r.loggedInToday).length,
+      neverLoggedIn: report.rows.filter((r) => !r.lastSignedIn).length,
+      totalAssigned: report.totals.totalLeads,
+    },
+    errors: report.errors,
+    source: report.source,
+  };
+}
 
 function matchesFilter(u: UserEngagementRow, filter: LoginFilter): boolean {
   if (filter === 'all') return true;
@@ -56,17 +128,41 @@ export default function EngagementTab({ app }: EngagementTabProps) {
     try {
       if (isBackendApiMode()) {
         const result = await loadEngagementFromBackend(app);
-        if (!result.report) {
-          setReport(null);
-          setErrorBanner(result.error || 'Could not load engagement from backend-api');
+        if (result.report?.users.length) {
+          setReport(result.report);
+          if (result.warning) setErrorBanner(result.warning);
+          else if (result.report.errors.length) setErrorBanner(result.report.errors.slice(0, 3).join(' · '));
           return;
         }
-        setReport(result.report);
-        if (result.warning) {
-          setErrorBanner(result.warning);
-        } else if (result.report.errors.length) {
-          setErrorBanner(result.report.errors.slice(0, 3).join(' · '));
+
+        if (isLeadTrackerApp(app) && hasKissflowCredentials(app)) {
+          const kissflowApp = withKissflowCredentials(app);
+          const lead = await buildLeadReport(kissflowApp, {
+            processId: kissflowApp.processIds?.[0] || 'Lead_tracker_1_A00',
+          });
+          if (lead.rows.length) {
+            setReport(leadReportToEngagement(lead, app));
+            setErrorBanner(
+              'Showing live Kissflow lead assignees. Run ops/runbooks/16-ingest-lead-tracker-and-load.sh to cache in PostgreSQL.',
+            );
+            return;
+          }
+          if (lead.errors.length) {
+            setReport(result.report);
+            setErrorBanner(lead.errors.slice(0, 3).join(' · '));
+            return;
+          }
         }
+
+        setReport(result.report);
+        setErrorBanner(
+          result.error ||
+            (isLeadTrackerApp(app)
+              ? hasKissflowCredentials(app)
+                ? 'No lead assignees found in PostgreSQL or Kissflow. Run: bash ops/runbooks/16-ingest-lead-tracker-and-load.sh'
+                : 'Kissflow credentials missing in Admin UI. Run: bash ops/runbooks/sync-kissflow-env-local.sh then restart Admin UI (npm run dev).'
+              : 'Could not load engagement from backend-api'),
+        );
         return;
       }
 
@@ -95,6 +191,13 @@ export default function EngagementTab({ app }: EngagementTabProps) {
       void refresh();
     }
   }, [app.id, refresh]);
+
+  const appRoleCount = useMemo(() => {
+    if (!report) return 0;
+    return report.users.filter(
+      (u) => u.hasAppRole || (u.appRoleNames && u.appRoleNames.length > 0),
+    ).length;
+  }, [report]);
 
   const rows = useMemo(() => {
     if (!report) return [];
@@ -214,12 +317,17 @@ export default function EngagementTab({ app }: EngagementTabProps) {
       </div>
 
       {report && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className={`grid grid-cols-2 gap-2 ${isBackendApiMode() ? 'md:grid-cols-3 lg:grid-cols-6' : 'md:grid-cols-5'}`}>
           <Stat
-            label="Total users"
+            label={isBackendApiMode() ? 'Users in this app' : 'Total users'}
             value={report.totals.totalUsers}
             active={loginFilter === 'all'}
             onClick={() => setLoginFilter('all')}
+            hint={
+              isBackendApiMode()
+                ? 'People with assignments or app roles in this application only'
+                : 'All users in engagement report'
+            }
           />
           <Stat
             label="Active today"
@@ -249,11 +357,11 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           />
           {isBackendApiMode() && (
             <Stat
-              label="App members"
-              value={report.totals.totalUsers}
-              active={loginFilter === 'all'}
-              onClick={() => setLoginFilter('all')}
-              hint="Assignments or app roles in this application"
+              label="App role"
+              value={appRoleCount}
+              active={loginFilter === 'role'}
+              onClick={() => setLoginFilter('role')}
+              hint="Users with a Kissflow app role on this application"
             />
           )}
         </div>
@@ -397,7 +505,10 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-12 text-center text-sm text-foreground-500">
+                  <td
+                    colSpan={isBackendApiMode() ? 11 : 10}
+                    className="px-3 py-12 text-center text-sm text-foreground-500"
+                  >
                     {filterActive
                       ? 'No users match this filter. Try another card or clear the filter.'
                       : 'No engagement data yet. Click Refresh analytics to pull users and records from Kissflow.'}
@@ -406,7 +517,10 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               )}
               {loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-12 text-center text-sm text-foreground-500">
+                  <td
+                    colSpan={isBackendApiMode() ? 11 : 10}
+                    className="px-3 py-12 text-center text-sm text-foreground-500"
+                  >
                     Aggregating users and records…
                   </td>
                 </tr>

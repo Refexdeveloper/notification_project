@@ -1,25 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Home,
-  Plug,
-  Radar,
-  Layers,
-  Mail,
-  CalendarClock,
-  History,
-  Settings,
-  RefreshCw,
-  Pencil,
-  AlertCircle,
-  Users,
-} from 'lucide-react';
+import { applicationDetailTabs, defaultApplicationTab, type AppDetailTabId } from '@/config/backendSurface';
 import Layout from '@/components/feature/Layout';
 import { getApplicationById, saveDiscoveredFields } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
+import { syncFieldsOnBackend } from '@/services/fieldsApi';
 import type { KissflowApplication } from '@/mocks/applications';
 import OverviewTab from './components/OverviewTab';
 import ConnectionTab from './components/ConnectionTab';
@@ -31,23 +19,12 @@ import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
 import EngagementTab from './components/EngagementTab';
 import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
-import type { LucideIcon } from 'lucide-react';
 import { duration, easeOutSoft, springSnappy } from '@/lib/motion';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { RefreshCw, AlertCircle, Mail, Pencil } from 'lucide-react';
 import { catalogEntryForApp } from '@/seeds/refexAppCatalog';
-const TABS: { id: string; label: string; icon: LucideIcon }[] = [
-  { id: 'overview', label: 'Overview', icon: Home },
-  { id: 'connection', label: 'Connect', icon: Plug },
-  { id: 'discovery', label: 'Sync fields', icon: Radar },
-  { id: 'resources', label: 'Processes', icon: Layers },
-  { id: 'engagement', label: 'Users', icon: Users },
-  { id: 'templates', label: 'Templates', icon: Mail },
-  { id: 'schedulers', label: 'Schedules', icon: CalendarClock },
-  { id: 'history', label: 'Sent', icon: History },
-  { id: 'settings', label: 'App settings', icon: Settings },
-];
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = AppDetailTabId;
 
 export default function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
@@ -83,10 +60,20 @@ export default function ApplicationDetail() {
     return getApplicationById(id);
   }, [id, appRevision, backendApp]);
 
+  const tabs = useMemo(() => applicationDetailTabs(), []);
+
   const activeTab = useMemo(() => {
     const t = searchParams.get('tab') as TabId | null;
-    return TABS.some((tab) => tab.id === t) ? (t as TabId) : 'overview';
-  }, [searchParams]);
+    if (t && tabs.some((tab) => tab.id === t)) return t;
+    return defaultApplicationTab();
+  }, [searchParams, tabs]);
+
+  useEffect(() => {
+    const requested = searchParams.get('tab') as TabId | null;
+    if (requested && !tabs.some((tab) => tab.id === requested)) {
+      setSearchParams({ tab: defaultApplicationTab() }, { replace: true });
+    }
+  }, [searchParams, setSearchParams, tabs]);
 
   const setTab = (tab: string) => {
     setSearchParams({ tab }, { replace: true });
@@ -97,15 +84,29 @@ export default function ApplicationDetail() {
     setHeaderSyncing(true);
     setHeaderSyncError('');
     setTab('discovery');
-    const result = await syncFieldsFromAdminItems(app);
+    const adminProcessId = (app.processIds || [])[0] || app.appId;
+
+    if (isBackendApiMode()) {
+      const result = await syncFieldsOnBackend(app, adminProcessId);
+      if (!result.ok) {
+        setHeaderSyncError(result.error || 'Sync failed');
+        setHeaderSyncing(false);
+        return;
+      }
+      setAppRevision((n) => n + 1);
+      setHeaderSyncing(false);
+      return;
+    }
+
+    const result = await syncFieldsFromAdminItems(app, { processId: adminProcessId });
     if (!result.ok) {
       setHeaderSyncError(result.error || 'Sync failed');
       setHeaderSyncing(false);
       return;
     }
     saveDiscoveredFields(app.id, result.fields, result.itemCount, {
-      resourceId: (app.processIds || [])[0],
-      adminProcessId: (app.appId || '').trim(),
+      resourceId: adminProcessId,
+      adminProcessId,
     });
     setAppRevision((n) => n + 1);
     setHeaderSyncing(false);
@@ -183,9 +184,11 @@ export default function ApplicationDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
-            <Button variant="secondary" size="sm" onClick={() => setTab('settings')} leftIcon={<Pencil className="w-3.5 h-3.5" />}>
-              Edit
-            </Button>
+            {!isBackendApiMode() && (
+              <Button variant="secondary" size="sm" onClick={() => setTab('settings')} leftIcon={<Pencil className="w-3.5 h-3.5" />}>
+                Edit
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="sm"
@@ -204,7 +207,7 @@ export default function ApplicationDetail() {
 
       <div className="mb-5 overflow-x-auto pb-1">
         <div className="flex items-center gap-1 glass rounded-[18px] p-1.5 w-max min-w-full sm:min-w-0">
-          {TABS.map((tab) => {
+          {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (

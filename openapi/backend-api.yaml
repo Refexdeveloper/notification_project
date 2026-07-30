@@ -64,9 +64,17 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationRegistrationRequest'
       responses:
         '201':
           description: Created
+        '200':
+          description: Idempotent replay
         '409':
           description: Conflict
   /applications/{applicationId}/processes:
@@ -250,3 +258,53 @@ components:
           type: boolean
         details:
           type: object
+    ApplicationRegistrationRequest:
+      type: object
+      required:
+        - kissflow_account_id
+        - application_id
+        - subdomain
+        - access_key_id
+        - access_key_secret
+        - environment
+      properties:
+        kissflow_account_id:
+          type: string
+        application_id:
+          type: string
+        application_name:
+          type: string
+        display_name:
+          type: string
+        subdomain:
+          type: string
+        region:
+          type: string
+          default: com
+        environment:
+          type: string
+          example: production
+        description:
+          type: string
+        access_key_id:
+          type: string
+          description: Accepted in request body; stored as Secret Manager ref only
+        access_key_secret:
+          type: string
+          description: Accepted in request body; never persisted in PostgreSQL
+        process_ids:
+          type: array
+          items:
+            type: string
+        dataform_ids:
+          type: array
+          items:
+            type: string
+        board_ids:
+          type: array
+          items:
+            type: string
+        dataset_ids:
+          type: array
+          items:
+            type: string

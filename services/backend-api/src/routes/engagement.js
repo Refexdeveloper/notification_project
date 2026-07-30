@@ -7,14 +7,24 @@ const { getPool, isDatabaseConfigured } = require('../lib/db');
 const router = express.Router({ mergeParams: true });
 
 const APP_ENGAGEMENT_QUERY = `
-WITH latest_runs AS (
-  SELECT DISTINCT ON (process_id)
-    snapshot_run_id,
-    process_id
-  FROM engagement_reporting.snapshot_run
+WITH app_processes AS (
+  SELECT process_id
+  FROM engagement_reporting.process
   WHERE environment = $1
     AND application_id = $2
-  ORDER BY process_id, created_at DESC
+    AND is_current = true
+),
+latest_runs AS (
+  SELECT DISTINCT ON (sr.process_id)
+    sr.snapshot_run_id,
+    sr.process_id
+  FROM engagement_reporting.snapshot_run sr
+  WHERE sr.environment = $1
+    AND (
+      sr.application_id = $2
+      OR sr.process_id IN (SELECT process_id FROM app_processes)
+    )
+  ORDER BY sr.process_id, sr.created_at DESC
 ),
 latest_user_snap AS (
   SELECT snapshot_run_id, snapshot_at
@@ -35,21 +45,27 @@ app_member AS (
   FROM engagement_reporting.item_assignment ia
   INNER JOIN latest_runs lr ON ia.snapshot_run_id = lr.snapshot_run_id
   WHERE ia.environment = $1
-    AND ia.application_id = $2
     AND ia.principal_type = 'USER'
+    AND (
+      ia.application_id = $2
+      OR ia.process_id IN (SELECT process_id FROM app_processes)
+    )
   UNION
   SELECT DISTINCT pu.user_id
   FROM engagement_reporting.item_assignment ia
   INNER JOIN latest_runs lr ON ia.snapshot_run_id = lr.snapshot_run_id
   INNER JOIN engagement_reporting.principal_user pu
     ON pu.environment = ia.environment
-   AND pu.application_id = ia.application_id
+   AND pu.application_id = $2
    AND pu.principal_id = ia.principal_id
    AND pu.principal_type = ia.principal_type
    AND pu.valid_to IS NULL
   WHERE ia.environment = $1
-    AND ia.application_id = $2
     AND ia.principal_type = 'APP_ROLE'
+    AND (
+      ia.application_id = $2
+      OR ia.process_id IN (SELECT process_id FROM app_processes)
+    )
 ),
 role_names AS (
   SELECT
@@ -88,8 +104,11 @@ assignment_counts AS (
      AND i.instance_id = ia.instance_id
      AND i.snapshot_at = ia.snapshot_at
     WHERE ia.environment = $1
-      AND ia.application_id = $2
       AND ia.principal_type = 'USER'
+      AND (
+        ia.application_id = $2
+        OR ia.process_id IN (SELECT process_id FROM app_processes)
+      )
     GROUP BY ia.principal_id
     UNION ALL
     SELECT
@@ -107,13 +126,16 @@ assignment_counts AS (
      AND i.snapshot_at = ia.snapshot_at
     INNER JOIN engagement_reporting.principal_user pu
       ON pu.environment = ia.environment
-     AND pu.application_id = ia.application_id
+     AND pu.application_id = $2
      AND pu.principal_id = ia.principal_id
      AND pu.principal_type = ia.principal_type
      AND pu.valid_to IS NULL
     WHERE ia.environment = $1
-      AND ia.application_id = $2
       AND ia.principal_type = 'APP_ROLE'
+      AND (
+        ia.application_id = $2
+        OR ia.process_id IN (SELECT process_id FROM app_processes)
+      )
     GROUP BY pu.user_id
   ) counts
   GROUP BY user_id

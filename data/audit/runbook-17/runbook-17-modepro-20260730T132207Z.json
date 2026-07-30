@@ -1,0 +1,12 @@
+{
+  "action": "RENDER_LEAD_TRACKER_HTML_REPORT",
+  "generated_at": "2026-07-30T13:22:12.024Z",
+  "group_name": "Sales Team Modepro",
+  "website_filter": "Modepro",
+  "group_slug": "modepro",
+  "output_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/templates/generated/lead-tracker-modepro-20260730T132207Z.html",
+  "latest_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/templates/generated/lead-tracker-modepro-latest.html",
+  "subject": "Lead Tracker — Sales Team Modepro sales report",
+  "row_count": 5,
+  "total_leads": 16
+}
