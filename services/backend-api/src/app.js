@@ -14,6 +14,7 @@ const engagementRoutes = require('./routes/engagement');
 const templatesRoutes = require('./routes/templates');
 const schedulesRoutes = require('./routes/schedules');
 const usersRoutes = require('./routes/users');
+const historyRoutes = require('./routes/history');
 
 function createApp() {
   const app = express();
@@ -35,6 +36,7 @@ function createApp() {
   api.use('/applications/:applicationId/engagement', engagementRoutes);
   api.use('/applications/:applicationId/templates', templatesRoutes);
   api.use('/applications/:applicationId/schedules', schedulesRoutes);
+  api.use('/applications/:applicationId/history', historyRoutes);
 
   app.use('/api/v1', api);
 
