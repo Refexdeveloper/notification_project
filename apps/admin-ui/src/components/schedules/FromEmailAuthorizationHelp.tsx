@@ -50,7 +50,7 @@ export default function FromEmailAuthorizationHelp({
             <p className="text-[10px] uppercase tracking-wide font-semibold text-foreground-400 mb-1">
               What you set here
             </p>
-            <p className="font-mono text-foreground-900 break-all">{hasFrom ? trimmed : 'reports@refex.co.in'}</p>
+            <p className="font-mono text-foreground-900 break-all">{hasFrom ? trimmed : 'support@refexone.com'}</p>
             <p className="text-[11px] text-foreground-500 mt-1">Visible to recipients as the From address</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">

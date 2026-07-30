@@ -341,4 +341,41 @@ export async function deleteApplicationOnBackend(
   return { ok: true };
 }
 
+export type ApplicationUpdatePayload = {
+  application_name?: string;
+  description?: string;
+  subdomain?: string;
+  region?: string;
+};
+
+export async function updateApplicationOnBackend(
+  app: KissflowApplication,
+  payload: ApplicationUpdatePayload,
+): Promise<{ ok: boolean; application?: KissflowApplication; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const res = await apiV1Fetch<{ item: BackendApplicationRow }>(
+    `/applications/${encodeURIComponent(applicationId)}?environment=${encodeURIComponent(environment)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        application_name: payload.application_name,
+        description: payload.description,
+        subdomain: payload.subdomain,
+        region: payload.region,
+      }),
+    },
+  );
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to update application' };
+  }
+
+  return { ok: true, application: mapRowToApplication(res.data.item) };
+}
+
 export { toDbEnvironment };

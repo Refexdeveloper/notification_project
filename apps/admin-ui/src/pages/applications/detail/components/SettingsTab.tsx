@@ -5,7 +5,7 @@ import {
   updateApplicationFromForm,
   type KissflowApplication,
 } from '@/mocks/applications';
-import { deleteApplicationOnBackend } from '@/services/applicationsApi';
+import { deleteApplicationOnBackend, updateApplicationOnBackend } from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -62,10 +62,28 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setDeleting(false);
   }, [app.id, app.lastSync]);
 
-  const save = (e?: React.FormEvent) => {
+  const save = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (backendMode) {
-      setError('Application metadata editing in PostgreSQL is not enabled yet. Use delete below to remove this app.');
+      if (!name.trim()) {
+        setError('Application name is required.');
+        return;
+      }
+      setError('');
+      setSaved(false);
+      const result = await updateApplicationOnBackend(app, {
+        application_name: name.trim(),
+        description: description.trim(),
+        subdomain: subdomain.trim() || undefined,
+        region,
+      });
+      if (!result.ok) {
+        setError(result.error || 'Could not save application settings.');
+        return;
+      }
+      setSaved(true);
+      onSaved?.();
+      setTimeout(() => setSaved(false), 2500);
       return;
     }
     if (!accountId.trim()) {
@@ -149,7 +167,7 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
       <div className="bg-primary-50 border border-primary-100 rounded-xl px-4 py-3">
         <p className="text-xs text-primary-800">
           {backendMode
-            ? 'View registered Kissflow metadata. Delete removes this application from PostgreSQL (not from Kissflow).'
+            ? 'Edit display name, description, and subdomain stored in PostgreSQL. Kissflow credentials and resource IDs are managed via registration and sync runbooks.'
             : 'Edit the Kissflow account, resource IDs, and access keys registered for this application. Changes apply to API Explorer, User Engagement, and Connection.'}
         </p>
       </div>
@@ -159,14 +177,20 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
           <h3 className="text-sm font-semibold text-foreground-900">Kissflow account</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Account ID" required>
-              <input value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input font-mono text-xs" />
+              <input
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                disabled={backendMode}
+                className="input font-mono text-xs disabled:opacity-60"
+              />
             </Field>
             <Field label="App ID" required>
               <input
                 value={appId}
                 onChange={(e) => setAppId(e.target.value)}
+                disabled={backendMode}
                 placeholder="e.g. Lead_tracker_1_A00"
-                className="input font-mono text-xs"
+                className="input font-mono text-xs disabled:opacity-60"
               />
             </Field>
           </div>

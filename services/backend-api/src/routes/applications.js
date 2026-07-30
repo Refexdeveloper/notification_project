@@ -9,6 +9,7 @@ const {
   normalizeRegistrationBody,
   registerApplication,
   deleteApplication,
+  updateApplicationMetadata,
 } = require('../lib/applicationRegistration');
 const { validateAndDiscoverRegistrationInput } = require('../lib/kissflowDiscovery');
 
@@ -170,6 +171,70 @@ router.post('/', async (req, res) => {
       return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
     }
     return fail(res, req.correlationId, 'APPLICATION_REGISTER_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
+});
+
+router.patch('/:applicationId', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = String(req.query.environment || req.body?.environment || 'production').toLowerCase();
+  const applicationId = req.params.applicationId;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'application_name')) {
+    patch.application_name = body.application_name;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    patch.application_name = body.name;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'description')) {
+    patch.description = body.description;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'subdomain')) {
+    patch.subdomain = body.subdomain;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'region')) {
+    patch.region = body.region;
+  }
+
+  if (!Object.keys(patch).length) {
+    return fail(
+      res,
+      req.correlationId,
+      'UPDATE_FIELDS_REQUIRED',
+      'Provide application_name, description, subdomain, and/or region',
+      400,
+    );
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const item = await updateApplicationMetadata(client, {
+      environment,
+      applicationId,
+      patch,
+      actorSubject: session.subject,
+      correlationId: req.correlationId,
+    });
+    await client.query('COMMIT');
+    return ok(res, req.correlationId, { item, environment, application_id: applicationId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'APPLICATION_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 404);
+    }
+    return fail(res, req.correlationId, 'APPLICATION_UPDATE_FAILED', err.message, 500, true);
   } finally {
     client.release();
   }

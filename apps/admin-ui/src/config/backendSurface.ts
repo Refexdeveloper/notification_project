@@ -45,8 +45,8 @@ export const APP_DETAIL_TABS: AppDetailTab[] = [
   { id: 'settings', label: 'App settings', icon: Settings },
 ];
 
-/** Sidebar routes that only work with the MySQL prototype API. */
-const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'history', 'settings']);
+/** Sidebar routes hidden in backend-api mode (prototype / localStorage only). */
+const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings']);
 
 export function applicationDetailTabs(): AppDetailTab[] {
   if (!isBackendApiMode()) return APP_DETAIL_TABS;
