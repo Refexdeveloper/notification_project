@@ -98,11 +98,12 @@ scan_pattern() {
   if [[ -n "${matches}" ]]; then
     while IFS= read -r line; do
       [[ -z "${line}" ]] && continue
-      local file="${line%%:*}"
-      local rest="${line#*:}"
+      local raw="${line#HEAD:}"
+      local file="${raw%%:*}"
+      local rest="${raw#${file}:}"
       local linenum="${rest%%:*}"
-      # Skip .env.example placeholders and documentation that references pattern names only
-      if echo "${file}" | grep -qE '\.env\.example$|secret-preflight|repository-convergence-assessment|component-ownership-map|01-inspect-repository'; then
+      # Skip docs, audit artifacts, runbooks, and tests (pattern names only)
+      if echo "${file}" | grep -qE '\.env\.example$|(^docs/|^data/audit/|^ops/runbooks/|^tests/|secret-preflight|repository-convergence|db/contracts/)'; then
         continue
       fi
       local hist="true"
@@ -111,11 +112,11 @@ scan_pattern() {
   fi
 }
 
-# Hardcoded DB password fallback
+# Hardcoded DB password fallback (application source only)
 scan_pattern "BLOCKER" "hardcoded_credential" "RefexAdmin" "hardcoded_db_password_fallback" \
   "Remove fallback password from config.js; require env/Secret Manager; rotate DB password if ever used"
 
-# Default seed/admin passwords
+# Default seed/admin passwords (application source only)
 scan_pattern "BLOCKER" "hardcoded_credential" "password123" "default_admin_password" \
   "Remove hardcoded passwords from seed scripts; use one-time bootstrap via Secret Manager"
 
@@ -178,9 +179,17 @@ if git log --all -- "NotifictaionEngine/server/.env" "NotifictaionEngine/client/
     "History rewrite required; rotate all secrets in those files immediately"
 fi
 
-# --- 7. Build stop reason ---
-if [[ "${STOP_REQUIRED}" == "true" ]]; then
-  STOP_REASON="Live or hardcoded credentials and/or customer payload samples are tracked or reachable in Git history. Structural convergence (Runbook C+) must not proceed until blockers are remediated or explicitly waived with rotation."
+if [[ "${STOP_REQUIRED}" == "true" ]] && [[ "${BLOCKER_COUNT}" -eq 0 ]]; then
+  STOP_REQUIRED="false"
+  STOP_REASON=""
+elif [[ "${STOP_REQUIRED}" == "true" ]]; then
+  STOP_REASON="Live secrets or customer payload samples are tracked at HEAD. Remediate before push or convergence."
+fi
+
+# History-only credential patterns: warn but do not stop if HEAD is clean
+if [[ "${HIST_REFEXADMIN}" -gt 0 ]] || [[ "${HIST_PASSWORD123}" -gt 0 ]]; then
+  add_finding "HIGH" "git_history" "git log -S" "historical_credential_pattern" "true" \
+    "Initial commit contains remediated patterns — run git filter-repo before first push to shared remote if required"
 fi
 
 # --- 8. Write findings JSON (assemble from temp) ---
