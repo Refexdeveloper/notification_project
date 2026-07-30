@@ -31,19 +31,16 @@ Admin UI (apps/admin-ui) → backend-api (OpenAPI v1) ONLY
 ## Quick start (local)
 
 ```bash
-# Secret preflight (must pass before convergence work)
-bash ops/runbooks/02-secret-and-sensitive-data-preflight.sh
+# Backend API (PostgreSQL — OpenAPI v1)
+cd services/backend-api
+cp .env.example .env   # set PG* vars if PostgreSQL available
+npm install
+npm run dev            # http://localhost:8080/api/v1/health
 
-# Repository tests
-bash tests/run-repo-tests.sh
-
-# Legacy engagement pipeline (requires PostgreSQL + env vars)
-cd services/engagement-pipeline
-bash ops/runbooks/13-full-pipeline-combined.sh
-
-# Admin UI dev (requires backend or prototype API)
+# Admin UI (proxies /api/v1 → backend-api, /api → legacy prototype)
 cd apps/admin-ui
-cp .env.example .env.local   # set VITE_API_BASE_URL only — no Kissflow secrets in frontend
+cp .env.example .env.local
+# VITE_API_BASE_URL=http://localhost:8080/api/v1
 npm install && npm run dev
 ```
 

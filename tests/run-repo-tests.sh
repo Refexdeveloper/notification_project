@@ -84,6 +84,16 @@ if [[ -d services/engagement-pipeline ]]; then
 else
   fail "engagement-pipeline exists"
 fi
+if [[ -d services/backend-api ]]; then
+  pass "backend-api exists"
+else
+  fail "backend-api exists"
+fi
+if [[ -f services/backend-api/Dockerfile ]]; then
+  pass "backend-api Dockerfile exists"
+else
+  fail "backend-api Dockerfile exists"
+fi
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
