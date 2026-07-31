@@ -25,6 +25,7 @@ log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
 command -v psql >/dev/null 2>&1 || stop "psql is not installed."
+command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 
 if [[ -n "${SCHEDULE_ID}" ]]; then
   log "Loading schedule ${SCHEDULE_ID} from PostgreSQL"
@@ -63,24 +64,38 @@ if [[ -n "${SCHEDULE_ID}" ]]; then
   GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // "modepro"')"
   export SUBJECT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.subject // empty')"
   export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
-  RECIPIENT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to[0] // empty')"
+  TO_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to | join(",")')"
   CC_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_cc | join(",")')"
-  [[ -n "${RECIPIENT}" ]] || stop "No To recipients on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
+  [[ -n "${TO_LIST}" ]] || stop "No To recipients on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
   [[ -n "${FROM_EMAIL}" ]] || stop "No from_email on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
-  export RECIPIENT CC="${CC_LIST}"
+  if [[ -n "${TEST_RECIPIENT:-}" ]]; then
+    export RECIPIENT="${TEST_RECIPIENT}"
+    export TO_LIST="${TEST_RECIPIENT}"
+    export CC=""
+    log "Test send: delivering only to ${RECIPIENT} (Cc cleared)"
+  else
+    export RECIPIENT="${TO_LIST}"
+    export TO_LIST CC="${CC_LIST}"
+  fi
 fi
 
 export GROUP_NAME WEBSITE_FILTER GROUP_SLUG
 export SUBJECT="${SUBJECT:-Lead Tracker — ${GROUP_NAME} sales report}"
 
-log "Step 1/2: Rendering Lead Tracker report"
-bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
+LATEST_FILE="${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
+if [[ -n "${TEST_RECIPIENT:-}" && -f "${LATEST_FILE}" ]]; then
+  log "Test send: skipping Kissflow render, using cached report ${LATEST_FILE}"
+else
+  log "Step 1/2: Rendering Lead Tracker report"
+  bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
+fi
 
 log "Step 2/2: Sending Lead Tracker report"
 export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"
 export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}"
 export ENVIRONMENT="${ENVIRONMENT:-production}"
-export REPORT_FILE_OVERRIDE="${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
+export REPORT_FILE_OVERRIDE="${LATEST_FILE}"
+[[ -f "${LATEST_FILE}" ]] || stop "No Lead Tracker report at ${LATEST_FILE}. Run a full send once or check group_slug (${GROUP_SLUG})."
 bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
 
 log "Lead Tracker render-and-send completed (${GROUP_NAME})"

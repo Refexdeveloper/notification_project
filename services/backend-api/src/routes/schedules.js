@@ -414,7 +414,7 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       dispatched: true,
       status: 'started',
       message:
-        'Test send started (ingest → render → email). Delivery usually takes 2–5 minutes — check the inbox and spam folder.',
+        'Test send started (last cached report → email only, no Kissflow refresh). Usually arrives within 1–2 minutes — check inbox and spam.',
     });
   } catch (err) {
     if (err.code === 'SCHEDULE_RUNNER_NOT_CONFIGURED') {
