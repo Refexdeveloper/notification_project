@@ -17,7 +17,7 @@ const {
   templateInUse,
 } = require('../lib/templateRepository');
 const { defaultReportHtml } = require('../lib/defaultReportHtml');
-const { syncPublishedTemplateToPipeline } = require('../lib/templatePipelineSync');
+const { syncPublishedTemplateToPipeline, normalizeReportTemplateHtml } = require('../lib/templatePipelineSync');
 
 const router = express.Router({ mergeParams: true });
 
@@ -148,7 +148,7 @@ router.post('/', async (req, res) => {
   const subject = String(body.subject || `{{ReportTitle}} — ${name}`).trim();
   const description = String(body.description || '').trim();
   const status = body.status === 'published' ? 'published' : 'draft';
-  const html = String(body.html || defaultReportHtml(name)).trim();
+  const html = normalizeReportTemplateHtml(String(body.html || defaultReportHtml(name)).trim());
   const contentRef = html;
   const checksum = checksumForContent(html);
 
@@ -249,7 +249,7 @@ router.patch('/:templateId', async (req, res) => {
     }
 
     if (hasHtml) {
-      const html = String(body.html || '').trim();
+      const html = normalizeReportTemplateHtml(String(body.html || '').trim());
       if (!html) {
         await client.query('ROLLBACK');
         return fail(res, req.correlationId, 'HTML_REQUIRED', 'Template HTML cannot be empty', 400);

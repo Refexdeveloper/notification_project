@@ -16,6 +16,7 @@ AUDIT_FILE="${AUDIT_DIR}/runbook-14-${TIMESTAMP}.json"
 
 LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
+REFEXONE_LOGO_URL="${LOGO_URL}"
 
 PG_CONN_STRING="host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}"
 
@@ -39,10 +40,16 @@ apply_template_branding_from_pg() {
   [[ -n "${content_ref}" ]] || return 0
 
   local extracted_logo
-  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refex' | head -1 || true)"
+  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refexone-logo' | head -1 || true)"
   if [[ -n "${extracted_logo}" ]]; then
     LOGO_URL="${extracted_logo}"
-    log "Using logo from published template ${template_id}"
+    log "Using refexOne logo from published template ${template_id}"
+  fi
+}
+
+ensure_refexone_logo() {
+  if [[ "${LOGO_URL}" == *"refex-logo.png"* ]] || [[ "${LOGO_URL}" != *"refexone"* ]]; then
+    LOGO_URL="${REFEXONE_LOGO_URL}"
   fi
 }
 
@@ -181,6 +188,8 @@ PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
+
+ensure_refexone_logo
 
 cat > "${OUTPUT_FILE}" <<HTML
 <!DOCTYPE html>

@@ -9,6 +9,12 @@ const APPLICATION_SEED_FILES = {
   Project_Management_Tracker_A00: 'db/seeds/pm-engagement-template.html',
 };
 
+function normalizeReportTemplateHtml(html) {
+  return String(html || '')
+    .replace(/refex-logo\.png/gi, 'refexone-logo.png')
+    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+}
+
 function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) {
   if (status !== 'published') {
     return { synced: false, reason: 'not_published' };
@@ -21,7 +27,7 @@ function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) 
 
   let html;
   try {
-    html = resolveTemplateHtml(contentRef);
+    html = normalizeReportTemplateHtml(resolveTemplateHtml(contentRef));
   } catch (err) {
     return { synced: false, reason: err.message };
   }
@@ -43,5 +49,6 @@ function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) 
 
 module.exports = {
   syncPublishedTemplateToPipeline,
+  normalizeReportTemplateHtml,
   APPLICATION_SEED_FILES,
 };
