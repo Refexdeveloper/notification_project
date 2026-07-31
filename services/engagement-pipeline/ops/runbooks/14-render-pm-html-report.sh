@@ -76,7 +76,9 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${PM_APP_ID}'
     AND process_id = '${PM_PROCESS_ID}'
-  ORDER BY created_at DESC
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 tasks AS (
@@ -122,7 +124,9 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${PM_APP_ID}'
     AND process_id = '${PM_PROCESS_ID}'
-  ORDER BY created_at DESC
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 latest_users AS (

@@ -77,7 +77,8 @@ WITH latest AS (
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
     AND environment = 'production'
-  ORDER BY created_at DESC
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 sla AS (
@@ -114,7 +115,8 @@ WITH latest AS (
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
     AND environment = 'production'
-  ORDER BY created_at DESC
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 )
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (

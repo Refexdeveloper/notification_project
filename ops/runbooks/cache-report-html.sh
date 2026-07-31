@@ -15,6 +15,10 @@ APPLICATION_ID="${APPLICATION_ID:-}"
 [[ -n "${REPORT_FILE}" && -f "${REPORT_FILE}" ]] || exit 0
 [[ -n "${CACHE_KEY}" ]] || exit 0
 
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/ensure-report-html-cache-table.sh"
+
 if ! command -v psql >/dev/null 2>&1; then
   log "psql not available — skipping report HTML cache"
   exit 0
@@ -26,32 +30,32 @@ TAG="report_html_$(date +%s)_$$"
 
 sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
 
-"${PSQL[@]}" -c "
-CREATE TABLE IF NOT EXISTS engagement_reporting.report_html_cache (
-  cache_key      text PRIMARY KEY,
-  application_id text NOT NULL,
-  html           text NOT NULL,
-  byte_size      bigint NOT NULL DEFAULT 0,
-  updated_at     timestamptz NOT NULL DEFAULT now()
-);
-"
+cache_one_key() {
+  local key="$1"
+  local tag="${TAG}_$(printf '%s' "${key}" | tr -cs 'A-Za-z0-9' '_')"
+  {
+    printf "INSERT INTO engagement_reporting.report_html_cache (cache_key, application_id, html, byte_size, updated_at)\n"
+    printf "VALUES (\n"
+    printf "  '%s',\n" "$(sql_escape "${key}")"
+    printf "  '%s',\n" "$(sql_escape "${APPLICATION_ID}")"
+    printf "  \$%s\$\n" "${tag}"
+    cat "${REPORT_FILE}"
+    printf "\n\$%s\$,\n" "${tag}"
+    printf "  %s,\n" "${BYTE_SIZE}"
+    printf "  now()\n"
+    printf ")\n"
+    printf "ON CONFLICT (cache_key) DO UPDATE SET\n"
+    printf "  application_id = EXCLUDED.application_id,\n"
+    printf "  html = EXCLUDED.html,\n"
+    printf "  byte_size = EXCLUDED.byte_size,\n"
+    printf "  updated_at = now();\n"
+  } | "${PSQL[@]}"
+}
 
-{
-  printf "INSERT INTO engagement_reporting.report_html_cache (cache_key, application_id, html, byte_size, updated_at)\n"
-  printf "VALUES (\n"
-  printf "  '%s',\n" "$(sql_escape "${CACHE_KEY}")"
-  printf "  '%s',\n" "$(sql_escape "${APPLICATION_ID}")"
-  printf "  \$%s\$\n" "${TAG}"
-  cat "${REPORT_FILE}"
-  printf "\n\$%s\$,\n" "${TAG}"
-  printf "  %s,\n" "${BYTE_SIZE}"
-  printf "  now()\n"
-  printf ")\n"
-  printf "ON CONFLICT (cache_key) DO UPDATE SET\n"
-  printf "  application_id = EXCLUDED.application_id,\n"
-  printf "  html = EXCLUDED.html,\n"
-  printf "  byte_size = EXCLUDED.byte_size,\n"
-  printf "  updated_at = now();\n"
-} | "${PSQL[@]}"
+cache_one_key "${CACHE_KEY}"
+
+if [[ -n "${REPORT_CACHE_KEY_SCHEDULE:-}" && "${REPORT_CACHE_KEY_SCHEDULE}" != "${CACHE_KEY}" ]]; then
+  cache_one_key "${REPORT_CACHE_KEY_SCHEDULE}"
+fi
 
 log "Cached report HTML in PostgreSQL: key=${CACHE_KEY} bytes=${BYTE_SIZE}"

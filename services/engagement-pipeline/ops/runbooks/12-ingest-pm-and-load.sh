@@ -26,6 +26,13 @@ command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 
 mkdir -p "${DATA_DIR}/item-pages" "${DATA_DIR}/item-details" "${NORM_DIR}"
 
+INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
+[[ -f "${INGEST_LIB}" ]] || INGEST_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/ops/runbooks/ingest-sync-lib.sh"
+# shellcheck source=/dev/null
+source "${INGEST_LIB}"
+
+ENVIRONMENT="${ENVIRONMENT:-production}"
+
 HEADERS=(
   -H "X-Access-Key-Id: ${KISSFLOW_KEY}"
   -H "X-Access-Key-Secret: ${KISSFLOW_SECRET}"
@@ -59,6 +66,17 @@ if [[ "${SKIP_FETCH:-false}" != "true" ]]; then
   [[ -n "${KISSFLOW_KEY}" ]] || stop "KISSFLOW_KEY is not set."
   [[ -n "${KISSFLOW_SECRET}" ]] || stop "KISSFLOW_SECRET is not set."
 
+  ingest_wait_for_snapshot_slot "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}" \
+    || stop "Another ingest is IN_PROGRESS for ${APPLICATION_ID}/${PROCESS_ID}"
+
+  ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
+  WATERMARK_ISO="$(ingest_get_watermark_iso "${ITEMS_RESOURCE_KEY}")"
+  if [[ -n "${WATERMARK_ISO}" && "${FULL_INGEST:-false}" != "true" ]]; then
+    log "Incremental mode: fetching PM items modified since ${WATERMARK_ISO}"
+  else
+    log "Full PM ingest mode"
+  fi
+
   log "Retrieving process items"
   : > "${DATA_DIR}/items.jsonl"
   for ((page=1; page<=MAX_PAGES; page++)); do
@@ -71,7 +89,17 @@ if [[ "${SKIP_FETCH:-false}" != "true" ]]; then
     [[ "${page_count}" -lt "${PAGE_SIZE}" ]] && break
   done
   ITEM_COUNT="$(wc -l < "${DATA_DIR}/items.jsonl" | tr -d ' ')"
-  log "Total items: ${ITEM_COUNT}"
+  log "Total items (before incremental filter): ${ITEM_COUNT}"
+
+  if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" && "${ITEM_COUNT}" -gt 0 ]]; then
+    ingest_filter_items_jsonl_since_watermark \
+      "${DATA_DIR}/items.jsonl" \
+      "${DATA_DIR}/items.filtered.jsonl" \
+      "${WATERMARK_ISO}"
+    mv "${DATA_DIR}/items.filtered.jsonl" "${DATA_DIR}/items.jsonl"
+    ITEM_COUNT="$(wc -l < "${DATA_DIR}/items.jsonl" | tr -d ' ')"
+    log "Items after incremental filter: ${ITEM_COUNT}"
+  fi
 
   log "Retrieving item details"
   : > "${DATA_DIR}/item-details.jsonl"
@@ -194,5 +222,7 @@ UPDATE engagement_reporting.snapshot_run SET status = 'COMPLETED', load_complete
 
 COMMIT;
 " | run_sql
+
+ingest_set_watermark_now "${ITEMS_RESOURCE_KEY:-$(ingest_resource_key items)}"
 
 log "Ingestion and load completed. Snapshot: ${RUN_ID}"

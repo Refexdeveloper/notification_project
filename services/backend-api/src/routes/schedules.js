@@ -6,7 +6,7 @@ const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { resolveSession } = require('../lib/session');
 const { createSchedule, deleteSchedule } = require('../lib/scheduleRepository');
 const { assertTemplateForApplication } = require('../lib/templateRepository');
-const { dispatchScheduleRunnerAsync } = require('../lib/scheduleRunnerClient');
+const { invokeScheduleRunner } = require('../lib/scheduleRunnerClient');
 const { syncScheduleCloudJob } = require('../lib/cloudSchedulerSync');
 const { validateScheduleFromEmail } = require('../lib/smtpFromValidation');
 
@@ -404,7 +404,19 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       );
     }
 
-    dispatchScheduleRunnerAsync(scheduleId, { testRecipient });
+    const runnerResult = await invokeScheduleRunner(scheduleId, { testRecipient });
+
+    if (!runnerResult.ok) {
+      const excerpt = (runnerResult.body || '').slice(0, 500);
+      return fail(
+        res,
+        req.correlationId,
+        'SCHEDULE_TEST_SEND_FAILED',
+        excerpt || `Schedule runner returned HTTP ${runnerResult.status}`,
+        runnerResult.status >= 400 && runnerResult.status < 600 ? runnerResult.status : 502,
+        true,
+      );
+    }
 
     return ok(res, req.correlationId, {
       schedule_id: scheduleId,
@@ -412,9 +424,10 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       template_name: row.template_name,
       test_recipient: testRecipient,
       dispatched: true,
-      status: 'started',
+      status: 'delivered',
+      log_excerpt: (runnerResult.body || '').slice(0, 1200),
       message:
-        'Test send started (last cached report → email only, no Kissflow refresh). Usually arrives within 1–2 minutes — check inbox and spam.',
+        'Test email sent using the last cached report (no Kissflow refresh). Check inbox and spam folder.',
     });
   } catch (err) {
     if (err.code === 'SCHEDULE_RUNNER_NOT_CONFIGURED') {

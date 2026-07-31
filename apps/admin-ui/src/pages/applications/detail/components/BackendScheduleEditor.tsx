@@ -242,21 +242,21 @@ export default function BackendScheduleEditor({
       return;
     }
 
-    setSuccess('Starting test send (last cached report → email, no Kissflow refresh)…');
+    setSuccess('Sending test email (last cached report, no Kissflow refresh)…');
     const result = await testSendScheduleOnBackend(app, schedule.id, testRecipient);
     setTesting(false);
     setTestModalOpen(false);
 
     if (!result.ok) {
       setSuccess('');
-      setError(result.error || 'Test send failed');
+      setError(result.error || result.logExcerpt || 'Test send failed');
       return;
     }
 
     onUpdated();
     setSuccess(
       result.message ||
-        `Test send started for ${testRecipient} using the last cached report. Check inbox in 1–2 minutes (and spam).`,
+        `Test email sent to ${testRecipient}. Check inbox and spam folder.`,
     );
     setTimeout(() => setSuccess(''), 10000);
   };

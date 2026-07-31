@@ -175,7 +175,7 @@ if [[ "${STATUS}" == "SENT" && -f "${REPO_ROOT}/ops/runbooks/cache-report-html.s
     esac
   fi
   if [[ -n "${REPORT_CACHE_KEY:-}" ]]; then
-    export REPORT_CACHE_KEY
+    export REPORT_CACHE_KEY REPORT_CACHE_KEY_SCHEDULE
     bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${REPORT_FILE}" "${REPORT_CACHE_KEY}" \
       || log "Warning: failed to cache report HTML in PostgreSQL (non-fatal)"
   fi

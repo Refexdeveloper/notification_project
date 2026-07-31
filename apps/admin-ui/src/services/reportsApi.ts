@@ -440,13 +440,19 @@ export async function testSendScheduleOnBackend(
   }, { timeoutMs: 120000 });
 
   if (!res.ok) {
-    return { ok: false, error: res.error || 'Test send failed' };
+    return {
+      ok: false,
+      error: res.error || res.data?.message || 'Test send failed',
+      logExcerpt: res.data?.log_excerpt,
+    };
   }
 
+  const delivered = res.data?.status === 'delivered';
   return {
-    ok: true,
+    ok: delivered || Boolean(res.data?.dispatched),
     dispatched: Boolean(res.data?.dispatched),
     logExcerpt: res.data?.log_excerpt,
     message: res.data?.message,
+    error: delivered ? undefined : res.data?.log_excerpt || 'Test send did not confirm delivery',
   };
 }
