@@ -65,7 +65,11 @@ export function readDashboardCache(environment: 'production' | 'development'): D
     const raw = sessionStorage.getItem(cacheKey(environment));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DashboardCacheEntry;
-    if (!parsed?.data || Date.now() - parsed.ts > DASHBOARD_CACHE_TTL_MS) {
+    if (!parsed?.data || !Array.isArray(parsed.data.applications) || parsed.data.applications.length === 0) {
+      sessionStorage.removeItem(cacheKey(environment));
+      return null;
+    }
+    if (Date.now() - parsed.ts > DASHBOARD_CACHE_TTL_MS) {
       sessionStorage.removeItem(cacheKey(environment));
       return null;
     }

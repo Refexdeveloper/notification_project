@@ -35,14 +35,7 @@ const routes: RouteObject[] = [
   { path: "/users", element: <UsersPage /> },
   { path: "/platform-users", element: <PlatformUsersPage /> },
   { path: "/templates/:id", element: <TemplateDetailPage /> },
-  {
-    path: "/templates",
-    element: (
-      <PrototypeOnlyGate>
-        <TemplatesPage />
-      </PrototypeOnlyGate>
-    ),
-  },
+  { path: "/templates", element: <TemplatesPage /> },
   {
     path: "/schedulers/:id",
     element: (

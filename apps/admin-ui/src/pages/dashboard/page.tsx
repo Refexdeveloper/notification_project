@@ -388,6 +388,11 @@ export default function DashboardPage() {
       if (!hadCachedSnapshot) {
         setError(result.error || 'Could not load dashboard');
         setApplications([]);
+      } else if (result.error) {
+        setRefreshWarnings((prev) => {
+          const msg = `Could not refresh dashboard: ${result.error}`;
+          return prev.includes(msg) ? prev : [...prev, msg];
+        });
       }
     } else {
       applyDashboardData(result.data);
