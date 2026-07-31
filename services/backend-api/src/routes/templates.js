@@ -17,6 +17,7 @@ const {
   templateInUse,
 } = require('../lib/templateRepository');
 const { defaultReportHtml } = require('../lib/defaultReportHtml');
+const { syncPublishedTemplateToPipeline } = require('../lib/templatePipelineSync');
 
 const router = express.Router({ mergeParams: true });
 
@@ -168,10 +169,18 @@ router.post('/', async (req, res) => {
     await client.query('COMMIT');
 
     const row = await getTemplateRow(getPool(), { environment, applicationId, templateId });
+    let pipelineSync = null;
+    if (status === 'published') {
+      pipelineSync = syncPublishedTemplateToPipeline({
+        applicationId,
+        contentRef: row.content_ref,
+        status,
+      });
+    }
     return ok(
       res,
       req.correlationId,
-      { item: mapTemplateRow(row, { includeHtml: true }), environment, application_id: applicationId },
+      { item: mapTemplateRow(row, { includeHtml: true }), environment, application_id: applicationId, pipeline_sync: pipelineSync },
       201,
     );
   } catch (err) {
@@ -261,10 +270,20 @@ router.patch('/:templateId', async (req, res) => {
     await client.query('COMMIT');
 
     const row = await getTemplateRow(getPool(), { environment, applicationId, templateId });
+    let pipelineSync = null;
+    const effectiveStatus = hasStatus ? (body.status === 'published' ? 'published' : 'draft') : row.status;
+    if (effectiveStatus === 'published') {
+      pipelineSync = syncPublishedTemplateToPipeline({
+        applicationId,
+        contentRef: row.content_ref,
+        status: effectiveStatus,
+      });
+    }
     return ok(res, req.correlationId, {
       item: mapTemplateRow(row, { includeHtml: true }),
       environment,
       application_id: applicationId,
+      pipeline_sync: pipelineSync,
     });
   } catch (err) {
     await client.query('ROLLBACK');

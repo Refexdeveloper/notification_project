@@ -11,7 +11,13 @@
   "scripts": {
     "preflight:secrets": "bash ops/runbooks/02-secret-and-sensitive-data-preflight.sh",
     "test:repo": "bash tests/run-repo-tests.sh",
+    "test:ui-smoke": "node ops/tmp/ui-backend-mode-smoke.mjs",
+    "test:schedule-routing": "node ops/tests/schedule-routing-smoke.mjs",
+  "postinstall": "playwright install chromium || true",
     "dev:backend-api": "npm run dev --workspace=@refex/backend-api",
     "dev:admin-ui": "npm run dev --workspace=client 2>/dev/null || npm run dev --prefix apps/admin-ui"
+  },
+  "devDependencies": {
+    "playwright": "^1.52.0"
   }
 }

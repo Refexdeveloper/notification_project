@@ -45,17 +45,7 @@ function normalizeEnvironment(value) {
   return lower;
 }
 
-function isLoggedInToday(lastSignIn) {
-  if (!lastSignIn) return false;
-  const login = new Date(lastSignIn);
-  if (Number.isNaN(login.getTime())) return false;
-  const now = new Date();
-  return (
-    login.getFullYear() === now.getFullYear() &&
-    login.getMonth() === now.getMonth() &&
-    login.getDate() === now.getDate()
-  );
-}
+const { isLoggedInToday } = require('../lib/reportTimezone');
 
 function buildTotals(rows) {
   return {

@@ -28,6 +28,7 @@ function resolveV1Url(path: string): string {
 export async function apiV1Fetch<T>(
   path: string,
   init: RequestInit = {},
+  options?: { timeoutMs?: number },
 ): Promise<{ ok: boolean; status: number; data: T | null; error?: string; correlationId?: string }> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -38,8 +39,13 @@ export async function apiV1Fetch<T>(
     headers['Content-Type'] = 'application/json';
   }
 
+  const signal =
+    options?.timeoutMs && options.timeoutMs > 0
+      ? AbortSignal.timeout(options.timeoutMs)
+      : init.signal;
+
   try {
-    const res = await fetch(resolveV1Url(path), { ...init, headers, credentials: 'include' });
+    const res = await fetch(resolveV1Url(path), { ...init, headers, credentials: 'include', signal });
     const json = (await res.json()) as ApiEnvelope<T>;
     const cid = json.correlation_id;
     if (!res.ok || !json.success) {

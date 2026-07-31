@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Check, Pause, Play, Save, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Check, Mail, Pause, Play, Save, Trash2 } from 'lucide-react';
 import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import type { ReportTemplate } from '@/stores/reportTemplates';
 import { parseEmailList } from '@/stores/reportSchedulers';
-import { describeBackendSchedule, deleteScheduleOnBackend, loadTemplatesFromBackend, updateScheduleOnBackend } from '@/services/reportsApi';
+import { describeBackendSchedule, deleteScheduleOnBackend, loadTemplatesFromBackend, testSendScheduleOnBackend, updateScheduleOnBackend } from '@/services/reportsApi';
 import {
   cadenceStateToCron,
   cronToCadenceState,
@@ -17,6 +17,21 @@ import ScheduleReportIdentityFields, {
   type ScheduleReportIdentityValue,
 } from '@/components/schedules/ScheduleReportIdentityFields';
 import { Button } from '@/components/ui/Button';
+import Modal from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+
+const SUGGESTED_FROM_EMAIL = 'reports@refex.co.in';
+
+function formatCloudSchedulerMessage(sync?: { ok?: boolean; state?: string; job_name?: string; skipped?: boolean; reason?: string; error?: string }): string {
+  if (!sync) return '';
+  if (sync.ok) {
+    return ` Cloud Scheduler is ${sync.state === 'ENABLED' ? 'enabled' : 'paused'} (${sync.job_name || 'job synced'}).`;
+  }
+  if (sync.skipped) {
+    return ` Cloud Scheduler was not auto-synced: ${sync.reason || 'skipped'}.`;
+  }
+  return ` Cloud Scheduler sync issue: ${sync.error || 'unknown error'}.`;
+}
 
 interface BackendScheduleEditorProps {
   app: KissflowApplication;
@@ -66,6 +81,9 @@ export default function BackendScheduleEditor({
   const [ccText, setCcText] = useState(schedule.cc.join(', '));
   const [cadence, setCadence] = useState<ScheduleCadenceState>(() => scheduleToCadenceState(schedule));
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testModalOpen, setTestModalOpen] = useState(false);
+  const [testRecipientInput, setTestRecipientInput] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -89,6 +107,17 @@ export default function BackendScheduleEditor({
     setError('');
     setSuccess('');
   }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.subject, schedule.templateName, schedule.name]);
+
+  const toRecipients = useMemo(() => parseEmailList(recipientsText), [recipientsText]);
+  const normalizedFrom = normalizeFromEmail(fromEmail);
+  const hasValidFrom = isValidEmail(normalizedFrom);
+  const activationBlockers = useMemo(() => {
+    const blockers: string[] = [];
+    if (!hasValidFrom) blockers.push(`Add a valid From address (e.g. ${SUGGESTED_FROM_EMAIL})`);
+    if (!toRecipients.length) blockers.push('Add at least one To recipient email');
+    return blockers;
+  }, [hasValidFrom, toRecipients.length]);
+  const canActivate = activationBlockers.length === 0;
 
   const buildPayload = (extra?: { is_active?: boolean }) => {
     const normalizedFrom = normalizeFromEmail(fromEmail);
@@ -140,7 +169,7 @@ export default function BackendScheduleEditor({
       setError(result.error || 'Save failed');
       return;
     }
-    setSuccess('Schedule saved to PostgreSQL. Run ops/runbook 32 to sync Cloud Scheduler if active.');
+    setSuccess(`Schedule saved to PostgreSQL.${formatCloudSchedulerMessage(result.cloudScheduler)}`);
     onUpdated();
     setTimeout(() => setSuccess(''), 3500);
   };
@@ -162,8 +191,8 @@ export default function BackendScheduleEditor({
     }
     setSuccess(
       nextActive
-        ? 'Schedule activated. Run ops/runbook 32 to sync Cloud Scheduler with the new time.'
-        : 'Schedule paused',
+        ? `Schedule activated.${formatCloudSchedulerMessage(result.cloudScheduler)}`
+        : `Schedule paused.${formatCloudSchedulerMessage(result.cloudScheduler)}`,
     );
     onUpdated();
     setTimeout(() => setSuccess(''), 3500);
@@ -181,6 +210,55 @@ export default function BackendScheduleEditor({
     }
     onDeleted?.();
     onClose();
+  };
+
+  const openTestEmailModal = () => {
+    setError('');
+    setSuccess('');
+    if (!hasValidFrom) {
+      setError(`Enter a valid From address before testing (e.g. ${SUGGESTED_FROM_EMAIL}).`);
+      return;
+    }
+    setTestRecipientInput(toRecipients[0] || '');
+    setTestModalOpen(true);
+  };
+
+  const sendTestEmail = async () => {
+    const testRecipient = testRecipientInput.trim().toLowerCase();
+    if (!isValidEmail(testRecipient)) {
+      setError('Test recipient must be a valid email address.');
+      return;
+    }
+
+    setTesting(true);
+    setError('');
+    setSuccess('Saving schedule settings before test send…');
+
+    const saveResult = await updateScheduleOnBackend(app, schedule.id, buildPayload());
+    if (!saveResult.ok) {
+      setTesting(false);
+      setSuccess('');
+      setError(saveResult.error || 'Could not save schedule before test send.');
+      return;
+    }
+
+    setSuccess('Starting test send (ingest → render → email)…');
+    const result = await testSendScheduleOnBackend(app, schedule.id, testRecipient);
+    setTesting(false);
+    setTestModalOpen(false);
+
+    if (!result.ok) {
+      setSuccess('');
+      setError(result.error || 'Test send failed');
+      return;
+    }
+
+    onUpdated();
+    setSuccess(
+      result.message ||
+        `Test send started for ${testRecipient}. Check inbox in 2–5 minutes (and spam).`,
+    );
+    setTimeout(() => setSuccess(''), 10000);
   };
 
   return (
@@ -225,9 +303,20 @@ export default function BackendScheduleEditor({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-        From, To, and Cc are stored in PostgreSQL. After changing send time, run ops/runbook 32 so Cloud Scheduler
-        matches.
+        From, To, and Cc are stored in PostgreSQL. Click <strong>Save schedule</strong> after editing.
+        Activate requires a Workspace-authorized From address plus at least one To recipient; Cloud Scheduler syncs automatically on save/activate.
       </div>
+
+      {schedule.status !== 'active' && activationBlockers.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-950 space-y-1">
+          <p className="font-semibold">Before you can Activate:</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {activationBlockers.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <ScheduleFromEmailField
         value={fromEmail}
@@ -245,6 +334,9 @@ export default function BackendScheduleEditor({
           className="field-input !h-auto py-2.5 resize-none font-mono text-xs w-full"
           placeholder="manager@company.com, lead@company.com"
         />
+        {!toRecipients.length && (
+          <p className="text-[11px] text-amber-700 mt-1">At least one To address is required to activate.</p>
+        )}
       </div>
 
       <div>
@@ -268,6 +360,16 @@ export default function BackendScheduleEditor({
         >
           Save schedule
         </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          loading={testing}
+          disabled={busy}
+          onClick={openTestEmailModal}
+          leftIcon={<Mail className="w-3.5 h-3.5" />}
+        >
+          Test email
+        </Button>
         {schedule.status === 'active' ? (
           <Button
             size="sm"
@@ -284,9 +386,8 @@ export default function BackendScheduleEditor({
             loading={busy}
             onClick={() => void toggleActive(true)}
             leftIcon={<Play className="w-3.5 h-3.5" />}
-            disabled={
-              !parseEmailList(recipientsText).length || !isValidEmail(normalizeFromEmail(fromEmail))
-            }
+            disabled={!canActivate || busy}
+            title={canActivate ? 'Activate schedule' : activationBlockers.join(' · ')}
           >
             Activate
           </Button>
@@ -302,6 +403,39 @@ export default function BackendScheduleEditor({
           Delete
         </Button>
       </div>
+
+      <Modal open={testModalOpen} onClose={() => !testing && setTestModalOpen(false)} className="max-w-md">
+        <div className="px-6 py-5 border-b border-background-200/70">
+          <h2 className="text-lg font-heading font-semibold text-foreground-950">Send test email</h2>
+          <p className="text-sm text-foreground-500 mt-1">
+            Runs ingest → render → send for this schedule only. Usually takes 2–5 minutes.
+          </p>
+        </div>
+        <div className="px-6 py-4 space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Test recipient</label>
+            <Input
+              type="email"
+              value={testRecipientInput}
+              onChange={(e) => setTestRecipientInput(e.target.value)}
+              placeholder="you@refex.co.in"
+              disabled={testing}
+            />
+          </div>
+          <p className="text-[11px] text-foreground-500">
+            From: <span className="font-mono">{normalizedFrom || '—'}</span> · Settings are saved automatically
+            before send.
+          </p>
+        </div>
+        <div className="px-6 py-4 flex items-center justify-end gap-2.5 bg-background-50/40">
+          <Button type="button" variant="ghost" disabled={testing} onClick={() => setTestModalOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="button" loading={testing} disabled={!testRecipientInput.trim()} onClick={() => void sendTestEmail()}>
+            Send test
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -16,11 +16,38 @@ OUTPUT_FILE="${TEMPLATES_DIR}/report-${TIMESTAMP}.html"
 LATEST_FILE="${TEMPLATES_DIR}/report-latest.html"
 AUDIT_FILE="${AUDIT_DIR}/runbook-06-${TIMESTAMP}.json"
 
-LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png"
+LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
 
+apply_template_branding_from_pg() {
+  local template_id="${TEMPLATE_ID:-}"
+  [[ -z "${template_id}" ]] && return 0
+
+  local content_ref
+  content_ref="$(psql "${PG_CONN_STRING}" -t -A -c "
+    SELECT COALESCE(
+      (
+        SELECT rtv.content_ref
+        FROM engagement_reporting.report_template_version rtv
+        WHERE rtv.report_template_id = '${template_id}'::uuid
+        ORDER BY rtv.version_number DESC
+        LIMIT 1
+      ),
+      ''
+    );
+  " 2>/dev/null || true)"
+  [[ -n "${content_ref}" ]] || return 0
+
+  local extracted_logo
+  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refex' | head -1 || true)"
+  if [[ -n "${extracted_logo}" ]]; then
+    LOGO_URL="${extracted_logo}"
+    log "Using logo from published template ${template_id}"
+  fi
+}
+
 ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
-ITSM_PROCESS_ID="${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}"
+ITSM_PROCESS_ID="${ITSM_PROCESS_ID:-${PROCESS_ID:-Live_IT_Service_Request_A00}}"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -29,6 +56,8 @@ command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
+
+apply_template_branding_from_pg
 
 log "Querying summary metrics from PostgreSQL (latest snapshot, Refex entity only)"
 
@@ -40,13 +69,8 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
+    AND environment = 'production'
   ORDER BY created_at DESC
-  LIMIT 1
-),
-latest_users AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.\"user\"
-  ORDER BY snapshot_at DESC
   LIMIT 1
 ),
 sla AS (
@@ -60,10 +84,10 @@ sla AS (
   WHERE i.snapshot_run_id = l.snapshot_run_id AND i.entity = 'Refex'
 )
 SELECT json_build_object(
-  'total_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id),
-  'signed_in_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND u.ever_logged_in),
-  'signed_in_today', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'never_logged_in', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest_users lu WHERE u.snapshot_run_id = lu.snapshot_run_id AND NOT u.ever_logged_in),
+  'total_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id),
+  'signed_in_users', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND u.ever_logged_in),
+  'signed_in_today', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'never_logged_in', (SELECT count(*) FROM engagement_reporting.\"user\" u, latest l WHERE u.snapshot_run_id = l.snapshot_run_id AND NOT u.ever_logged_in),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'closed_today', (SELECT count(*) FROM sla WHERE process_status = 'Completed' AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'total_tickets', (SELECT count(*) FROM sla),
@@ -82,13 +106,8 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
+    AND environment = 'production'
   ORDER BY created_at DESC
-  LIMIT 1
-),
-latest_users AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.\"user\"
-  ORDER BY snapshot_at DESC
   LIMIT 1
 )
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
@@ -98,7 +117,8 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     u.ever_logged_in,
     COALESCE(open_t.open_count, 0) AS open_count,
     COALESCE(closed_t.closed_count, 0) AS closed_count
-  FROM engagement_reporting.\"user\" u CROSS JOIN latest_users lu
+  FROM engagement_reporting.\"user\" u
+  INNER JOIN latest l ON u.snapshot_run_id = l.snapshot_run_id
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS open_count
     FROM engagement_reporting.item_assignment ia
@@ -114,8 +134,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
       AND snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     GROUP BY (source_payload->'_created_by'->>'_id')
   ) closed_t ON closed_t.user_id = u.user_id
-  WHERE u.snapshot_run_id = lu.snapshot_run_id
-    AND (COALESCE(open_t.open_count,0) > 0 OR COALESCE(closed_t.closed_count,0) > 0)
+  WHERE (COALESCE(open_t.open_count,0) > 0 OR COALESCE(closed_t.closed_count,0) > 0)
   ORDER BY open_count DESC, closed_count DESC
 ) t;
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
@@ -170,8 +189,8 @@ cat > "${OUTPUT_FILE}" <<HTML
 
 <tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="120" valign="middle">
-<img src="${LOGO_URL}" alt="Refex" width="100" style="display:block; max-width:100px; height:auto;">
+<td width="180" valign="middle">
+<img src="${LOGO_URL}" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">Kissflow User Engagement Report</div>

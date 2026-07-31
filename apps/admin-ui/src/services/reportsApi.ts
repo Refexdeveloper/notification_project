@@ -182,10 +182,31 @@ export type ScheduleUpdatePayload = {
   subject?: string;
 };
 
+export type CloudSchedulerSyncResult = {
+  ok: boolean;
+  job_name?: string;
+  action?: string;
+  state?: string;
+  schedule?: string;
+  timezone?: string;
+  error?: string;
+  skipped?: boolean;
+  reason?: string;
+};
+
+export type FromEmailAuthResult = {
+  valid: boolean;
+  authorized: boolean | null;
+  message: string;
+  smtp_user?: string | null;
+};
+
 export type ScheduleUpdateResult = {
   ok: boolean;
   schedule?: ReportScheduler;
   error?: string;
+  cloudScheduler?: CloudSchedulerSyncResult;
+  fromEmailAuth?: FromEmailAuthResult;
 };
 
 export type ScheduleCreatePayload = {
@@ -366,7 +387,11 @@ export async function updateScheduleOnBackend(
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
   const path = `/applications/${encodeURIComponent(applicationId)}/schedules/${encodeURIComponent(scheduleId)}?environment=${encodeURIComponent(environment)}`;
-  const res = await apiV1Fetch<{ item: BackendScheduleRow }>(path, {
+  const res = await apiV1Fetch<{
+    item: BackendScheduleRow;
+    cloud_scheduler?: CloudSchedulerSyncResult;
+    from_email_auth?: FromEmailAuthResult;
+  }>(path, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -378,5 +403,50 @@ export async function updateScheduleOnBackend(
   return {
     ok: true,
     schedule: mapScheduleRow(res.data.item, app),
+    cloudScheduler: res.data.cloud_scheduler,
+    fromEmailAuth: res.data.from_email_auth,
+  };
+}
+
+export type ScheduleTestSendResult = {
+  ok: boolean;
+  dispatched?: boolean;
+  logExcerpt?: string;
+  message?: string;
+  error?: string;
+};
+
+export async function testSendScheduleOnBackend(
+  app: KissflowApplication,
+  scheduleId: string,
+  testRecipient: string,
+): Promise<ScheduleTestSendResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/schedules/${encodeURIComponent(scheduleId)}/test-send?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{
+    dispatched?: boolean;
+    log_excerpt?: string;
+    test_recipient?: string;
+    message?: string;
+    status?: string;
+  }>(path, {
+    method: 'POST',
+    body: JSON.stringify({ test_recipient: testRecipient.trim().toLowerCase() }),
+  }, { timeoutMs: 120000 });
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Test send failed' };
+  }
+
+  return {
+    ok: true,
+    dispatched: Boolean(res.data?.dispatched),
+    logExcerpt: res.data?.log_excerpt,
+    message: res.data?.message,
   };
 }

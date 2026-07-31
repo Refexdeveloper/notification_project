@@ -8,7 +8,7 @@ import {
   getSchedulersByAppId,
   type ReportScheduler,
 } from '@/stores/reportSchedulers';
-import { getTemplatesByAppId } from '@/stores/reportTemplates';
+import { getTemplatesByAppId, type ReportTemplate } from '@/stores/reportTemplates';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   createScheduleOnBackend,

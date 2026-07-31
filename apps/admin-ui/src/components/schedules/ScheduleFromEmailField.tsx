@@ -25,7 +25,7 @@ export default function ScheduleFromEmailField({
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           className="field-input font-mono text-xs w-full max-w-md"
-          placeholder="support@refexone.com"
+          placeholder="reports@refex.co.in"
         />
         <p className="text-[11px] text-foreground-400 mt-1">
           Recipients see this address. It must be authorized in Google Workspace for the SMTP mailbox.

@@ -119,7 +119,7 @@ export async function loadSendHistoryFromBackend(app: KissflowApplication): Prom
 
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
-  const path = `/applications/${encodeURIComponent(applicationId)}/history?environment=${encodeURIComponent(environment)}&sends_only=true`;
+  const path = `/applications/${encodeURIComponent(applicationId)}/history?environment=${encodeURIComponent(environment)}&sends_only=true&_=${Date.now()}`;
   const res = await apiV1Fetch<HistoryListResponse>(path);
 
   if (!res.ok || !res.data) {

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { KissflowApplication } from '@/mocks/applications';
+import { RefreshCw } from 'lucide-react';
 import { getHistoryByAppId } from '@/mocks/executions';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadSendHistoryFromBackend, type SendHistoryRow } from '@/services/historyApi';
@@ -13,7 +14,15 @@ type SendStatus = 'all' | 'delivered' | 'failed' | 'pending';
 
 function formatWhen(value: string | null | undefined): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString('en-IN', {
+  const date = new Date(value);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const time = date.toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return `Today, ${time}`;
+  return date.toLocaleString('en-IN', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -39,20 +48,19 @@ export default function HistoryTab({ app }: HistoryTabProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendItems, setSendItems] = useState<SendHistoryRow[]>([]);
 
-  useEffect(() => {
+  const loadSends = useCallback(async () => {
     if (!backendMode) return;
-    let cancelled = false;
     setLoading(true);
-    loadSendHistoryFromBackend(app).then((result) => {
-      if (cancelled) return;
-      setSendItems(result.items);
-      setLoadError(result.error || null);
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
+    setLoadError(null);
+    const result = await loadSendHistoryFromBackend(app);
+    setSendItems(result.items);
+    setLoadError(result.error || null);
+    setLoading(false);
   }, [app, backendMode]);
+
+  useEffect(() => {
+    void loadSends();
+  }, [loadSends]);
 
   const legacyList = useMemo(() => {
     return getHistoryByAppId(app.id).filter((h) => legacyStatus === 'all' || h.status === legacyStatus);
@@ -76,6 +84,15 @@ export default function HistoryTab({ app }: HistoryTabProps) {
         )}
 
         <div className="flex items-center gap-3 mb-4 flex-wrap">
+          <button
+            type="button"
+            onClick={() => void loadSends()}
+            disabled={loading}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-background-300/60 bg-white px-2.5 text-xs font-medium text-foreground-600 cursor-pointer hover:bg-background-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
           <div className="flex items-center bg-background-100 rounded-lg p-0.5 flex-wrap">
             {(
               [

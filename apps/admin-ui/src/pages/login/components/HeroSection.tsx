@@ -8,7 +8,7 @@ import {
   Zap,
   Building2,
 } from 'lucide-react';
-import refexLogo from '@/assets/refex-logo.png';
+import { REFEXONE_LOGO_URL } from '@/constants/branding';
 import DashboardIllustration from './DashboardIllustration';
 import FloatingCard from './FloatingCard';
 import FeatureChip from './FeatureChip';
@@ -25,7 +25,7 @@ export default function HeroSection() {
     >
       <div className="relative z-10 shrink-0">
         <div className="flex items-center gap-3.5 mb-3">
-          <img src={refexLogo} alt="Refex" className="h-9 xl:h-10 w-auto object-contain" />
+          <img src={REFEXONE_LOGO_URL} alt="refexOne" className="h-9 xl:h-10 w-auto object-contain" />
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[#BFDDF0] bg-[#E8F3FC]/90 px-3 py-1 text-[11px] font-semibold text-[#0F6CBD]">
             <Sparkles className="h-3.5 w-3.5" />
             Refex AI Suite

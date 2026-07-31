@@ -1,14 +1,14 @@
 'use strict';
 
 const { getPool } = require('./db');
-const { buildEngagementTotals } = require('./engagementSummary');
+const { buildEngagementTotals, APP_ENGAGEMENT_QUERY } = require('./engagementSummary');
 const { isLoggedInToday } = require('./reportTimezone');
 const {
   resolveKissflowCredentials,
   fetchAllKissflowUsers,
+  enrichKissflowUsersWithDetails,
   fetchAllProcessItems,
   pickString,
-  pickDateTime,
   normalizeProcessStatus,
 } = require('./kissflowClient');
 
@@ -20,18 +20,42 @@ FROM (
   WHERE pu.environment = $1
     AND pu.application_id = $2
     AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
   UNION
   SELECT ia.principal_id AS user_id
   FROM engagement_reporting.item_assignment ia
   WHERE ia.environment = $1
     AND (ia.application_id = $2 OR ia.process_id = ANY($3::text[]))
     AND ia.principal_type = 'USER'
+  UNION
+  SELECT pu.user_id
+  FROM engagement_reporting.item_assignment ia
+  INNER JOIN engagement_reporting.principal_user pu
+    ON pu.environment = ia.environment
+   AND pu.application_id = $2
+   AND pu.principal_id = ia.principal_id
+   AND pu.principal_type = ia.principal_type
+   AND pu.valid_to IS NULL
+  WHERE ia.environment = $1
+    AND ia.principal_type = 'APP_ROLE'
+    AND (ia.application_id = $2 OR ia.process_id = ANY($3::text[]))
 ) members
 WHERE user_id IS NOT NULL
 `;
 
+function kissflowDateValue(raw, keys) {
+  for (const key of keys) {
+    const val = raw?.[key];
+    if (val == null) continue;
+    if (typeof val === 'string' && val.trim()) return val.trim();
+    if (typeof val === 'object' && typeof val.v === 'string' && val.v.trim()) return val.v.trim();
+  }
+  return null;
+}
+
 function normalizeUserRow(raw) {
-  const lastSignIn = pickDateTime(raw, [
+  const lastSignIn = kissflowDateValue(raw, [
+    'LastLoggedInAt',
     'Last_Signin',
     'LastSignIn',
     'last_sign_in',
@@ -39,7 +63,8 @@ function normalizeUserRow(raw) {
     'Last_Login',
   ]);
   const everLoggedIn = Boolean(
-    raw?.Ever_Logged_In === true ||
+    raw?.LastLoggedInAt != null ||
+      raw?.Ever_Logged_In === true ||
       raw?.ever_logged_in === true ||
       String(raw?.Ever_Logged_In || raw?.ever_logged_in || '').toLowerCase() === 'true' ||
       lastSignIn,
@@ -71,9 +96,14 @@ function countTicketStatuses(items) {
 async function fetchLiveAppMetrics(environment, applicationId) {
   const pool = getPool();
   const appResult = await pool.query(
-    `SELECT application_name, source_payload
-     FROM engagement_reporting.application
-     WHERE environment = $1 AND application_id = $2 AND is_current = true
+    `SELECT
+       a.application_name,
+       a.source_payload,
+       acc.kissflow_account_id AS account_kissflow_id
+     FROM engagement_reporting.application a
+     LEFT JOIN engagement_reporting.account acc
+       ON acc.account_id = NULLIF(a.source_payload->>'account_id', '')::uuid
+     WHERE a.environment = $1 AND a.application_id = $2 AND a.is_current = true
      LIMIT 1`,
     [environment, applicationId],
   );
@@ -84,7 +114,10 @@ async function fetchLiveAppMetrics(environment, applicationId) {
   }
   const appRow = appResult.rows[0];
   const payload = appRow.source_payload || {};
-  const accountId = payload.kissflow_account_id;
+  const accountId =
+    payload.kissflow_account_id ||
+    appRow.account_kissflow_id ||
+    (environment === 'production' ? 'AcCMptlq60zH' : null);
   if (!accountId) {
     const err = new Error('kissflow_account_id missing on application');
     err.code = 'KISSFLOW_ACCOUNT_MISSING';
@@ -106,13 +139,36 @@ async function fetchLiveAppMetrics(environment, applicationId) {
 
   const credentials = await resolveKissflowCredentials(environment);
   const memberResult = await pool.query(APP_MEMBER_QUERY, [environment, applicationId, processIds]);
-  const memberIds = new Set(memberResult.rows.map((r) => r.user_id).filter(Boolean));
+  let memberIds = new Set(memberResult.rows.map((r) => r.user_id).filter(Boolean));
+  const snapshotMembers = await pool.query(APP_ENGAGEMENT_QUERY, [environment, applicationId]);
+  const snapshotByUser = new Map(snapshotMembers.rows.map((row) => [row.user_id, row]));
+  if (!memberIds.size) {
+    memberIds = new Set(snapshotMembers.rows.map((r) => r.user_id).filter(Boolean));
+  }
 
   const rawUsers = await fetchAllKissflowUsers({ environment, accountId, credentials });
-  let userRows = rawUsers.map(normalizeUserRow).filter((u) => u.user_id);
-  if (memberIds.size) {
-    userRows = userRows.filter((u) => memberIds.has(u.user_id));
-  }
+  let filteredRaw = rawUsers.filter((raw) => {
+    const userId = pickString(raw, ['_id', 'Id', 'id', 'UserId']);
+    return userId && (!memberIds.size || memberIds.has(userId));
+  });
+  filteredRaw = await enrichKissflowUsersWithDetails({
+    environment,
+    accountId,
+    rawUsers: filteredRaw,
+    credentials,
+  });
+
+  let userRows = filteredRaw.map(normalizeUserRow).filter((u) => u.user_id);
+  userRows = userRows.map((row) => {
+    const snap = snapshotByUser.get(row.user_id);
+    if (!snap) return row;
+    const lastSignIn = row.last_sign_in || snap.last_sign_in || null;
+    return {
+      ...row,
+      last_sign_in: lastSignIn,
+      ever_logged_in: row.ever_logged_in || snap.ever_logged_in || Boolean(lastSignIn),
+    };
+  });
 
   let openTickets = 0;
   let closedTickets = 0;

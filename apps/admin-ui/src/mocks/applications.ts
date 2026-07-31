@@ -56,6 +56,7 @@ export interface DiscoveredField {
   type: string;
   sample?: string;
   occurrences: number;
+  is_system?: boolean;
 }
 
 export interface ResourceFieldSync {

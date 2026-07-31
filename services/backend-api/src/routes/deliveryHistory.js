@@ -6,6 +6,12 @@ const { getPool, isDatabaseConfigured } = require('../lib/db');
 
 const router = express.Router();
 
+const GLOBAL_SENDS_COUNT_QUERY = `
+SELECT COUNT(*)::int AS total
+FROM engagement_reporting.report_run rr
+WHERE rr.environment = $1
+`;
+
 const GLOBAL_SENDS_QUERY = `
 SELECT
   rr.report_run_id,
@@ -54,7 +60,11 @@ router.get('/', async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
 
   try {
-    const { rows } = await getPool().query(GLOBAL_SENDS_QUERY, [environment, limit]);
+    const pool = getPool();
+    const [{ rows }, countResult] = await Promise.all([
+      pool.query(GLOBAL_SENDS_QUERY, [environment, limit]),
+      pool.query(GLOBAL_SENDS_COUNT_QUERY, [environment]),
+    ]);
 
     const items = rows.map((row) => ({
       id: row.report_run_id,
@@ -70,7 +80,7 @@ router.get('/', async (req, res) => {
 
     return ok(res, req.correlationId, {
       items,
-      total: items.length,
+      total: countResult.rows[0]?.total ?? items.length,
       environment,
     });
   } catch (err) {

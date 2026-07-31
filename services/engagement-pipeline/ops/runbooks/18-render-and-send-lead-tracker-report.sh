@@ -77,6 +77,9 @@ log "Step 1/2: Rendering Lead Tracker report"
 bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
 
 log "Step 2/2: Sending Lead Tracker report"
+export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"
+export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}"
+export ENVIRONMENT="${ENVIRONMENT:-production}"
 export REPORT_FILE_OVERRIDE="${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
 bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
 

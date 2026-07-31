@@ -12,8 +12,6 @@ import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
   if (lower === 'production' || lower === 'prod') return 'Production';
-  if (lower === 'uat') return 'UAT';
-  if (lower === 'staging') return 'Staging';
   return 'Development';
 }
 

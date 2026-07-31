@@ -13,7 +13,15 @@ type FilterKey = 'all' | 'delivered' | 'failed' | 'pending';
 
 function formatWhen(value: string | null | undefined): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString('en-IN', {
+  const date = new Date(value);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  const time = date.toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  if (sameDay) return `Today, ${time}`;
+  return date.toLocaleString('en-IN', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

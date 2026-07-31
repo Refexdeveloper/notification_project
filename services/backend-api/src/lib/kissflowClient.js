@@ -32,9 +32,41 @@ function normalizeEnvironment(value) {
 }
 
 async function readGcpSecret(secretName) {
-  if (typeof fetch !== 'function') return '';
   const project =
     process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'master-diorama-489103-u2';
+
+  if (process.env.KISSFLOW_KEY && secretName.includes('key-id')) {
+    return process.env.KISSFLOW_KEY;
+  }
+  if (process.env.KISSFLOW_SECRET && secretName.includes('key-secret')) {
+    return process.env.KISSFLOW_SECRET;
+  }
+
+  try {
+    const metadataBase = 'http://metadata.google.internal/computeMetadata/v1';
+    const tokenRes = await fetch(`${metadataBase}/instance/service-accounts/default/token`, {
+      headers: { 'Metadata-Flavor': 'Google' },
+    });
+    if (tokenRes.ok) {
+      const tokenJson = await tokenRes.json();
+      const accessToken = tokenJson.access_token;
+      if (accessToken) {
+        const url = `https://secretmanager.googleapis.com/v1/projects/${project}/secrets/${secretName}/versions/latest:access`;
+        const secretRes = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (secretRes.ok) {
+          const secretJson = await secretRes.json();
+          if (secretJson.payload?.data) {
+            return Buffer.from(secretJson.payload.data, 'base64').toString('utf8').trim();
+          }
+        }
+      }
+    }
+  } catch {
+    /* fall through to gcloud CLI for local dev */
+  }
+
   try {
     const { execSync } = require('child_process');
     return String(
@@ -216,6 +248,47 @@ async function fetchAllKissflowUsers({ environment, accountId, credentials }) {
   return all;
 }
 
+async function fetchKissflowUserDetail({ environment, accountId, userId, credentials }) {
+  const { data } = await kissflowGetUrl({
+    environment,
+    credentials,
+    urlPath: `/user/2/${encodeURIComponent(accountId)}/${encodeURIComponent(userId)}`,
+  });
+  return data && typeof data === 'object' ? data : {};
+}
+
+async function enrichKissflowUsersWithDetails({
+  environment,
+  accountId,
+  rawUsers,
+  credentials,
+  concurrency = 8,
+}) {
+  const enriched = [];
+  for (let i = 0; i < rawUsers.length; i += concurrency) {
+    const chunk = rawUsers.slice(i, i + concurrency);
+    const batch = await Promise.all(
+      chunk.map(async (raw) => {
+        const userId = pickString(raw, ['_id', 'Id', 'id', 'UserId']);
+        if (!userId) return raw;
+        try {
+          const detail = await fetchKissflowUserDetail({
+            environment,
+            accountId,
+            userId,
+            credentials,
+          });
+          return { ...raw, ...detail, _id: userId };
+        } catch {
+          return raw;
+        }
+      }),
+    );
+    enriched.push(...batch);
+  }
+  return enriched;
+}
+
 async function fetchAllProcessItems({ environment, accountId, processId, credentials }) {
   const pageSize = 500;
   const all = [];
@@ -229,7 +302,7 @@ async function fetchAllProcessItems({ environment, accountId, processId, credent
       applyPreference: false,
       credentials,
     });
-    const batch = extractArray(data.data);
+    const batch = extractArray(data);
     if (!batch.length) break;
     all.push(...batch);
     if (batch.length < pageSize) break;
@@ -275,6 +348,8 @@ module.exports = {
   kissflowGet,
   kissflowGetUrl,
   fetchAllKissflowUsers,
+  fetchKissflowUserDetail,
+  enrichKissflowUsersWithDetails,
   fetchAllProcessItems,
   extractArray,
   pickString,

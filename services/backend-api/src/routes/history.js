@@ -44,7 +44,7 @@ SELECT
 FROM engagement_reporting.report_run rr
 WHERE rr.environment = $1
   AND rr.application_id = $2
-ORDER BY rr.scheduled_at DESC
+ORDER BY COALESCE(rr.completed_at, rr.scheduled_at) DESC NULLS LAST
 LIMIT 100
 `;
 

@@ -74,8 +74,8 @@ const REFEX_ENGAGEMENT_HTML = `<!DOCTYPE html>
 
 <tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="120" valign="middle">
-<img src="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png" alt="Refex" width="100" style="display:block; max-width:100px; height:auto;">
+<td width="180" valign="middle">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">{{ReportTitle}}</div>

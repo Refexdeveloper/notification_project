@@ -5,7 +5,7 @@ const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { APP_ENGAGEMENT_QUERY, buildEngagementTotals } = require('../lib/engagementSummary');
 const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
-const { snapshotAgeHours, DEFAULT_REPORT_TIMEZONE } = require('../lib/reportTimezone');
+const { snapshotAgeHours, DEFAULT_REPORT_TIMEZONE, isSameCalendarDay } = require('../lib/reportTimezone');
 
 const router = express.Router();
 
@@ -113,6 +113,10 @@ router.get('/', async (req, res) => {
       const totals = buildEngagementTotals(rows);
       const snapshotAt = rows[0]?.snapshot_at || null;
       const ageHours = snapshotAgeHours(snapshotAt);
+      const snapshotStale =
+        !snapshotAt ||
+        !isSameCalendarDay(new Date(snapshotAt), new Date(), DEFAULT_REPORT_TIMEZONE) ||
+        (ageHours != null && ageHours > 24);
       applications.push({
         environment: app.environment,
         application_id: app.application_id,
@@ -120,7 +124,7 @@ router.get('/', async (req, res) => {
         snapshot_at: snapshotAt,
         fetched_at: null,
         data_source: 'snapshot',
-        snapshot_stale: ageHours != null && ageHours > 24,
+        snapshot_stale: snapshotStale,
         metrics: {
           total_users: totals.total_users,
           sign_in_today: totals.active_today,
