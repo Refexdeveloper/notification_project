@@ -13,7 +13,8 @@
 # Environment overrides (optional):
 #   GCP_PROJECT, GCP_REGION, COMMIT_SHA, CLOUD_SQL_INSTANCE
 #   BACKEND_SERVICE, ADMIN_UI_SERVICE, ARTIFACT_REPO
-#   BACKEND_API_URL — required for admin-ui build (public /api/v1 base)
+#   BACKEND_UPSTREAM_URL — Cloud Run URL for backend-api (nginx proxy target in admin-ui image)
+#   BACKEND_HOST — Host header for backend-api (default: refex-backend-api-645830234926.asia-south1.run.app)
 #
 set -euo pipefail
 
@@ -30,7 +31,9 @@ BACKEND_SERVICE="${BACKEND_SERVICE:-refex-backend-api}"
 ADMIN_UI_SERVICE="${ADMIN_UI_SERVICE:-refex-admin-ui}"
 BACKEND_IMAGE="${ARTIFACT_REPO}/backend-api:${COMMIT_SHA}"
 ADMIN_IMAGE="${ARTIFACT_REPO}/admin-ui:${COMMIT_SHA}"
-BACKEND_API_URL="${BACKEND_API_URL:-}"
+BACKEND_API_URL="${BACKEND_API_URL:-/api/v1}"
+BACKEND_UPSTREAM_URL="${BACKEND_UPSTREAM_URL:-https://refex-backend-api-645830234926.asia-south1.run.app}"
+BACKEND_HOST="${BACKEND_HOST:-refex-backend-api-645830234926.asia-south1.run.app}"
 PG_SECRET="${PG_SECRET:-engagement-report-pg-root-password}"
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-645830234926-compute@developer.gserviceaccount.com}"
 
@@ -87,15 +90,17 @@ build_images() {
       -f services/backend-api/Dockerfile \
       .
 
-    if [[ -z "${BACKEND_API_URL}" ]]; then
-      die "Set BACKEND_API_URL (e.g. https://refex-backend-api-xxx.run.app/api/v1) before building admin-ui"
+    if [[ "${BACKEND_API_URL}" != "/api/v1" && -z "${BACKEND_API_URL##http*}" ]]; then
+      log "NOTE: Using same-origin /api/v1 in Admin UI build (nginx proxies to backend). BACKEND_API_URL=${BACKEND_API_URL} is ignored for Vite."
     fi
 
-    log "Building admin-ui image (VITE_USE_BACKEND_API=true)"
+    log "Building admin-ui image (VITE_USE_BACKEND_API=true, same-origin /api/v1 proxy)"
     docker build \
       -t "${ADMIN_IMAGE}" \
-      --build-arg "VITE_API_BASE_URL=${BACKEND_API_URL}" \
+      --build-arg "VITE_API_BASE_URL=/api/v1" \
       --build-arg "VITE_USE_BACKEND_API=true" \
+      --build-arg "BACKEND_UPSTREAM=${BACKEND_UPSTREAM_URL}" \
+      --build-arg "BACKEND_HOST=${BACKEND_HOST}" \
       -f apps/admin-ui/Dockerfile \
       apps/admin-ui
 
@@ -198,6 +203,10 @@ verify() {
   curl -fsS "${admin_url}/" | head -c 200
   echo ""
 
+  log "Verifying admin-ui same-origin API proxy (/api/v1/health)"
+  curl -fsS "${admin_url}/api/v1/health" | head -c 400 || log "WARN: admin-ui /api/v1 proxy failed — check nginx BACKEND_UPSTREAM in image"
+  echo ""
+
   log "Shadow verify complete. Move traffic only after manual UI check:"
   log "  gcloud run services update-traffic ${BACKEND_SERVICE} --to-tags=sha-${COMMIT_SHA}=100 --region=${GCP_REGION} --project=${GCP_PROJECT}"
   log "  gcloud run services update-traffic ${ADMIN_UI_SERVICE} --to-tags=sha-${COMMIT_SHA}=100 --region=${GCP_REGION} --project=${GCP_PROJECT}"
@@ -206,14 +215,14 @@ verify() {
 cloud_build() {
   require_approval
   require_gcloud
-  if [[ -z "${BACKEND_API_URL}" ]]; then
-    die "Set BACKEND_API_URL for Cloud Build admin-ui arg _API_BASE_URL"
+  if [[ -z "${BACKEND_UPSTREAM_URL}" ]]; then
+    die "Set BACKEND_UPSTREAM_URL (e.g. https://refex-backend-api-xxx.run.app) for admin-ui nginx proxy"
   fi
   log "Submitting Cloud Build (services.yaml)"
   gcloud builds submit \
     --project="${GCP_PROJECT}" \
     --config=cloudbuild/services.yaml \
-    --substitutions="COMMIT_SHA=${COMMIT_SHA},_API_BASE_URL=${BACKEND_API_URL},_VITE_USE_BACKEND_API=true"
+    --substitutions="COMMIT_SHA=${COMMIT_SHA},_API_BASE_URL=/api/v1,_VITE_USE_BACKEND_API=true,_BACKEND_UPSTREAM=${BACKEND_UPSTREAM_URL},_BACKEND_HOST=${BACKEND_HOST}"
 }
 
 usage() {

@@ -20,7 +20,9 @@ function correlationId(): string {
 function resolveV1Url(path: string): string {
   const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  if (base) return `${base}${normalized}`;
+  if (base) {
+    return `${base}${normalized}`;
+  }
   return `/api/v1${normalized}`;
 }
 

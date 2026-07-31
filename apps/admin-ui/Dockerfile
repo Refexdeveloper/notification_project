@@ -8,7 +8,8 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_API_BASE_URL
+# Same-origin /api/v1 in production — nginx proxies to backend-api (see nginx.conf.template).
+ARG VITE_API_BASE_URL=/api/v1
 ARG VITE_USE_BACKEND_API=true
 ARG CACHEBUST=1
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
@@ -19,7 +20,12 @@ RUN echo "build cache bust: ${CACHEBUST}" && npm run build
 # Serve on Cloud Run port 8080
 FROM nginx:1.27-alpine
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+ARG BACKEND_UPSTREAM=https://refex-backend-api-645830234926.asia-south1.run.app
+ARG BACKEND_HOST=refex-backend-api-645830234926.asia-south1.run.app
+ENV BACKEND_UPSTREAM=${BACKEND_UPSTREAM}
+ENV BACKEND_HOST=${BACKEND_HOST}
+
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/out /usr/share/nginx/html
 
 EXPOSE 8080
