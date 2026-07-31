@@ -3,6 +3,8 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
+const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
+const { isLoggedInToday } = require('../lib/reportTimezone');
 
 const router = express.Router({ mergeParams: true });
 
@@ -190,23 +192,15 @@ function normalizeEnvironment(value) {
   return lower;
 }
 
-function isLoggedInToday(lastSignIn) {
-  if (!lastSignIn) return false;
-  const login = new Date(lastSignIn);
-  if (Number.isNaN(login.getTime())) return false;
-  const now = new Date();
-  return (
-    login.getFullYear() === now.getFullYear() &&
-    login.getMonth() === now.getMonth() &&
-    login.getDate() === now.getDate()
-  );
+function isLoggedInTodayLegacy(lastSignIn) {
+  return isLoggedInToday(lastSignIn);
 }
 
 function buildTotals(rows) {
   return {
     total_users: rows.length,
-    active_today: rows.filter((row) => isLoggedInToday(row.last_sign_in)).length,
-    inactive: rows.filter((row) => row.last_sign_in && !isLoggedInToday(row.last_sign_in)).length,
+    active_today: rows.filter((row) => isLoggedInTodayLegacy(row.last_sign_in)).length,
+    inactive: rows.filter((row) => row.last_sign_in && !isLoggedInTodayLegacy(row.last_sign_in)).length,
     never_logged_in: rows.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
     total_assigned: rows.reduce((sum, row) => sum + Number(row.assigned || 0), 0),
     with_assignments: rows.filter((row) => Number(row.assigned || 0) > 0).length,
@@ -227,6 +221,62 @@ router.get('/', async (req, res) => {
   const applicationId = req.params.applicationId;
   if (!applicationId) {
     return fail(res, req.correlationId, 'APPLICATION_ID_REQUIRED', 'Application id is required', 400);
+  }
+
+  const liveRefresh = String(req.query.refresh || '').toLowerCase() === 'live';
+
+  if (liveRefresh) {
+    try {
+      const live = await fetchLiveAppMetrics(environment, applicationId);
+      const items = (live.users || []).map((row) => ({
+        user_id: row.user_id,
+        user_name: row.user_name,
+        email: row.email,
+        user_type: null,
+        active_status: null,
+        last_sign_in: row.last_sign_in,
+        ever_logged_in: row.ever_logged_in,
+        assigned: row.assigned || 0,
+        open: row.open_count || 0,
+        completed: row.completed_count || 0,
+        rejected: 0,
+        role_names: [],
+        has_assignment: false,
+        has_app_role: row.has_app_role || false,
+        source_payload: {},
+      }));
+
+      return ok(res, req.correlationId, {
+        items,
+        count: items.length,
+        totals: {
+          total_users: live.metrics.total_users,
+          active_today: live.metrics.sign_in_today,
+          inactive: items.filter((row) => row.last_sign_in && !isLoggedInTodayLegacy(row.last_sign_in)).length,
+          never_logged_in: items.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
+          total_assigned: live.metrics.open_tickets + live.metrics.closed_tickets,
+          open_tickets: live.metrics.open_tickets,
+          closed_tickets: live.metrics.closed_tickets,
+          sign_in_rate_overall: live.metrics.sign_in_rate_overall,
+          sign_in_rate_today: live.metrics.sign_in_rate_today,
+        },
+        generated_at: live.fetched_at,
+        snapshot_at: live.snapshot_at,
+        environment,
+        application_id: applicationId,
+        scope: 'application',
+        data_source: 'live',
+      });
+    } catch (liveErr) {
+      return fail(
+        res,
+        req.correlationId,
+        liveErr.code || 'LIVE_ENGAGEMENT_FAILED',
+        liveErr.message || 'Live Kissflow refresh failed',
+        liveErr.status || 502,
+        true,
+      );
+    }
   }
 
   try {

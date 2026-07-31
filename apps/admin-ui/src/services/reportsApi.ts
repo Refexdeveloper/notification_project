@@ -38,8 +38,10 @@ export type BackendScheduleRow = {
   id: string;
   name: string;
   application_id: string | null;
+  process_id?: string | null;
   template_id: string | null;
   template_name: string | null;
+  subject?: string | null;
   cron_expression: string;
   timezone: string;
   is_active: boolean;
@@ -88,6 +90,8 @@ function mapScheduleRow(row: BackendScheduleRow, app: KissflowApplication): Repo
     status: row.status,
     templateId: row.template_id || '',
     templateName: row.template_name || '—',
+    processId: row.process_id || undefined,
+    subject: row.subject || undefined,
     cadence: {
       ...cadenceStateToReportCadence(cadenceState),
       cronExpression: row.cron_expression,
@@ -170,12 +174,39 @@ export type ScheduleUpdatePayload = {
   is_active?: boolean;
   cron_expression?: string;
   timezone?: string;
+  template_id?: string;
+  template_name?: string;
+  process_id?: string;
+  website_filter?: string;
+  user_group_filter?: string;
+  subject?: string;
+};
+
+export type CloudSchedulerSyncResult = {
+  ok: boolean;
+  job_name?: string;
+  action?: string;
+  state?: string;
+  schedule?: string;
+  timezone?: string;
+  error?: string;
+  skipped?: boolean;
+  reason?: string;
+};
+
+export type FromEmailAuthResult = {
+  valid: boolean;
+  authorized: boolean | null;
+  message: string;
+  smtp_user?: string | null;
 };
 
 export type ScheduleUpdateResult = {
   ok: boolean;
   schedule?: ReportScheduler;
   error?: string;
+  cloudScheduler?: CloudSchedulerSyncResult;
+  fromEmailAuth?: FromEmailAuthResult;
 };
 
 export type ScheduleCreatePayload = {
@@ -189,6 +220,9 @@ export type ScheduleCreatePayload = {
   recipients_cc?: string[];
   is_active?: boolean;
   process_id?: string;
+  subject?: string;
+  website_filter?: string;
+  user_group_filter?: string;
 };
 
 export type ScheduleCreateResult = {
@@ -353,7 +387,11 @@ export async function updateScheduleOnBackend(
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
   const path = `/applications/${encodeURIComponent(applicationId)}/schedules/${encodeURIComponent(scheduleId)}?environment=${encodeURIComponent(environment)}`;
-  const res = await apiV1Fetch<{ item: BackendScheduleRow }>(path, {
+  const res = await apiV1Fetch<{
+    item: BackendScheduleRow;
+    cloud_scheduler?: CloudSchedulerSyncResult;
+    from_email_auth?: FromEmailAuthResult;
+  }>(path, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -365,5 +403,50 @@ export async function updateScheduleOnBackend(
   return {
     ok: true,
     schedule: mapScheduleRow(res.data.item, app),
+    cloudScheduler: res.data.cloud_scheduler,
+    fromEmailAuth: res.data.from_email_auth,
+  };
+}
+
+export type ScheduleTestSendResult = {
+  ok: boolean;
+  dispatched?: boolean;
+  logExcerpt?: string;
+  message?: string;
+  error?: string;
+};
+
+export async function testSendScheduleOnBackend(
+  app: KissflowApplication,
+  scheduleId: string,
+  testRecipient: string,
+): Promise<ScheduleTestSendResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/schedules/${encodeURIComponent(scheduleId)}/test-send?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{
+    dispatched?: boolean;
+    log_excerpt?: string;
+    test_recipient?: string;
+    message?: string;
+    status?: string;
+  }>(path, {
+    method: 'POST',
+    body: JSON.stringify({ test_recipient: testRecipient.trim().toLowerCase() }),
+  }, { timeoutMs: 120000 });
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Test send failed' };
+  }
+
+  return {
+    ok: true,
+    dispatched: Boolean(res.data?.dispatched),
+    logExcerpt: res.data?.log_excerpt,
+    message: res.data?.message,
   };
 }

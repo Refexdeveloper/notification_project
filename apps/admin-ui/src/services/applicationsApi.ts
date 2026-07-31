@@ -12,8 +12,6 @@ import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
   if (lower === 'production' || lower === 'prod') return 'Production';
-  if (lower === 'uat') return 'UAT';
-  if (lower === 'staging') return 'Staging';
   return 'Development';
 }
 
@@ -60,8 +58,9 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
     dataformIds: [],
     boardIds: [],
     datasetIds: [],
-    accessKeyId: envConfig.accessKeyId || '',
-    accessKeySecret: envConfig.accessKeySecret || '',
+    accessKeyId: '',
+    accessKeySecret: '',
+    credentialsConfigured: undefined,
     icon: 'ri-apps-line',
     owner: '—',
     created: lastSync,
@@ -339,6 +338,73 @@ export async function deleteApplicationOnBackend(
   }
 
   return { ok: true };
+}
+
+export type ApplicationUpdatePayload = {
+  application_name?: string;
+  description?: string;
+  subdomain?: string;
+  region?: string;
+};
+
+export type CredentialsStatusResult = {
+  credentials_configured: boolean;
+  kissflow_account_id?: string | null;
+  provider?: string;
+  secret_hints?: string[];
+  credentials_bound_at?: string | null;
+  note?: string;
+  warning?: string;
+};
+
+export async function loadCredentialsStatusFromBackend(
+  app: KissflowApplication,
+): Promise<{ ok: boolean; status?: CredentialsStatusResult; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const res = await apiV1Fetch<CredentialsStatusResult>(
+    `/applications/${encodeURIComponent(applicationId)}/credentials-status?environment=${encodeURIComponent(environment)}`,
+  );
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Failed to load credential status' };
+  }
+
+  return { ok: true, status: res.data };
+}
+
+export async function updateApplicationOnBackend(
+  app: KissflowApplication,
+  payload: ApplicationUpdatePayload,
+): Promise<{ ok: boolean; application?: KissflowApplication; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const res = await apiV1Fetch<{ item: BackendApplicationRow }>(
+    `/applications/${encodeURIComponent(applicationId)}?environment=${encodeURIComponent(environment)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        application_name: payload.application_name,
+        description: payload.description,
+        subdomain: payload.subdomain,
+        region: payload.region,
+      }),
+    },
+  );
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to update application' };
+  }
+
+  return { ok: true, application: mapRowToApplication(res.data.item) };
 }
 
 export { toDbEnvironment };

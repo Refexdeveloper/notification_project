@@ -1,7 +1,7 @@
 import { Bell, Cloud, Network, Sparkles } from 'lucide-react';
 import { Button } from './Button';
 
-type EmptyVariant = 'apps' | 'templates' | 'schedules' | 'activity' | 'generic';
+type EmptyVariant = 'apps' | 'templates' | 'schedules' | 'activity' | 'users' | 'generic';
 
 interface EmptyStateProps {
   variant?: EmptyVariant;

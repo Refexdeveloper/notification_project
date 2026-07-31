@@ -104,6 +104,8 @@ fi
 
 RUN_ID="lead-tracker-ingest-$(date -u +'%Y%m%dT%H%M%SZ')"
 GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+export SNAPSHOT_RUN_ID="${RUN_ID}"
+export APPLICATION_ID PROCESS_ID ENVIRONMENT
 
 log "Normalizing lead items"
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" \

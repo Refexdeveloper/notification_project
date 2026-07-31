@@ -5,6 +5,10 @@ const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { resolveSession } = require('../lib/session');
 const { createSchedule, deleteSchedule } = require('../lib/scheduleRepository');
+const { assertTemplateForApplication } = require('../lib/templateRepository');
+const { dispatchScheduleRunnerAsync } = require('../lib/scheduleRunnerClient');
+const { syncScheduleCloudJob } = require('../lib/cloudSchedulerSync');
+const { validateScheduleFromEmail } = require('../lib/smtpFromValidation');
 
 const router = express.Router({ mergeParams: true });
 
@@ -27,9 +31,12 @@ SELECT
   rs.created_at,
   rd.name AS definition_name,
   rdv.config->>'application_id' AS application_id,
+  rdv.config->>'process_id' AS process_id,
   rdv.config->>'template_id' AS template_id,
   rdv.config->>'template_name' AS template_name,
+  rdv.config->>'subject' AS subject,
   rdv.config->>'from_email' AS from_email,
+  rdv.config->>'legacy_scheduler_id' AS legacy_scheduler_id,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
   rdv.report_definition_version_id::text AS report_definition_version_id,
@@ -52,7 +59,18 @@ JOIN engagement_reporting.account a
 LEFT JOIN engagement_reporting.report_recipient rr
   ON rr.report_schedule_id = rs.report_schedule_id
 WHERE a.environment = $1
-  AND ($2::text IS NULL OR rdv.config->>'application_id' = $2)
+  AND (
+    $2::text IS NULL
+    OR rdv.config->>'application_id' = $2
+    OR (
+      SELECT tb.config->>'application_id'
+      FROM engagement_reporting.report_definition_version tb
+      WHERE tb.config->>'template_id' = rdv.config->>'template_id'
+        AND tb.config->>'application_id' IS NOT NULL
+      ORDER BY CASE WHEN tb.config->>'kind' = 'template_only' THEN 0 ELSE 1 END
+      LIMIT 1
+    ) = $2
+  )
 GROUP BY
   rs.report_schedule_id,
   rs.cron_expression,
@@ -74,9 +92,12 @@ SELECT
   rs.created_at,
   rd.name AS definition_name,
   rdv.config->>'application_id' AS application_id,
+  rdv.config->>'process_id' AS process_id,
   rdv.config->>'template_id' AS template_id,
   rdv.config->>'template_name' AS template_name,
+  rdv.config->>'subject' AS subject,
   rdv.config->>'from_email' AS from_email,
+  rdv.config->>'legacy_scheduler_id' AS legacy_scheduler_id,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
   rdv.report_definition_version_id::text AS report_definition_version_id,
@@ -99,7 +120,17 @@ JOIN engagement_reporting.account a
 LEFT JOIN engagement_reporting.report_recipient rr
   ON rr.report_schedule_id = rs.report_schedule_id
 WHERE a.environment = $1
-  AND rdv.config->>'application_id' = $2
+  AND (
+    rdv.config->>'application_id' = $2
+    OR (
+      SELECT tb.config->>'application_id'
+      FROM engagement_reporting.report_definition_version tb
+      WHERE tb.config->>'template_id' = rdv.config->>'template_id'
+        AND tb.config->>'application_id' IS NOT NULL
+      ORDER BY CASE WHEN tb.config->>'kind' = 'template_only' THEN 0 ELSE 1 END
+      LIMIT 1
+    ) = $2
+  )
   AND rs.report_schedule_id = $3::uuid
 GROUP BY
   rs.report_schedule_id,
@@ -158,8 +189,10 @@ function mapScheduleRow(row) {
     id: row.id,
     name: row.definition_name,
     application_id: row.application_id || null,
+    process_id: row.process_id || null,
     template_id: row.template_id || null,
     template_name: row.template_name || null,
+    subject: row.subject || null,
     from_email: row.from_email || null,
     website_filter: row.website_filter || null,
     user_group_filter: row.user_group_filter || null,
@@ -244,10 +277,17 @@ router.post('/', async (req, res) => {
   if (isActive && !fromEmail) {
     return fail(res, req.correlationId, 'FROM_EMAIL_REQUIRED', 'from_email is required when schedule is active', 400);
   }
+  if (isActive) {
+    const fromAuth = validateScheduleFromEmail(fromEmail);
+    if (fromAuth.authorized === false) {
+      return fail(res, req.correlationId, 'FROM_EMAIL_NOT_AUTHORIZED', fromAuth.message, 400);
+    }
+  }
 
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
+    await assertTemplateForApplication(getPool(), { environment, applicationId, templateId });
     const scheduleId = await createSchedule(client, {
       environment,
       applicationId,
@@ -268,15 +308,122 @@ router.post('/', async (req, res) => {
     await client.query('COMMIT');
 
     const { rows } = await getPool().query(SCHEDULE_BY_ID_QUERY, [environment, applicationId, scheduleId]);
-    return ok(res, req.correlationId, { item: mapScheduleRow(rows[0]) }, 201);
+    let cloudScheduler = null;
+    if (isActive) {
+      try {
+        cloudScheduler = await syncScheduleCloudJob(rows[0]);
+      } catch (syncErr) {
+        cloudScheduler = { ok: false, error: syncErr.message };
+      }
+    }
+    return ok(
+      res,
+      req.correlationId,
+      {
+        item: mapScheduleRow(rows[0]),
+        cloud_scheduler: cloudScheduler,
+        from_email_auth: validateScheduleFromEmail(fromEmail),
+      },
+      201,
+    );
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === 'TEMPLATE_NOT_FOUND' || err.code === 'TEMPLATE_APPLICATION_MISMATCH') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 400);
+    }
     if (err.code === 'SCHEDULE_NOT_FOUND') {
       return fail(res, req.correlationId, err.code, err.message, err.status || 404);
     }
     return fail(res, req.correlationId, 'SCHEDULE_CREATE_FAILED', err.message, 500, true);
   } finally {
     client.release();
+  }
+});
+
+router.post('/:scheduleId/test-send', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+
+  const applicationId = req.params.applicationId;
+  const scheduleId = req.params.scheduleId;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const testRecipient = normalizeSingleEmail(body.test_recipient || body.testRecipient);
+
+  if (!testRecipient) {
+    return fail(
+      res,
+      req.correlationId,
+      'TEST_RECIPIENT_REQUIRED',
+      'Provide test_recipient (email) in the request body',
+      400,
+    );
+  }
+
+  try {
+    const { rows } = await getPool().query(SCHEDULE_BY_ID_QUERY, [environment, applicationId, scheduleId]);
+    if (!rows.length) {
+      return fail(res, req.correlationId, 'SCHEDULE_NOT_FOUND', 'Schedule not found for this application', 404);
+    }
+
+    const row = rows[0];
+    if (row.template_id) {
+      await assertTemplateForApplication(getPool(), {
+        environment,
+        applicationId,
+        templateId: row.template_id,
+      });
+    }
+    if (row.application_id && row.application_id !== applicationId) {
+      await getPool().query(
+        `UPDATE engagement_reporting.report_definition_version
+         SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('application_id', $2::text)
+         WHERE report_definition_version_id = $1::uuid`,
+        [row.report_definition_version_id, applicationId],
+      );
+    }
+
+    const effectiveFrom = row.from_email || '';
+    if (!effectiveFrom) {
+      return fail(
+        res,
+        req.correlationId,
+        'FROM_EMAIL_REQUIRED',
+        'Save a From email on this schedule before sending a test (Save schedule first).',
+        400,
+      );
+    }
+
+    dispatchScheduleRunnerAsync(scheduleId, { testRecipient });
+
+    return ok(res, req.correlationId, {
+      schedule_id: scheduleId,
+      application_id: applicationId,
+      template_name: row.template_name,
+      test_recipient: testRecipient,
+      dispatched: true,
+      status: 'started',
+      message:
+        'Test send started (ingest → render → email). Delivery usually takes 2–5 minutes — check the inbox and spam folder.',
+    });
+  } catch (err) {
+    if (err.code === 'SCHEDULE_RUNNER_NOT_CONFIGURED') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 503);
+    }
+    if (err.code === 'SCHEDULE_RUNNER_AUTH_FAILED') {
+      return fail(res, req.correlationId, err.code, err.message, 502);
+    }
+    return fail(res, req.correlationId, 'SCHEDULE_TEST_SEND_FAILED', err.message, err.status || 500, true);
   }
 });
 
@@ -338,13 +485,32 @@ router.patch('/:scheduleId', async (req, res) => {
   const hasFromEmail = Object.prototype.hasOwnProperty.call(body, 'from_email');
   const hasCronExpression = Object.prototype.hasOwnProperty.call(body, 'cron_expression');
   const hasTimezone = Object.prototype.hasOwnProperty.call(body, 'timezone');
+  const hasTemplateId = Object.prototype.hasOwnProperty.call(body, 'template_id');
+  const hasTemplateName = Object.prototype.hasOwnProperty.call(body, 'template_name');
+  const hasProcessId = Object.prototype.hasOwnProperty.call(body, 'process_id');
+  const hasWebsiteFilter = Object.prototype.hasOwnProperty.call(body, 'website_filter');
+  const hasUserGroupFilter = Object.prototype.hasOwnProperty.call(body, 'user_group_filter');
+  const hasSubject = Object.prototype.hasOwnProperty.call(body, 'subject');
 
-  if (!hasRecipientsTo && !hasRecipientsCc && !hasIsActive && !hasFromEmail && !hasCronExpression && !hasTimezone) {
+  if (
+    !hasRecipientsTo &&
+    !hasRecipientsCc &&
+    !hasIsActive &&
+    !hasFromEmail &&
+    !hasCronExpression &&
+    !hasTimezone &&
+    !hasTemplateId &&
+    !hasTemplateName &&
+    !hasProcessId &&
+    !hasWebsiteFilter &&
+    !hasUserGroupFilter &&
+    !hasSubject
+  ) {
     return fail(
       res,
       req.correlationId,
       'UPDATE_FIELDS_REQUIRED',
-      'Provide from_email, recipients_to, recipients_cc, cron_expression, timezone, and/or is_active',
+      'Provide from_email, recipients, cron/timezone, template_id, process_id, filters, subject, and/or is_active',
       400,
     );
   }
@@ -472,6 +638,11 @@ router.patch('/:scheduleId', async (req, res) => {
           400,
         );
       }
+      const fromAuth = validateScheduleFromEmail(effectiveFromEmail);
+      if (fromAuth.authorized === false) {
+        await client.query('ROLLBACK');
+        return fail(res, req.correlationId, 'FROM_EMAIL_NOT_AUTHORIZED', fromAuth.message, 400);
+      }
     }
 
     if (hasIsActive) {
@@ -500,6 +671,62 @@ router.patch('/:scheduleId', async (req, res) => {
       );
     }
 
+    if (
+      hasTemplateId ||
+      hasTemplateName ||
+      hasProcessId ||
+      hasWebsiteFilter ||
+      hasUserGroupFilter ||
+      hasSubject
+    ) {
+      if (hasTemplateId) {
+        const nextTemplateId = String(body.template_id || '').trim();
+        if (!nextTemplateId) {
+          await client.query('ROLLBACK');
+          return fail(res, req.correlationId, 'TEMPLATE_ID_REQUIRED', 'template_id cannot be empty', 400);
+        }
+        await assertTemplateForApplication(getPool(), {
+          environment,
+          applicationId,
+          templateId: nextTemplateId,
+        });
+      }
+      const configPatch = { application_id: applicationId };
+      if (hasTemplateId) {
+        const nextTemplateId = String(body.template_id || '').trim();
+        configPatch.template_id = nextTemplateId;
+      }
+      if (hasTemplateName) {
+        configPatch.template_name = String(body.template_name || '').trim();
+      }
+      if (hasProcessId) {
+        const processId = String(body.process_id || '').trim();
+        if (processId) configPatch.process_id = processId;
+        else configPatch.process_id = null;
+      }
+      if (hasWebsiteFilter) {
+        const filter = String(body.website_filter || '').trim();
+        if (filter) configPatch.website_filter = filter;
+        else configPatch.website_filter = null;
+      }
+      if (hasUserGroupFilter) {
+        const filter = String(body.user_group_filter || '').trim();
+        if (filter) configPatch.user_group_filter = filter;
+        else configPatch.user_group_filter = null;
+      }
+      if (hasSubject) {
+        const subject = String(body.subject || '').trim();
+        if (subject) configPatch.subject = subject;
+        else configPatch.subject = null;
+      }
+      await client.query(
+        `UPDATE engagement_reporting.report_definition_version
+         SET config = COALESCE(config, '{}'::jsonb) || $2::jsonb
+         WHERE report_definition_version_id = $1::uuid`,
+        [definitionVersionId, JSON.stringify(configPatch)],
+      );
+    }
+
     await client.query('COMMIT');
 
     const { rows } = await getPool().query(SCHEDULE_BY_ID_QUERY, [environment, applicationId, scheduleId]);
@@ -507,13 +734,30 @@ router.patch('/:scheduleId', async (req, res) => {
       return fail(res, req.correlationId, 'SCHEDULE_NOT_FOUND', 'Schedule not found after update', 404);
     }
 
+    const updatedRow = rows[0];
+    let cloudScheduler = null;
+    if (hasIsActive || hasCronExpression || hasTimezone) {
+      try {
+        cloudScheduler = await syncScheduleCloudJob(updatedRow);
+      } catch (syncErr) {
+        cloudScheduler = { ok: false, error: syncErr.message };
+      }
+    }
+
+    const fromEmailAuth = validateScheduleFromEmail(updatedRow.from_email || effectiveFromEmail);
+
     return ok(res, req.correlationId, {
-      item: mapScheduleRow(rows[0]),
+      item: mapScheduleRow(updatedRow),
       environment,
       application_id: applicationId,
+      cloud_scheduler: cloudScheduler,
+      from_email_auth: fromEmailAuth,
     });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.code === 'TEMPLATE_NOT_FOUND' || err.code === 'TEMPLATE_APPLICATION_MISMATCH') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 400);
+    }
     if (err.code === '42P01') {
       return ok(res, req.correlationId, { warning: 'SCHEMA_NOT_MIGRATED' });
     }

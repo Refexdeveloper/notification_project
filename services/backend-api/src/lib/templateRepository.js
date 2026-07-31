@@ -75,6 +75,25 @@ async function resolveAccountId(client, environment, applicationId) {
   return accountRes.rows[0].account_id;
 }
 
+async function assertTemplateForApplication(pool, { environment, applicationId, templateId }) {
+  const row = await getTemplateRow(pool, { environment, applicationId, templateId });
+  if (!row) {
+    const err = new Error(`Template ${templateId} is not registered for application ${applicationId}`);
+    err.code = 'TEMPLATE_NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+  if (row.application_id && row.application_id !== applicationId) {
+    const err = new Error(
+      `Template belongs to application ${row.application_id}, not ${applicationId}. Choose a template for this app only.`,
+    );
+    err.code = 'TEMPLATE_APPLICATION_MISMATCH';
+    err.status = 400;
+    throw err;
+  }
+  return row;
+}
+
 async function templateInUse(client, templateId) {
   const { rows } = await client.query(
     `SELECT count(*)::int AS count
@@ -214,5 +233,6 @@ module.exports = {
   appendTemplateVersion,
   updateTemplateBinding,
   templateInUse,
+  assertTemplateForApplication,
   resolveAccountId,
 };

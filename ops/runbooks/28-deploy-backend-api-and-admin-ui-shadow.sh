@@ -80,35 +80,47 @@ plan() {
 build_images() {
   require_approval
   require_gcloud
-  log "Building backend-api image"
-  docker build \
-    -t "${BACKEND_IMAGE}" \
-    -f services/backend-api/Dockerfile \
-    .
+  if command -v docker >/dev/null 2>&1; then
+    log "Building backend-api image (local docker)"
+    docker build \
+      -t "${BACKEND_IMAGE}" \
+      -f services/backend-api/Dockerfile \
+      .
 
-  if [[ -z "${BACKEND_API_URL}" ]]; then
-    die "Set BACKEND_API_URL (e.g. https://refex-backend-api-xxx.run.app/api/v1) before building admin-ui"
+    if [[ -z "${BACKEND_API_URL}" ]]; then
+      die "Set BACKEND_API_URL (e.g. https://refex-backend-api-xxx.run.app/api/v1) before building admin-ui"
+    fi
+
+    log "Building admin-ui image (VITE_USE_BACKEND_API=true)"
+    docker build \
+      -t "${ADMIN_IMAGE}" \
+      --build-arg "VITE_API_BASE_URL=${BACKEND_API_URL}" \
+      --build-arg "VITE_USE_BACKEND_API=true" \
+      -f apps/admin-ui/Dockerfile \
+      apps/admin-ui
+
+    log "Pushing images to Artifact Registry"
+    gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+    docker push "${BACKEND_IMAGE}"
+    docker push "${ADMIN_IMAGE}"
+    log "Build complete"
+    return
   fi
 
-  log "Building admin-ui image (VITE_USE_BACKEND_API=true)"
-  docker build \
-    -t "${ADMIN_IMAGE}" \
-    --build-arg "VITE_API_BASE_URL=${BACKEND_API_URL}" \
-    --build-arg "VITE_USE_BACKEND_API=true" \
-    -f apps/admin-ui/Dockerfile \
-    apps/admin-ui
-
-  log "Pushing images to Artifact Registry"
-  gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
-  docker push "${BACKEND_IMAGE}"
-  docker push "${ADMIN_IMAGE}"
-  log "Build complete"
+  log "docker not found — using Cloud Build (cloudbuild/services.yaml)"
+  cloud_build
 }
+
+SCHEDULE_RUNNER_URL="${SCHEDULE_RUNNER_URL:-https://refex-schedule-runner-645830234926.asia-south1.run.app}"
 
 deploy_backend() {
   require_approval
   require_gcloud
-  log "Deploying ${BACKEND_SERVICE} (shadow — no traffic shift on first revision if new service)"
+  local -a deploy_extra=()
+  if [[ "${DEPLOY_LIVE_TRAFFIC:-}" != "true" ]]; then
+    deploy_extra+=(--no-traffic --tag="sha-${COMMIT_SHA}")
+  fi
+  log "Deploying ${BACKEND_SERVICE}$([[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]] && echo ' (live traffic)' || echo ' (shadow — tagged, no live traffic)')"
   gcloud run deploy "${BACKEND_SERVICE}" \
     --project="${GCP_PROJECT}" \
     --region="${GCP_REGION}" \
@@ -117,26 +129,33 @@ deploy_backend() {
     --port=8080 \
     --allow-unauthenticated \
     --add-cloudsql-instances="${CLOUD_SQL_CONNECTION}" \
-    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,CORS_ORIGIN=*,ALLOW_DEV_AUTH_STUB=true,DEV_AUTH_EMAIL=dev@refex.co.in,DEV_AUTH_NAME=Dev Operator,DEV_AUTH_ROLE=ADMIN" \
-    --set-secrets="PGPASSWORD=${PG_SECRET}:latest" \
+    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,CORS_ORIGIN=*,ALLOW_DEV_AUTH_STUB=true,DEV_AUTH_EMAIL=dev@refex.co.in,DEV_AUTH_NAME=Dev Operator,DEV_AUTH_ROLE=ADMIN,KISSFLOW_ACCOUNT_ID=AcCMptlq60zH,KISSFLOW_SUBDOMAIN=refexgroup,REPORT_TIMEZONE=Asia/Kolkata,SCHEDULE_RUNNER_URL=${SCHEDULE_RUNNER_URL}" \
+    --set-secrets="PGPASSWORD=${PG_SECRET}:latest,KISSFLOW_KEY=engagement-report-kissflow-key-id:latest,KISSFLOW_SECRET=engagement-report-kissflow-secret:latest" \
     --service-account="${SERVICE_ACCOUNT}" \
     --memory=512Mi \
     --cpu=1 \
     --min-instances=0 \
     --max-instances=3 \
-    --tag="sha-${COMMIT_SHA}" \
-    --no-traffic
+    ${deploy_extra[@]+"${deploy_extra[@]}"}
+
+  if [[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]]; then
+    log "Routing 100% live traffic to latest ${BACKEND_SERVICE} revision"
+  fi
 
   local url
   url="$(gcloud run services describe "${BACKEND_SERVICE}" --project="${GCP_PROJECT}" --region="${GCP_REGION}" --format='value(status.url)')"
-  log "Backend deployed (no traffic on new revision). URL: ${url}"
+  log "Backend deployed. URL: ${url}"
   log "Health: ${url}/api/v1/health"
 }
 
 deploy_admin_ui() {
   require_approval
   require_gcloud
-  log "Deploying ${ADMIN_UI_SERVICE}"
+  local -a deploy_extra=()
+  if [[ "${DEPLOY_LIVE_TRAFFIC:-}" != "true" ]]; then
+    deploy_extra+=(--no-traffic --tag="sha-${COMMIT_SHA}")
+  fi
+  log "Deploying ${ADMIN_UI_SERVICE}$([[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]] && echo ' (live traffic)' || echo ' (shadow — tagged, no live traffic)')"
   gcloud run deploy "${ADMIN_UI_SERVICE}" \
     --project="${GCP_PROJECT}" \
     --region="${GCP_REGION}" \
@@ -149,12 +168,15 @@ deploy_admin_ui() {
     --cpu=1 \
     --min-instances=0 \
     --max-instances=3 \
-    --tag="sha-${COMMIT_SHA}" \
-    --no-traffic
+    ${deploy_extra[@]+"${deploy_extra[@]}"}
+
+  if [[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]]; then
+    log "Routing 100% live traffic to latest ${ADMIN_UI_SERVICE} revision"
+  fi
 
   local url
   url="$(gcloud run services describe "${ADMIN_UI_SERVICE}" --project="${GCP_PROJECT}" --region="${GCP_REGION}" --format='value(status.url)')"
-  log "Admin UI deployed (no traffic on new revision). URL: ${url}"
+  log "Admin UI deployed. URL: ${url}"
 }
 
 verify() {
@@ -199,25 +221,47 @@ usage() {
 Usage: $0 {plan|build|deploy|deploy-backend|deploy-admin|verify|cloud-build}
 
   plan           — show deploy plan (safe, read-only)
-  build          — docker build + push (requires DEPLOY_APPROVED=true)
-  deploy         — deploy backend-api then admin-ui with --no-traffic
+  build          — docker build + push, or Cloud Build when docker is unavailable
+  build-deploy   — cloud-build (or docker build) then deploy both services with live traffic
+  deploy         — deploy backend-api then admin-ui with --no-traffic (builds first if needed)
   deploy-backend — backend-api only
   deploy-admin   — admin-ui only
   verify         — curl health/ready + admin index
-  cloud-build    — gcloud builds submit using cloudbuild/services.yaml
+  shift-traffic — route 100% to tag sha-\${COMMIT_SHA} (after shadow deploy)
 
 Legacy pipeline and schedulers are NOT modified.
 EOF
+}
+
+shift_live_traffic() {
+  require_gcloud
+  log "Moving live traffic to latest revisions (clears tag-only routing)"
+  gcloud run services update-traffic "${BACKEND_SERVICE}" \
+    --project="${GCP_PROJECT}" --region="${GCP_REGION}" \
+    --to-latest --quiet
+  gcloud run services update-traffic "${ADMIN_UI_SERVICE}" \
+    --project="${GCP_PROJECT}" --region="${GCP_REGION}" \
+    --to-latest --quiet
+}
+
+build_deploy_live() {
+  build_images
+  DEPLOY_LIVE_TRAFFIC=true deploy_backend
+  DEPLOY_LIVE_TRAFFIC=true deploy_admin_ui
+  shift_live_traffic
+  verify
 }
 
 ACTION="${1:-plan}"
 case "${ACTION}" in
   plan) plan ;;
   build) build_images ;;
+  build-deploy) build_deploy_live ;;
   deploy) build_images; deploy_backend; deploy_admin_ui; verify ;;
   deploy-backend) deploy_backend ;;
   deploy-admin) deploy_admin_ui ;;
   verify) verify ;;
+  shift-traffic) shift_live_traffic ;;
   cloud-build) cloud_build ;;
   *) usage; exit 1 ;;
 esac

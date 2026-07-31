@@ -14,11 +14,40 @@ OUTPUT_FILE="${TEMPLATES_DIR}/pm-report-${TIMESTAMP}.html"
 LATEST_FILE="${TEMPLATES_DIR}/pm-report-latest.html"
 AUDIT_FILE="${AUDIT_DIR}/runbook-14-${TIMESTAMP}.json"
 
-LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png"
+LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
 
+PG_CONN_STRING="host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}"
+
+apply_template_branding_from_pg() {
+  local template_id="${TEMPLATE_ID:-}"
+  [[ -z "${template_id}" ]] && return 0
+
+  local content_ref
+  content_ref="$(psql "${PG_CONN_STRING}" -t -A -c "
+    SELECT COALESCE(
+      (
+        SELECT rtv.content_ref
+        FROM engagement_reporting.report_template_version rtv
+        WHERE rtv.report_template_id = '${template_id}'::uuid
+        ORDER BY rtv.version_number DESC
+        LIMIT 1
+      ),
+      ''
+    );
+  " 2>/dev/null || true)"
+  [[ -n "${content_ref}" ]] || return 0
+
+  local extracted_logo
+  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refex' | head -1 || true)"
+  if [[ -n "${extracted_logo}" ]]; then
+    LOGO_URL="${extracted_logo}"
+    log "Using logo from published template ${template_id}"
+  fi
+}
+
 PM_APP_ID="${PM_APP_ID:-Project_Management_Tracker_A00}"
-PM_PROCESS_ID="${PM_PROCESS_ID:-Project_Sub_Task_A01}"
+PM_PROCESS_ID="${PM_PROCESS_ID:-${PROCESS_ID:-Project_Sub_Task_A01}}"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -27,6 +56,8 @@ command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
+
+apply_template_branding_from_pg
 
 log "Querying Project Management task summary"
 
@@ -167,8 +198,8 @@ cat > "${OUTPUT_FILE}" <<HTML
 
 <tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="120" valign="middle">
-<img src="${LOGO_URL}" alt="Refex" width="100" style="display:block; max-width:100px; height:auto;">
+<td width="180" valign="middle">
+<img src="${LOGO_URL}" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">Project Management Task Report</div>

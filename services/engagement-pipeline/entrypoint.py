@@ -54,9 +54,18 @@ class Handler(BaseHTTPRequestHandler):
                 env["SCHEDULE_ID"] = str(schedule_id)
                 print(f"Using SCHEDULE_ID={schedule_id}", flush=True)
 
+            test_recipient = (
+                (query.get("test_recipient") or [None])[0]
+                or (query.get("testRecipient") or [None])[0]
+                or env.get("TEST_RECIPIENT")
+            )
+            if test_recipient:
+                env["TEST_RECIPIENT"] = str(test_recipient).strip()
+                print(f"Test send to TEST_RECIPIENT={env['TEST_RECIPIENT']}", flush=True)
+
             result = subprocess.run(
                 ["bash", f"./ops/runbooks/{RUNBOOK}"],
-                capture_output=True, text=True, timeout=850, env=env,
+                capture_output=True, text=True, timeout=890, env=env,
             )
             log_output = result.stdout + "\n" + result.stderr
             print(log_output, flush=True)

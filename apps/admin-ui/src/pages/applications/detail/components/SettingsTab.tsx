@@ -5,7 +5,8 @@ import {
   updateApplicationFromForm,
   type KissflowApplication,
 } from '@/mocks/applications';
-import { deleteApplicationOnBackend } from '@/services/applicationsApi';
+import { deleteApplicationOnBackend, loadCredentialsStatusFromBackend, updateApplicationOnBackend } from '@/services/applicationsApi';
+import type { CredentialsStatusResult } from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
@@ -40,6 +41,8 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
   const [saved, setSaved] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [credentialsStatus, setCredentialsStatus] = useState<CredentialsStatusResult | null>(null);
+  const [credentialsLoading, setCredentialsLoading] = useState(false);
 
   useEffect(() => {
     setAccountId(app.accountId);
@@ -62,10 +65,42 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setDeleting(false);
   }, [app.id, app.lastSync]);
 
-  const save = (e?: React.FormEvent) => {
+  useEffect(() => {
+    if (!backendMode) return;
+    let cancelled = false;
+    setCredentialsLoading(true);
+    loadCredentialsStatusFromBackend(app).then((result) => {
+      if (cancelled) return;
+      setCredentialsStatus(result.status || null);
+      setCredentialsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [app, backendMode]);
+
+  const save = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (backendMode) {
-      setError('Application metadata editing in PostgreSQL is not enabled yet. Use delete below to remove this app.');
+      if (!name.trim()) {
+        setError('Application name is required.');
+        return;
+      }
+      setError('');
+      setSaved(false);
+      const result = await updateApplicationOnBackend(app, {
+        application_name: name.trim(),
+        description: description.trim(),
+        subdomain: subdomain.trim() || undefined,
+        region,
+      });
+      if (!result.ok) {
+        setError(result.error || 'Could not save application settings.');
+        return;
+      }
+      setSaved(true);
+      onSaved?.();
+      setTimeout(() => setSaved(false), 2500);
       return;
     }
     if (!accountId.trim()) {
@@ -149,7 +184,7 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
       <div className="bg-primary-50 border border-primary-100 rounded-xl px-4 py-3">
         <p className="text-xs text-primary-800">
           {backendMode
-            ? 'View registered Kissflow metadata. Delete removes this application from PostgreSQL (not from Kissflow).'
+            ? 'Edit display name, description, and subdomain stored in PostgreSQL. Kissflow API keys are managed in GCP Secret Manager (not shown here for security).'
             : 'Edit the Kissflow account, resource IDs, and access keys registered for this application. Changes apply to API Explorer, User Engagement, and Connection.'}
         </p>
       </div>
@@ -159,14 +194,20 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
           <h3 className="text-sm font-semibold text-foreground-900">Kissflow account</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Account ID" required>
-              <input value={accountId} onChange={(e) => setAccountId(e.target.value)} className="input font-mono text-xs" />
+              <input
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                disabled={backendMode}
+                className="input font-mono text-xs disabled:opacity-60"
+              />
             </Field>
             <Field label="App ID" required>
               <input
                 value={appId}
                 onChange={(e) => setAppId(e.target.value)}
+                disabled={backendMode}
                 placeholder="e.g. Lead_tracker_1_A00"
-                className="input font-mono text-xs"
+                className="input font-mono text-xs disabled:opacity-60"
               />
             </Field>
           </div>
@@ -198,7 +239,8 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
               <select
                 value={environment}
                 onChange={(e) => setEnvironment(e.target.value as KissflowApplication['environment'])}
-                className="input"
+                disabled={backendMode}
+                className="input disabled:opacity-60"
               >
                 <option value="Development">Development</option>
                 <option value="UAT">UAT</option>
@@ -210,7 +252,8 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as KissflowApplication['status'])}
-                className="input"
+                disabled={backendMode}
+                className="input disabled:opacity-60"
               >
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
@@ -221,64 +264,129 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
         </section>
 
         <section className="bg-white border border-background-300/60 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-foreground-900">Resource IDs</h3>
-          <p className="text-[11px] text-foreground-400 -mt-1">Add one ID per row. Use + to add more.</p>
-          <IdRowList
-            label="Process IDs"
-            icon="ri-git-branch-line"
-            placeholder="e.g. Lead_tracker_1_A00"
-            values={processIds}
-            onChange={setProcessIds}
-          />
-          <IdRowList
-            label="Dataform IDs"
-            icon="ri-survey-line"
-            placeholder="e.g. DF_EmployeeInfo"
-            values={dataformIds}
-            onChange={setDataformIds}
-          />
-          <IdRowList
-            label="Board IDs"
-            icon="ri-kanban-view"
-            placeholder="e.g. Board_NewHire"
-            values={boardIds}
-            onChange={setBoardIds}
-          />
-          <IdRowList
-            label="Dataset IDs"
-            icon="ri-database-2-line"
-            placeholder="e.g. DS_Employees"
-            values={datasetIds}
-            onChange={setDatasetIds}
-          />
+          <h3 className="text-sm font-semibold text-foreground-900">
+            {backendMode ? 'Registered processes' : 'Resource IDs'}
+          </h3>
+          {backendMode ? (
+            <>
+              <p className="text-[11px] text-foreground-400 -mt-1">
+                Processes linked in PostgreSQL during registration and field sync. Edit via re-registration runbooks.
+              </p>
+              {processIds.filter((id) => id.trim()).length === 0 ? (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  No processes registered yet. Run field sync on the Sync fields tab.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {processIds.filter((id) => id.trim()).map((pid) => (
+                    <li key={pid} className="font-mono text-xs bg-background-50 border rounded-lg px-3 py-2">
+                      {pid}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] text-foreground-400 -mt-1">Add one ID per row. Use + to add more.</p>
+              <IdRowList
+                label="Process IDs"
+                icon="ri-git-branch-line"
+                placeholder="e.g. Lead_tracker_1_A00"
+                values={processIds}
+                onChange={setProcessIds}
+              />
+              <IdRowList
+                label="Dataform IDs"
+                icon="ri-survey-line"
+                placeholder="e.g. DF_EmployeeInfo"
+                values={dataformIds}
+                onChange={setDataformIds}
+              />
+              <IdRowList
+                label="Board IDs"
+                icon="ri-kanban-view"
+                placeholder="e.g. Board_NewHire"
+                values={boardIds}
+                onChange={setBoardIds}
+              />
+              <IdRowList
+                label="Dataset IDs"
+                icon="ri-database-2-line"
+                placeholder="e.g. DS_Employees"
+                values={datasetIds}
+                onChange={setDatasetIds}
+              />
+            </>
+          )}
         </section>
 
-        <section className="bg-white border border-background-300/60 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-foreground-900">API authentication</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Access Key ID" required>
-              <input
-                value={accessKeyId}
-                onChange={(e) => setAccessKeyId(e.target.value)}
-                className="input font-mono text-xs"
-              />
-            </Field>
-            <Field label="Access Key Secret">
-              <input
-                type="password"
-                value={accessKeySecret}
-                onChange={(e) => setAccessKeySecret(e.target.value)}
-                placeholder={app.accessKeySecret ? '••••••••  (leave blank to keep)' : 'Required'}
-                className="input font-mono text-xs"
-              />
-            </Field>
-          </div>
-          <p className="text-[11px] text-foreground-400">
-            Leave secret blank to keep the existing value. Used as{' '}
-            <code className="font-mono">X-Access-Key-Id</code> /{' '}
-            <code className="font-mono">X-Access-Key-Secret</code>.
-          </p>
-        </section>
+        {backendMode ? (
+          <section className="bg-white border border-background-300/60 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-foreground-900">API authentication</h3>
+            {credentialsLoading ? (
+              <p className="text-sm text-foreground-500">Checking credential binding…</p>
+            ) : credentialsStatus?.credentials_configured ? (
+              <div className="rounded-lg border border-accent-200 bg-accent-50/60 px-3 py-3 space-y-2">
+                <p className="text-sm text-accent-900 font-medium">Configured in GCP Secret Manager</p>
+                <p className="text-xs text-foreground-600">
+                  Kissflow access keys are never stored in PostgreSQL or returned by the API. The schedule runner and
+                  backend resolve credentials from Secret Manager at send time.
+                </p>
+                {credentialsStatus.secret_hints?.length ? (
+                  <p className="text-xs font-mono text-foreground-700">
+                    Secrets: {credentialsStatus.secret_hints.join(', ')}
+                  </p>
+                ) : null}
+                {credentialsStatus.credentials_bound_at ? (
+                  <p className="text-[11px] text-foreground-400">
+                    Bound {new Date(credentialsStatus.credentials_bound_at).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 space-y-2">
+                <p className="text-sm text-amber-900 font-medium">Credential binding not found</p>
+                <p className="text-xs text-amber-800">
+                  Re-register this application with valid Kissflow keys, or verify GCP secrets (
+                  kissflow-developer-key-id / kissflow-developer-key-secret).
+                </p>
+              </div>
+            )}
+            <p className="text-[11px] text-foreground-400">
+              To rotate keys, update Secret Manager then re-run registration. Keys are sent as{' '}
+              <code className="font-mono">X-Access-Key-Id</code> /{' '}
+              <code className="font-mono">X-Access-Key-Secret</code> on Kissflow API calls.
+            </p>
+          </section>
+        ) : (
+          <section className="bg-white border border-background-300/60 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-foreground-900">API authentication</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Access Key ID" required>
+                <input
+                  value={accessKeyId}
+                  onChange={(e) => setAccessKeyId(e.target.value)}
+                  className="input font-mono text-xs"
+                />
+              </Field>
+              <Field label="Access Key Secret">
+                <input
+                  type="password"
+                  value={accessKeySecret}
+                  onChange={(e) => setAccessKeySecret(e.target.value)}
+                  placeholder={app.accessKeySecret ? '••••••••  (leave blank to keep)' : 'Required'}
+                  className="input font-mono text-xs"
+                />
+              </Field>
+            </div>
+            <p className="text-[11px] text-foreground-400">
+              Leave secret blank to keep the existing value. Used as{' '}
+              <code className="font-mono">X-Access-Key-Id</code> /{' '}
+              <code className="font-mono">X-Access-Key-Secret</code>.
+            </p>
+          </section>
+        )}
 
         {error && (
           <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-sm text-red-700">

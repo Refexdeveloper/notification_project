@@ -39,7 +39,7 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
   const templates = backendMode ? backendTemplates : getTemplatesByAppId(app.id);
   const schedules = backendMode ? backendSchedules : getSchedulersByAppId(app.id);
   const fieldCount = app.discoveredFields?.length ?? 0;
-  const processCount = backendMode ? app.processIds?.length ?? 0 : resources.length;
+  const processCount = backendMode ? (app.processesCount ?? app.processIds?.length ?? 0) : resources.length;
   const isConnected = backendMode
     ? app.connected !== false
     : app.connected || connection.lastTestStatus === 'success';
@@ -81,7 +81,8 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
       {backendMode && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
           Backend mode: templates, schedules, users, and field sync use PostgreSQL via backend-api.
-          Legacy Connect, Processes workspace, and App settings tabs are hidden.
+          Connect and Processes workspace tabs are hidden; use App settings for metadata and Sync fields for processes.
+          API keys are stored in GCP Secret Manager (not displayed in the UI).
         </div>
       )}
 
@@ -144,6 +145,15 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
                 className="text-xs font-semibold text-primary-700 cursor-pointer"
               >
                 Edit
+              </button>
+            )}
+            {backendMode && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('settings')}
+                className="text-xs font-semibold text-primary-700 cursor-pointer"
+              >
+                App settings
               </button>
             )}
           </div>

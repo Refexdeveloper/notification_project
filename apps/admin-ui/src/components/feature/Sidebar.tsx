@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { sidebarNavigationItems } from '@/config/backendSurface';
 import { useAuth } from '@/hooks/AuthContext';
-import refexLogo from '@/assets/refex-logo.png';
+import { REFEXONE_LOGO_URL } from '@/constants/branding';
 import { duration, easeOutExpo } from '@/lib/motion';
 
 interface SidebarProps {
@@ -68,8 +68,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         }`}
       >
         <img
-          src={refexLogo}
-          alt="Refex"
+          src={REFEXONE_LOGO_URL}
+          alt="refexOne"
           className={`object-contain transition-[width,height] duration-200 ${
             collapsed ? 'h-7 w-7' : 'h-8 w-auto max-w-[132px]'
           }`}

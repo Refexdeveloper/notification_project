@@ -8,7 +8,7 @@ import AddApplicationForm from './components/AddApplicationForm';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import refexLogo from '@/assets/refex-logo.png';
+import { REFEXONE_LOGO_URL } from '@/constants/branding';
 import {
   REFEX_ENV_CONFIG,
   type RefexEnvironment,
@@ -101,7 +101,7 @@ export default function ApplicationsPage() {
     >
       <div className="dash-banner mb-6 px-5 py-4 flex flex-col lg:flex-row lg:items-center gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <img src={refexLogo} alt="Refex" className="h-9 w-auto object-contain shrink-0" />
+          <img src={REFEXONE_LOGO_URL} alt="refexOne" className="h-9 w-auto object-contain shrink-0" />
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-[#1E293B] tracking-tight truncate">
               Applications

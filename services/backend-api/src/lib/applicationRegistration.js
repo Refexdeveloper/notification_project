@@ -289,9 +289,83 @@ async function deleteApplication(client, { environment, applicationId, actorSubj
   return { application_id: applicationId, environment, deleted: true };
 }
 
+async function updateApplicationMetadata(
+  client,
+  { environment, applicationId, patch, actorSubject, correlationId },
+) {
+  const { rows } = await client.query(
+    `SELECT application_id, application_name, source_payload
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+  if (!rows.length) {
+    const err = new Error('Application not found');
+    err.code = 'APPLICATION_NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+
+  const row = rows[0];
+  const payloadPatch = {};
+  if (Object.prototype.hasOwnProperty.call(patch, 'description')) {
+    payloadPatch.description = String(patch.description || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'subdomain')) {
+    payloadPatch.subdomain = String(patch.subdomain || '').trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'region')) {
+    payloadPatch.region = String(patch.region || 'com').trim() || 'com';
+  }
+
+  const nextName = Object.prototype.hasOwnProperty.call(patch, 'application_name')
+    ? String(patch.application_name || '').trim() || row.application_name
+    : row.application_name;
+
+  await client.query(
+    `UPDATE engagement_reporting.application
+     SET application_name = $3,
+         last_seen_at = now(),
+         source_payload = COALESCE(source_payload, '{}'::jsonb) || $4::jsonb
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId, nextName, JSON.stringify(payloadPatch)],
+  );
+
+  const { rows: updated } = await client.query(
+    `SELECT
+       environment,
+       application_id,
+       application_name,
+       last_seen_at,
+       is_current,
+       source_payload->>'kissflow_account_id' AS kissflow_account_id,
+       source_payload->>'subdomain' AS subdomain,
+       source_payload->>'region' AS region,
+       source_payload->>'description' AS description
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+
+  await client.query(
+    `INSERT INTO engagement_reporting.audit_event
+       (actor_subject, action, resource_type, resource_id, correlation_id, evidence)
+     VALUES ($1, 'UPDATE_APPLICATION', 'application', $2, $3, $4::jsonb)`,
+    [
+      actorSubject,
+      applicationId,
+      correlationId,
+      JSON.stringify({ patch: payloadPatch, application_name: nextName }),
+    ],
+  );
+
+  return updated[0];
+}
+
 module.exports = {
   RegistrationConflictError,
   normalizeRegistrationBody,
   registerApplication,
   deleteApplication,
+  updateApplicationMetadata,
 };

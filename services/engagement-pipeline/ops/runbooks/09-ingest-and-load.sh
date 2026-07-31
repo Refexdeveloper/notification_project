@@ -6,8 +6,8 @@ DATA_DIR="${REPO_ROOT}/data/discovery"
 NORM_DIR="${DATA_DIR}/normalized"
 
 BASE_URL="https://refexgroup.kissflow.com"
-PROCESS_ID="Live_IT_Service_Request_A00"
-APPLICATION_ID="IT_Service_Management_A00"
+PROCESS_ID="${PROCESS_ID:-Live_IT_Service_Request_A00}"
+APPLICATION_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
 APPLICATION_NAME="IT Service Management"
 PROCESS_NAME="Live IT Service Request"
 ENVIRONMENT="production"
@@ -119,6 +119,8 @@ log "Item details retrieved: ${DETAIL_ITEM_COUNT}"
 
 RUN_ID="ingest-$(date -u +'%Y%m%dT%H%M%SZ')"
 GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+export SNAPSHOT_RUN_ID="${RUN_ID}"
+export APPLICATION_ID PROCESS_ID ENVIRONMENT
 
 log "Normalizing users"
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" '

@@ -32,9 +32,41 @@ function normalizeEnvironment(value) {
 }
 
 async function readGcpSecret(secretName) {
-  if (typeof fetch !== 'function') return '';
   const project =
     process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'master-diorama-489103-u2';
+
+  if (process.env.KISSFLOW_KEY && secretName.includes('key-id')) {
+    return process.env.KISSFLOW_KEY;
+  }
+  if (process.env.KISSFLOW_SECRET && secretName.includes('key-secret')) {
+    return process.env.KISSFLOW_SECRET;
+  }
+
+  try {
+    const metadataBase = 'http://metadata.google.internal/computeMetadata/v1';
+    const tokenRes = await fetch(`${metadataBase}/instance/service-accounts/default/token`, {
+      headers: { 'Metadata-Flavor': 'Google' },
+    });
+    if (tokenRes.ok) {
+      const tokenJson = await tokenRes.json();
+      const accessToken = tokenJson.access_token;
+      if (accessToken) {
+        const url = `https://secretmanager.googleapis.com/v1/projects/${project}/secrets/${secretName}/versions/latest:access`;
+        const secretRes = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (secretRes.ok) {
+          const secretJson = await secretRes.json();
+          if (secretJson.payload?.data) {
+            return Buffer.from(secretJson.payload.data, 'base64').toString('utf8').trim();
+          }
+        }
+      }
+    }
+  } catch {
+    /* fall through to gcloud CLI for local dev */
+  }
+
   try {
     const { execSync } = require('child_process');
     return String(
@@ -153,8 +185,174 @@ async function kissflowGet({
   return { data, accountId: account, subdomain: creds.subdomain };
 }
 
+function extractArray(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    for (const key of ['Data', 'data', 'Users', 'users', 'Items', 'items', 'Result']) {
+      if (Array.isArray(data[key])) return data[key];
+    }
+  }
+  return [];
+}
+
+async function kissflowGetUrl({ environment, urlPath, credentials }) {
+  const creds = credentials || (await resolveKissflowCredentials(environment));
+  if (!creds.keyId || !creds.secret) {
+    const err = new Error('Kissflow credentials not configured');
+    err.code = 'KISSFLOW_CREDENTIALS_MISSING';
+    throw err;
+  }
+  const url = `${creds.baseUrl}${urlPath.startsWith('/') ? urlPath : `/${urlPath}`}`;
+  const res = await fetch(url, {
+    headers: {
+      'X-Access-Key-Id': creds.keyId,
+      'X-Access-Key-Secret': creds.secret,
+      Accept: 'application/json',
+    },
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const err = new Error(`Kissflow request failed: HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return { data, credentials: creds };
+}
+
+async function fetchAllKissflowUsers({ environment, accountId, credentials }) {
+  const pageSize = 500;
+  const all = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const qs = new URLSearchParams({
+      page_number: String(page),
+      page_size: String(pageSize),
+      user_type: 'User',
+      invited_user: 'false',
+    });
+    const { data } = await kissflowGetUrl({
+      environment,
+      credentials,
+      urlPath: `/user/2/${encodeURIComponent(accountId)}/?${qs.toString()}`,
+    });
+    const batch = extractArray(data);
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return all;
+}
+
+async function fetchKissflowUserDetail({ environment, accountId, userId, credentials }) {
+  const { data } = await kissflowGetUrl({
+    environment,
+    credentials,
+    urlPath: `/user/2/${encodeURIComponent(accountId)}/${encodeURIComponent(userId)}`,
+  });
+  return data && typeof data === 'object' ? data : {};
+}
+
+async function enrichKissflowUsersWithDetails({
+  environment,
+  accountId,
+  rawUsers,
+  credentials,
+  concurrency = 8,
+}) {
+  const enriched = [];
+  for (let i = 0; i < rawUsers.length; i += concurrency) {
+    const chunk = rawUsers.slice(i, i + concurrency);
+    const batch = await Promise.all(
+      chunk.map(async (raw) => {
+        const userId = pickString(raw, ['_id', 'Id', 'id', 'UserId']);
+        if (!userId) return raw;
+        try {
+          const detail = await fetchKissflowUserDetail({
+            environment,
+            accountId,
+            userId,
+            credentials,
+          });
+          return { ...raw, ...detail, _id: userId };
+        } catch {
+          return raw;
+        }
+      }),
+    );
+    enriched.push(...batch);
+  }
+  return enriched;
+}
+
+async function fetchAllProcessItems({ environment, accountId, processId, credentials }) {
+  const pageSize = 500;
+  const all = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const { data } = await kissflowGet({
+      environment,
+      accountId,
+      processId,
+      pageNumber: page,
+      pageSize,
+      applyPreference: false,
+      credentials,
+    });
+    const batch = extractArray(data);
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return all;
+}
+
+function pickString(obj, keys) {
+  for (const key of keys) {
+    const val = obj[key];
+    if (typeof val === 'string' && val.trim()) return val.trim();
+  }
+  return '';
+}
+
+function pickDateTime(obj, keys) {
+  for (const key of keys) {
+    const val = obj[key];
+    if (typeof val === 'string' && val.trim()) return val.trim();
+  }
+  return null;
+}
+
+function normalizeProcessStatus(raw) {
+  const value = String(
+    raw?._status ||
+      raw?.Status ||
+      raw?.status ||
+      raw?.Process_Status ||
+      raw?.process_status ||
+      '',
+  ).trim();
+  const lower = value.toLowerCase();
+  if (lower.includes('progress') || lower === 'open' || lower === 'pending') return 'InProgress';
+  if (lower.includes('complete') || lower === 'closed' || lower === 'done') return 'Completed';
+  if (lower.includes('withdraw') || lower.includes('reject')) return 'Withdrawn';
+  return value || 'other';
+}
+
 module.exports = {
   normalizeEnvironment,
   resolveKissflowCredentials,
   kissflowGet,
+  kissflowGetUrl,
+  fetchAllKissflowUsers,
+  fetchKissflowUserDetail,
+  enrichKissflowUsersWithDetails,
+  fetchAllProcessItems,
+  extractArray,
+  pickString,
+  pickDateTime,
+  normalizeProcessStatus,
 };

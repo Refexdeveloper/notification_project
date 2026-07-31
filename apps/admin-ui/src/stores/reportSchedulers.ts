@@ -29,6 +29,10 @@ export interface ReportScheduler {
   cc: string[];
   /** Sender address for scheduled reports (backend / PostgreSQL mode) */
   fromEmail?: string;
+  /** Kissflow process used to build report data */
+  processId?: string;
+  /** Email subject line for scheduled sends */
+  subject?: string;
   /** IANA timezone for backend schedules (e.g. Asia/Kolkata) */
   timezone?: string;
   /** Lead Tracker: filter leads by Website field value before grouping by sales person */

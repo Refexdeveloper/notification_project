@@ -15,6 +15,7 @@ AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-07"
 RECIPIENT="${RECIPIENT:-mugesh.m@refex.co.in}"
 SUBJECT="${SUBJECT:-Kissflow - User Signin Report}"
 FROM_EMAIL="${FROM_EMAIL:-${SMTP_FROM:-${SMTP_USER}}}"
+TO_LIST="${TO_LIST:-${RECIPIENT}}"
 
 TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
 AUDIT_FILE="${AUDIT_DIR}/runbook-07-${TIMESTAMP}.json"
@@ -46,7 +47,20 @@ CC_RECIPIENTS=()
 if [[ -n "${CC_LIST}" ]]; then
   IFS=',' read -r -a CC_RECIPIENTS <<< "${CC_LIST}"
 fi
-declare -a RCPT=("${RECIPIENT}")
+
+TO_RECIPIENTS=()
+IFS=',' read -r -a TO_RECIPIENTS <<< "${TO_LIST}"
+declare -a RCPT=()
+declare -a TO_HEADER=()
+for to in "${TO_RECIPIENTS[@]}"; do
+  to="${to#"${to%%[![:space:]]*}"}"
+  to="${to%"${to##*[![:space:]]}"}"
+  [[ -z "${to}" ]] && continue
+  RCPT+=("${to}")
+  TO_HEADER+=("${to}")
+done
+((${#RCPT[@]} > 0)) || stop "No To recipients resolved (set RECIPIENT or TO_LIST)."
+
 if ((${#CC_RECIPIENTS[@]} > 0)); then
   for cc in "${CC_RECIPIENTS[@]}"; do
     cc="${cc#"${cc%%[![:space:]]*}"}"
@@ -55,6 +69,8 @@ if ((${#CC_RECIPIENTS[@]} > 0)); then
     RCPT+=("${cc}")
   done
 fi
+
+TO_HEADER_VALUE="$(IFS=', '; echo "${TO_HEADER[*]}")"
 
 # Legacy ITSM path only when no schedule CC was supplied.
 if [[ -z "${CC_LIST}" && -z "${SCHEDULE_ID:-}" ]]; then
@@ -68,7 +84,7 @@ fi
 
 {
   echo "From: ${FROM_EMAIL}"
-  echo "To: ${RECIPIENT}"
+  echo "To: ${TO_HEADER_VALUE}"
   if [[ -n "${CC_LIST}" ]]; then
     echo "Cc: ${CC_LIST}"
   elif [[ -z "${SCHEDULE_ID:-}" ]]; then
@@ -96,7 +112,7 @@ if curl --silent --show-error \
   --user "${SMTP_USER}:${SMTP_APP_PASSWORD}" \
   --upload-file "${MIME_FILE}"; then
   STATUS="SENT"
-  log "Email sent successfully to ${RECIPIENT}"
+  log "Email sent successfully to ${TO_HEADER_VALUE}"
 else
   STATUS="FAILED"
   log "Email send FAILED"
@@ -104,10 +120,13 @@ fi
 
 jq -n \
   --arg generated_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-  --arg recipient "${RECIPIENT}" \
+  --arg recipient "${TO_HEADER_VALUE}" \
   --arg subject "${SUBJECT}" \
   --arg status "${STATUS}" \
-  --arg report_file "${REPORT_FILE}" '
+  --arg report_file "${REPORT_FILE}" \
+  --arg application_id "${APPLICATION_ID:-}" \
+  --arg process_id "${PROCESS_ID:-}" \
+  --arg schedule_id "${SCHEDULE_ID:-}" '
 {
   action: "SEND_EMAIL_REPORT",
   generated_at: $generated_at,
@@ -115,9 +134,35 @@ jq -n \
   subject: $subject,
   status: $status,
   report_file: $report_file,
+  application_id: $application_id,
+  process_id: $process_id,
+  schedule_id: $schedule_id,
   mutation_performed: false
 }
 ' > "${AUDIT_FILE}"
+
+if [[ -f "${REPO_ROOT}/ops/runbooks/record-report-delivery.sh" ]]; then
+  export DELIVERY_STATUS="${STATUS}"
+  export RECIPIENTS="$(IFS=','; echo "${RCPT[*]}")"
+  export REPORT_RUN_ID="report-run-${TIMESTAMP}"
+  export ENVIRONMENT="${ENVIRONMENT:-production}"
+  if [[ -z "${APPLICATION_ID:-}" ]]; then
+    case "${REPORT_FILE}" in
+      *pm-report*) export APPLICATION_ID="${PM_APP_ID:-Project_Management_Tracker_A00}" ;;
+      *lead-tracker*) export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}" ;;
+      *) export APPLICATION_ID="${ITSM_APP_ID:-IT_Service_Management_A00}" ;;
+    esac
+  fi
+  if [[ -z "${PROCESS_ID:-}" ]]; then
+    case "${REPORT_FILE}" in
+      *pm-report*) export PROCESS_ID="${PM_PROCESS_ID:-Project_Sub_Task_A01}" ;;
+      *lead-tracker*) export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}" ;;
+      *) export PROCESS_ID="${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}" ;;
+    esac
+  fi
+  bash "${REPO_ROOT}/ops/runbooks/record-report-delivery.sh" \
+    || log "Warning: failed to record delivery history (non-fatal)"
+fi
 
 [[ "${STATUS}" == "SENT" ]] || stop "Delivery failed. See audit record: ${AUDIT_FILE}"
 

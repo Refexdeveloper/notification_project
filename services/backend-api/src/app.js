@@ -17,6 +17,8 @@ const templatesRoutes = require('./routes/templates');
 const schedulesRoutes = require('./routes/schedules');
 const usersRoutes = require('./routes/users');
 const historyRoutes = require('./routes/history');
+const deliveryHistoryRoutes = require('./routes/deliveryHistory');
+const dashboardRoutes = require('./routes/dashboard');
 const fieldsRoutes = require('./routes/fields');
 const platformUsersRoutes = require('./routes/platformUsers');
 
@@ -38,6 +40,8 @@ function createApp() {
   api.use('/applications/:applicationId/schedules', schedulesRoutes);
   api.use('/applications/:applicationId/processes/:processId/fields', fieldsRoutes);
   api.use('/applications/:applicationId/history', historyRoutes);
+  api.use('/history', deliveryHistoryRoutes);
+  api.use('/dashboard', dashboardRoutes);
 
   app.use('/api/v1', api);
 

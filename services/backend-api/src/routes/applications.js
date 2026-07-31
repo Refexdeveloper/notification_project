@@ -9,6 +9,7 @@ const {
   normalizeRegistrationBody,
   registerApplication,
   deleteApplication,
+  updateApplicationMetadata,
 } = require('../lib/applicationRegistration');
 const { validateAndDiscoverRegistrationInput } = require('../lib/kissflowDiscovery');
 
@@ -170,6 +171,131 @@ router.post('/', async (req, res) => {
       return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
     }
     return fail(res, req.correlationId, 'APPLICATION_REGISTER_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
+});
+
+router.get('/:applicationId/credentials-status', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return ok(res, req.correlationId, {
+      credentials_configured: false,
+      warning: 'DATABASE_NOT_CONFIGURED',
+    });
+  }
+
+  const environment = String(req.query.environment || 'production').toLowerCase();
+  const applicationId = req.params.applicationId;
+
+  try {
+    const { rows } = await getPool().query(
+      `SELECT
+         a.source_payload->>'kissflow_account_id' AS kissflow_account_id,
+         a.source_payload->>'account_id' AS account_uuid,
+         cb.provider,
+         cb.secret_resource,
+         cb.created_at AS credentials_bound_at
+       FROM engagement_reporting.application a
+       LEFT JOIN engagement_reporting.credential_binding cb
+         ON cb.account_id = (a.source_payload->>'account_id')::uuid
+        AND cb.provider = 'KISSFLOW'
+       WHERE a.environment = $1
+         AND a.application_id = $2
+         AND a.is_current = true
+       LIMIT 1`,
+      [environment, applicationId],
+    );
+
+    if (!rows.length) {
+      return fail(res, req.correlationId, 'APPLICATION_NOT_FOUND', 'Application not found', 404);
+    }
+
+    const row = rows[0];
+    let secretHints = [];
+    if (row.secret_resource) {
+      try {
+        const parsed = JSON.parse(row.secret_resource);
+        secretHints = Object.values(parsed).map((v) => String(v).split('/').pop() || String(v));
+      } catch {
+        secretHints = [String(row.secret_resource).split('/').pop() || row.secret_resource];
+      }
+    }
+
+    return ok(res, req.correlationId, {
+      credentials_configured: Boolean(row.secret_resource),
+      kissflow_account_id: row.kissflow_account_id || null,
+      provider: row.provider || 'KISSFLOW',
+      secret_hints: secretHints,
+      credentials_bound_at: row.credentials_bound_at || null,
+      note: 'Access keys are stored in GCP Secret Manager and are never returned by the API.',
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return ok(res, req.correlationId, { credentials_configured: false, warning: 'SCHEMA_NOT_MIGRATED' });
+    }
+    return fail(res, req.correlationId, 'CREDENTIALS_STATUS_FAILED', err.message, 500, true);
+  }
+});
+
+router.patch('/:applicationId', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = String(req.query.environment || req.body?.environment || 'production').toLowerCase();
+  const applicationId = req.params.applicationId;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+
+  const patch = {};
+  if (Object.prototype.hasOwnProperty.call(body, 'application_name')) {
+    patch.application_name = body.application_name;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
+    patch.application_name = body.name;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'description')) {
+    patch.description = body.description;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'subdomain')) {
+    patch.subdomain = body.subdomain;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'region')) {
+    patch.region = body.region;
+  }
+
+  if (!Object.keys(patch).length) {
+    return fail(
+      res,
+      req.correlationId,
+      'UPDATE_FIELDS_REQUIRED',
+      'Provide application_name, description, subdomain, and/or region',
+      400,
+    );
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const item = await updateApplicationMetadata(client, {
+      environment,
+      applicationId,
+      patch,
+      actorSubject: session.subject,
+      correlationId: req.correlationId,
+    });
+    await client.query('COMMIT');
+    return ok(res, req.correlationId, { item, environment, application_id: applicationId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === 'APPLICATION_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, err.status || 404);
+    }
+    return fail(res, req.correlationId, 'APPLICATION_UPDATE_FAILED', err.message, 500, true);
   } finally {
     client.release();
   }

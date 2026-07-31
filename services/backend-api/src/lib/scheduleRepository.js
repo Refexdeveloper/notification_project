@@ -94,7 +94,17 @@ async function deleteSchedule(client, { environment, applicationId, scheduleId }
      JOIN engagement_reporting.account a ON a.account_id = rd.account_id
      WHERE rs.report_schedule_id = $1::uuid
        AND a.environment = $2
-       AND rdv.config->>'application_id' = $3`,
+       AND (
+         rdv.config->>'application_id' = $3
+         OR (
+           SELECT tb.config->>'application_id'
+           FROM engagement_reporting.report_definition_version tb
+           WHERE tb.config->>'template_id' = rdv.config->>'template_id'
+             AND tb.config->>'application_id' IS NOT NULL
+           ORDER BY CASE WHEN tb.config->>'kind' = 'template_only' THEN 0 ELSE 1 END
+           LIMIT 1
+         ) = $3
+       )`,
     [scheduleId, environment, applicationId],
   );
   if (!rows.length) {

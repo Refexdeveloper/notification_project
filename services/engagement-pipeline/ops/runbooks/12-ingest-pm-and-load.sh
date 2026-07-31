@@ -6,8 +6,8 @@ DATA_DIR="${REPO_ROOT}/data/discovery"
 NORM_DIR="${DATA_DIR}/normalized"
 
 BASE_URL="https://refexgroup.kissflow.com"
-PROCESS_ID="Project_Sub_Task_A01"
-APPLICATION_ID="Project_Management_Tracker_A00"
+PROCESS_ID="${PM_PROCESS_ID:-${PROCESS_ID:-Project_Sub_Task_A01}}"
+APPLICATION_ID="${PM_APP_ID:-Project_Management_Tracker_A00}"
 APPLICATION_NAME="Project Management Tracker"
 PROCESS_NAME="Project Task"
 ENVIRONMENT="production"
@@ -95,6 +95,8 @@ fi
 
 RUN_ID="pm-ingest-$(date -u +'%Y%m%dT%H%M%SZ')"
 GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+export SNAPSHOT_RUN_ID="${RUN_ID}"
+export APPLICATION_ID PROCESS_ID ENVIRONMENT
 
 log "Normalizing items"
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" \
