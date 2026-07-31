@@ -32,6 +32,7 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 source "${INGEST_LIB}"
 
 ENVIRONMENT="${ENVIRONMENT:-production}"
+ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
 
 HEADERS=(
   -H "X-Access-Key-Id: ${KISSFLOW_KEY}"
@@ -69,7 +70,6 @@ if [[ "${SKIP_FETCH:-false}" != "true" ]]; then
   ingest_wait_for_snapshot_slot "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}" \
     || stop "Another ingest is IN_PROGRESS for ${APPLICATION_ID}/${PROCESS_ID}"
 
-  ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
   WATERMARK_ISO="$(ingest_get_watermark_iso "${ITEMS_RESOURCE_KEY}")"
   if [[ -n "${WATERMARK_ISO}" && "${FULL_INGEST:-false}" != "true" ]]; then
     log "Incremental mode: fetching PM items modified since ${WATERMARK_ISO}"
