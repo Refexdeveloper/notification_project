@@ -66,8 +66,19 @@ export function getSchedulers(): ReportScheduler[] {
   return readStore().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+export function getSchedulersByTemplateId(templateId: string): ReportScheduler[] {
+  return getSchedulers().filter((s) => s.templateId === templateId);
+}
+
 export function getSchedulersByAppId(applicationId: string): ReportScheduler[] {
   return getSchedulers().filter((s) => s.applicationId === applicationId);
+}
+
+export function formatSchedulersInUseMessage(schedulers: ReportScheduler[]): string {
+  if (!schedulers.length) return '';
+  const names = schedulers.map((s) => s.name).join(', ');
+  const suffix = schedulers.length === 1 ? 'schedule' : 'schedules';
+  return `This template is already in use by ${schedulers.length} ${suffix}: ${names}. Pause or delete those schedulers first, or assign a different template.`;
 }
 
 export function getSchedulerById(id: string): ReportScheduler | undefined {

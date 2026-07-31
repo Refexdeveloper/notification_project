@@ -137,7 +137,12 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
   instance_id: (.__requested_instance_id // .Instance_ID // ._id // null),
   request_number: (._request_number // null),
   request_id: (.Task_ID_Formulated // null),
-  process_status: (if .Task_Status == "Open" then "InProgress" else .Task_Status end),
+  process_status: (
+    if (.Task_Status // ._status // "") == "Open" then "InProgress"
+    elif ((.Task_Status // ._status // "") | ascii_downcase) | test("complete|closed|done") then "Completed"
+    elif ((.Task_Status // ._status // "") | ascii_downcase) | test("withdraw|reject") then "Withdrawn"
+    else (.Task_Status // ._status // "other") end
+  ),
   current_step: (.Function_Category // null),
   stage: (._stage // null),
   criticality: (.Task_Priority // null),
@@ -150,12 +155,18 @@ log "Building assignment bridge"
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" \
   --arg app_id "${APPLICATION_ID}" --arg proc_id "${PROCESS_ID}" '
 (.__requested_instance_id // .Instance_ID // ._id // null) as $iid
-| ._current_assigned_to[]?
+| (
+    (._current_assigned_to // [])
+    + (if .Assigned_To then [.Assigned_To] else [] end)
+  )
+| unique_by(._id)
+| .[]
+| select(._id != null)
 | { snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
     application_id: $app_id, process_id: $proc_id, instance_id: $iid,
     principal_id: ._id, principal_name: .Name,
     principal_kind: (if .Kind=="User" then "USER" else (.Kind|ascii_upcase) end),
-    assignment_source_field: "_current_assigned_to" }
+    assignment_source_field: (if .Kind=="User" then "Assigned_To" else "_current_assigned_to" end) }
 ' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/pm-assignments.jsonl"
 
 NORM_ITEM_COUNT="$(wc -l < "${NORM_DIR}/pm-items.jsonl" | tr -d ' ')"
@@ -188,6 +199,14 @@ jq -r '[.instance_id, .snapshot_at, .principal_id, .principal_kind, .assignment_
 echo "\copy engagement_reporting.stg_pm_items FROM '${COPY_NORM_DIR}/pm-items-staging.csv' WITH (FORMAT csv)" | run_sql
 echo "\copy engagement_reporting.stg_pm_assignments FROM '${COPY_NORM_DIR}/pm-assignments-staging.csv' WITH (FORMAT csv)" | run_sql
 
+PREV_SNAPSHOT_RUN_ID=""
+if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
+  PREV_SNAPSHOT_RUN_ID="$(ingest_get_previous_completed_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
+  if [[ -n "${PREV_SNAPSHOT_RUN_ID}" ]]; then
+    log "Incremental merge: carrying forward items from snapshot ${PREV_SNAPSHOT_RUN_ID}"
+  fi
+fi
+
 echo "
 BEGIN;
 
@@ -202,6 +221,50 @@ ON CONFLICT (environment, application_id) DO UPDATE SET last_seen_at = now();
 INSERT INTO engagement_reporting.process (environment, process_id, application_id, process_name, first_seen_at, last_seen_at, is_current, source_payload)
 VALUES ('${ENVIRONMENT}', '${PROCESS_ID}', '${APPLICATION_ID}', '${PROCESS_NAME}', now(), now(), true, '{}')
 ON CONFLICT (environment, process_id) DO UPDATE SET last_seen_at = now();
+
+INSERT INTO engagement_reporting.stg_pm_assignments (instance_id, snapshot_at, principal_id, principal_kind, assignment_source)
+SELECT
+  prev.instance_id,
+  '${GENERATED_AT}',
+  prev.principal_id,
+  prev.principal_type,
+  COALESCE(prev.assignment_source, 'Assigned_To')
+FROM engagement_reporting.item_assignment prev
+WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
+  AND prev.process_id = '${PROCESS_ID}'
+  AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_pm_items s WHERE s.instance_id = prev.instance_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_pm_assignments s
+    WHERE s.instance_id = prev.instance_id
+      AND s.principal_id = prev.principal_id
+      AND s.principal_kind = prev.principal_type
+  );
+
+INSERT INTO engagement_reporting.stg_pm_items (
+  instance_id, snapshot_at, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload
+)
+SELECT
+  prev.instance_id,
+  '${GENERATED_AT}',
+  prev.process_status,
+  COALESCE(prev.current_step, ''),
+  COALESCE(prev.stage::text, ''),
+  COALESCE(prev.request_number::text, ''),
+  COALESCE(prev.request_id, ''),
+  COALESCE(prev.criticality, ''),
+  COALESCE(prev.entity, ''),
+  COALESCE(prev.requester_email, ''),
+  prev.source_payload::text
+FROM engagement_reporting.item prev
+WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
+  AND prev.process_id = '${PROCESS_ID}'
+  AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_pm_items s WHERE s.instance_id = prev.instance_id
+  );
 
 INSERT INTO engagement_reporting.item (environment, process_id, instance_id, snapshot_at, snapshot_run_id, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload, row_hash)
 SELECT '${ENVIRONMENT}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', process_status, NULLIF(current_step,''), NULLIF(stage,''), NULLIF(request_number,'')::integer, NULLIF(request_id,''), NULLIF(criticality,''), NULLIF(entity,''), NULLIF(requester_email,''), source_payload::jsonb, md5(source_payload)

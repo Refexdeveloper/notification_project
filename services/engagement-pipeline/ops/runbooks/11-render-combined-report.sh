@@ -14,7 +14,7 @@ OUTPUT_FILE="${TEMPLATES_DIR}/combined-report-${TIMESTAMP}.html"
 LATEST_FILE="${TEMPLATES_DIR}/combined-report-latest.html"
 AUDIT_FILE="${AUDIT_DIR}/runbook-11-${TIMESTAMP}.json"
 
-LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-logo.png"
+LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
 
 ITSM_APP_ID="IT_Service_Management_A00"
@@ -141,16 +141,33 @@ SELECT json_agg(t) FROM (
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
     WHERE ia.process_id = '${PM_PROCESS_ID}' AND i.process_status = 'InProgress'
+      AND ia.principal_type = 'USER'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     GROUP BY ia.principal_id
   ) pending_t ON pending_t.user_id = u.user_id
   LEFT JOIN (
-    SELECT ia.principal_id AS user_id, count(*) AS completed_count
-    FROM engagement_reporting.item_assignment ia
-    JOIN engagement_reporting.item i ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
-    WHERE ia.process_id = '${PM_PROCESS_ID}' AND i.process_status = 'Completed'
-      AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
-    GROUP BY ia.principal_id
+    SELECT assignee_id AS user_id, count(*) AS completed_count
+    FROM (
+      SELECT DISTINCT ON (i.instance_id)
+        i.instance_id,
+        COALESCE(
+          NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
+          NULLIF(ia.principal_id, ''),
+          NULLIF(i.source_payload->'_modified_by'->>'_id', '')
+        ) AS assignee_id
+      FROM engagement_reporting.item i
+      LEFT JOIN engagement_reporting.item_assignment ia
+        ON ia.instance_id = i.instance_id
+       AND ia.snapshot_at = i.snapshot_at
+       AND ia.principal_type = 'USER'
+       AND ia.snapshot_run_id = i.snapshot_run_id
+      WHERE i.process_id = '${PM_PROCESS_ID}'
+        AND i.process_status = 'Completed'
+        AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      ORDER BY i.instance_id, ia.principal_id NULLS LAST
+    ) completed_items
+    WHERE assignee_id IS NOT NULL
+    GROUP BY assignee_id
   ) completed_t ON completed_t.user_id = u.user_id
   WHERE (COALESCE(pending_t.pending_count,0) > 0 OR COALESCE(completed_t.completed_count,0) > 0)
   ORDER BY pending_count DESC, completed_count DESC

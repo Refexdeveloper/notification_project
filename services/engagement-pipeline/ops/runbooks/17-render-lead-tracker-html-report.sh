@@ -26,6 +26,8 @@ mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 log "Rendering Lead Tracker report (${GROUP_NAME} · ${WEBSITE_FILTER})"
 
 export REPO_ROOT GROUP_NAME WEBSITE_FILTER GROUP_SLUG
+export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"
+export TEMPLATE_ID="${TEMPLATE_ID:-}"
 node "${REPO_ROOT}/services/engagement-pipeline/scripts/render-lead-tracker-report.js" \
   || stop "Lead Tracker render failed."
 

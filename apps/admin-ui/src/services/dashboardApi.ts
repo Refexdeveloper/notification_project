@@ -40,7 +40,7 @@ export type DashboardSendRow = {
 export type DashboardData = {
   environment: string;
   applications: DashboardApplication[];
-  recent_sends: DashboardSendRow[];
+  recent_sends?: DashboardSendRow[];
   generated_at?: string;
   refresh_mode?: 'live' | 'snapshot';
   timezone?: string;
@@ -48,20 +48,62 @@ export type DashboardData = {
   warning?: string;
 };
 
+const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v1';
+const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
+
+type DashboardCacheEntry = {
+  ts: number;
+  data: DashboardData;
+};
+
+function cacheKey(environment: string) {
+  return `${DASHBOARD_CACHE_PREFIX}:${environment}`;
+}
+
+export function readDashboardCache(environment: 'production' | 'development'): DashboardData | null {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(environment));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DashboardCacheEntry;
+    if (!parsed?.data || Date.now() - parsed.ts > DASHBOARD_CACHE_TTL_MS) {
+      sessionStorage.removeItem(cacheKey(environment));
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeDashboardCache(environment: string, data: DashboardData) {
+  try {
+    const entry: DashboardCacheEntry = { ts: Date.now(), data };
+    sessionStorage.setItem(cacheKey(environment), JSON.stringify(entry));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 export async function loadDashboard(
   environment: 'production' | 'development' = 'production',
-  options?: { live?: boolean },
-): Promise<{ ok: boolean; data?: DashboardData; error?: string }> {
+  options?: { live?: boolean; skipCache?: boolean },
+): Promise<{ ok: boolean; data?: DashboardData; error?: string; fromCache?: boolean }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
   }
 
-  const params = new URLSearchParams({
-    environment,
-    _: String(Date.now()),
-  });
-  if (options?.live) {
+  const live = Boolean(options?.live);
+  if (!live && !options?.skipCache) {
+    const cached = readDashboardCache(environment);
+    if (cached) {
+      return { ok: true, data: cached, fromCache: true };
+    }
+  }
+
+  const params = new URLSearchParams({ environment });
+  if (live) {
     params.set('refresh', 'live');
+    params.set('_', String(Date.now()));
   }
 
   const res = await apiV1Fetch<DashboardData>(`/dashboard?${params.toString()}`, {
@@ -70,6 +112,10 @@ export async function loadDashboard(
 
   if (!res.ok || !res.data) {
     return { ok: false, error: res.error || 'Failed to load dashboard' };
+  }
+
+  if (!live) {
+    writeDashboardCache(environment, res.data);
   }
 
   return { ok: true, data: res.data };

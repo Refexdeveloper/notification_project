@@ -118,6 +118,22 @@ WHERE snapshot_run_id = '$(ingest_sql_escape "${run_id}")';
   done
 }
 
+ingest_get_previous_completed_snapshot_run_id() {
+  local env="$1"
+  local app_id="$2"
+  local process_id="$3"
+  ingest_psql -t -A -c "
+SELECT snapshot_run_id
+FROM engagement_reporting.snapshot_run
+WHERE environment = '$(ingest_sql_escape "${env}")'
+  AND application_id = '$(ingest_sql_escape "${app_id}")'
+  AND process_id = '$(ingest_sql_escape "${process_id}")'
+  AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
+LIMIT 1;
+" | tr -d '[:space:]'
+}
+
 # Filter items.jsonl to rows modified since watermark (with overlap).
 ingest_filter_items_jsonl_since_watermark() {
   local input_file="$1"

@@ -14,10 +14,14 @@ const {
   createTemplate,
   appendTemplateVersion,
   updateTemplateBinding,
-  templateInUse,
+  getTemplateScheduleUsage,
+  formatTemplateInUseMessage,
+  listTemplateVersions,
+  getTemplateVersion,
 } = require('../lib/templateRepository');
 const { defaultReportHtml } = require('../lib/defaultReportHtml');
 const { syncPublishedTemplateToPipeline, normalizeReportTemplateHtml } = require('../lib/templatePipelineSync');
+const { invalidateReportHtmlCache } = require('../lib/templateCacheInvalidation');
 
 const router = express.Router({ mergeParams: true });
 
@@ -90,6 +94,134 @@ router.get('/', async (req, res) => {
       return dbNotConfigured(res, req.correlationId);
     }
     return fail(res, req.correlationId, 'TEMPLATES_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+router.get('/:templateId/versions/:versionNumber', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment);
+  const applicationId = req.params.applicationId || null;
+  const { templateId, versionNumber } = req.params;
+  const versionNum = Number(versionNumber);
+  if (!Number.isFinite(versionNum) || versionNum < 1) {
+    return fail(res, req.correlationId, 'INVALID_VERSION', 'Version number must be a positive integer', 400);
+  }
+
+  try {
+    const row = await getTemplateRow(getPool(), { environment, applicationId, templateId });
+    if (!row) {
+      return fail(res, req.correlationId, 'TEMPLATE_NOT_FOUND', 'Template not found for this application', 404);
+    }
+
+    const versionRow = await getTemplateVersion(getPool(), templateId, versionNum);
+    if (!versionRow) {
+      return fail(res, req.correlationId, 'VERSION_NOT_FOUND', 'Template version not found', 404);
+    }
+
+    let html = '';
+    try {
+      html = resolveTemplateHtml(versionRow.content_ref);
+    } catch (err) {
+      if (err.code === 'TEMPLATE_CONTENT_NOT_FOUND') {
+        return fail(res, req.correlationId, err.code, err.message, 404);
+      }
+      throw err;
+    }
+
+    return ok(res, req.correlationId, {
+      item: {
+        version_number: versionRow.version_number,
+        checksum: versionRow.checksum,
+        created_at: versionRow.created_at,
+        html,
+        variables: extractVariables(html, row.subject || row.name),
+      },
+      environment,
+      application_id: applicationId,
+      template_id: templateId,
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
+    }
+    return fail(res, req.correlationId, 'TEMPLATE_VERSION_GET_FAILED', err.message, 500, true);
+  }
+});
+
+router.get('/:templateId/versions', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment);
+  const applicationId = req.params.applicationId || null;
+  const { templateId } = req.params;
+
+  try {
+    const row = await getTemplateRow(getPool(), { environment, applicationId, templateId });
+    if (!row) {
+      return fail(res, req.correlationId, 'TEMPLATE_NOT_FOUND', 'Template not found for this application', 404);
+    }
+
+    const versions = await listTemplateVersions(getPool(), templateId);
+    const items = versions.map((v) => ({
+      version_number: v.version_number,
+      checksum: v.checksum,
+      created_at: v.created_at,
+      is_current: v.version_number === row.version_number,
+    }));
+
+    return ok(res, req.correlationId, {
+      items,
+      count: items.length,
+      current_version: row.version_number || 0,
+      environment,
+      application_id: applicationId,
+      template_id: templateId,
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
+    }
+    return fail(res, req.correlationId, 'TEMPLATE_VERSIONS_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+router.get('/:templateId/usage', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment);
+  const applicationId = req.params.applicationId || null;
+  const { templateId } = req.params;
+
+  try {
+    const row = await getTemplateRow(getPool(), { environment, applicationId, templateId });
+    if (!row) {
+      return fail(res, req.correlationId, 'TEMPLATE_NOT_FOUND', 'Template not found for this application', 404);
+    }
+
+    const client = await getPool().connect();
+    try {
+      const usage = await getTemplateScheduleUsage(client, templateId);
+      return ok(res, req.correlationId, {
+        template_id: templateId,
+        in_use: usage.count > 0,
+        schedule_count: usage.count,
+        schedules: usage.schedules,
+      });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    if (err.code === '42P01') {
+      return fail(res, req.correlationId, 'SCHEMA_NOT_MIGRATED', 'Database schema not migrated', 503);
+    }
+    return fail(res, req.correlationId, 'TEMPLATE_USAGE_FAILED', err.message, 500, true);
   }
 });
 
@@ -176,6 +308,16 @@ router.post('/', async (req, res) => {
         contentRef: row.content_ref,
         status,
       });
+      try {
+        const cacheClient = await getPool().connect();
+        try {
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+        } finally {
+          cacheClient.release();
+        }
+      } catch (cacheErr) {
+        pipelineSync = { ...pipelineSync, cache_invalidation: { deleted: 0, error: cacheErr.message } };
+      }
     }
     return ok(
       res,
@@ -278,6 +420,16 @@ router.patch('/:templateId', async (req, res) => {
         contentRef: row.content_ref,
         status: effectiveStatus,
       });
+      try {
+        const cacheClient = await getPool().connect();
+        try {
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+        } finally {
+          cacheClient.release();
+        }
+      } catch (cacheErr) {
+        pipelineSync = { ...pipelineSync, cache_invalidation: { deleted: 0, error: cacheErr.message } };
+      }
     }
     return ok(res, req.correlationId, {
       item: mapTemplateRow(row, { includeHtml: true }),
@@ -315,13 +467,14 @@ router.delete('/:templateId', async (req, res) => {
       return fail(res, req.correlationId, 'TEMPLATE_NOT_FOUND', 'Template not found for this application', 404);
     }
 
-    if (await templateInUse(client, templateId)) {
+    const usage = await getTemplateScheduleUsage(client, templateId);
+    if (usage.count > 0) {
       await client.query('ROLLBACK');
       return fail(
         res,
         req.correlationId,
         'TEMPLATE_IN_USE',
-        'Cannot delete a template linked to an active schedule. Pause schedules first.',
+        formatTemplateInUseMessage(usage.schedules),
         409,
       );
     }

@@ -29,7 +29,7 @@ export async function apiV1Fetch<T>(
   path: string,
   init: RequestInit = {},
   options?: { timeoutMs?: number },
-): Promise<{ ok: boolean; status: number; data: T | null; error?: string; correlationId?: string }> {
+): Promise<{ ok: boolean; status: number; data: T | null; error?: string; errorCode?: string; correlationId?: string }> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'X-Correlation-Id': correlationId(),
@@ -54,6 +54,7 @@ export async function apiV1Fetch<T>(
         status: res.status,
         data: null,
         error: json.error?.message || `HTTP ${res.status}`,
+        errorCode: json.error?.code,
         correlationId: cid,
       };
     }

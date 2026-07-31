@@ -282,9 +282,18 @@ export type TemplateMutationPayload = {
   status?: 'draft' | 'published';
 };
 
+export type PipelineSyncResult = {
+  synced: boolean;
+  reason?: string;
+  path?: string;
+  bytes?: number;
+  cache_invalidation?: { deleted?: number; patterns?: string[]; error?: string };
+};
+
 export type TemplateMutationResult = {
   ok: boolean;
   template?: ReportTemplate;
+  pipelineSync?: PipelineSyncResult;
   error?: string;
 };
 
@@ -308,6 +317,58 @@ export async function loadTemplateFromBackend(
   return { ok: true, template: mapTemplateRow(res.data.item, app) };
 }
 
+export async function loadTemplateVersionsFromBackend(
+  app: KissflowApplication,
+  templateId: string,
+): Promise<TemplateVersionsLoadResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, versions: [], error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/${encodeURIComponent(templateId)}/versions?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{
+    items: BackendTemplateVersionRow[];
+    current_version?: number;
+  }>(path);
+
+  if (!res.ok || !res.data) {
+    return { ok: false, versions: [], error: res.error || 'Failed to load version history' };
+  }
+
+  return {
+    ok: true,
+    versions: res.data.items || [],
+    currentVersion: res.data.current_version,
+  };
+}
+
+export async function loadTemplateVersionFromBackend(
+  app: KissflowApplication,
+  templateId: string,
+  versionNumber: number,
+): Promise<TemplateVersionLoadResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(String(versionNumber))}?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{ item: { version_number: number; html?: string } }>(path);
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to load template version' };
+  }
+
+  return {
+    ok: true,
+    html: res.data.item.html,
+    versionNumber: res.data.item.version_number,
+  };
+}
+
 export async function createTemplateOnBackend(
   app: KissflowApplication,
   payload: Required<Pick<TemplateMutationPayload, 'name'>> & TemplateMutationPayload,
@@ -319,7 +380,7 @@ export async function createTemplateOnBackend(
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
   const path = `/applications/${encodeURIComponent(applicationId)}/templates?environment=${encodeURIComponent(environment)}`;
-  const res = await apiV1Fetch<{ item: BackendTemplateRow }>(path, {
+  const res = await apiV1Fetch<{ item: BackendTemplateRow; pipeline_sync?: PipelineSyncResult }>(path, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -328,7 +389,11 @@ export async function createTemplateOnBackend(
     return { ok: false, error: res.error || 'Failed to create template' };
   }
 
-  return { ok: true, template: mapTemplateRow(res.data.item, app) };
+  return {
+    ok: true,
+    template: mapTemplateRow(res.data.item, app),
+    pipelineSync: res.data.pipeline_sync,
+  };
 }
 
 export async function updateTemplateOnBackend(
@@ -343,7 +408,7 @@ export async function updateTemplateOnBackend(
   const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
   const path = `/applications/${encodeURIComponent(applicationId)}/templates/${encodeURIComponent(templateId)}?environment=${encodeURIComponent(environment)}`;
-  const res = await apiV1Fetch<{ item: BackendTemplateRow }>(path, {
+  const res = await apiV1Fetch<{ item: BackendTemplateRow; pipeline_sync?: PipelineSyncResult }>(path, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -352,13 +417,79 @@ export async function updateTemplateOnBackend(
     return { ok: false, error: res.error || 'Failed to update template' };
   }
 
-  return { ok: true, template: mapTemplateRow(res.data.item, app) };
+  return {
+    ok: true,
+    template: mapTemplateRow(res.data.item, app),
+    pipelineSync: res.data.pipeline_sync,
+  };
+}
+
+export type TemplateScheduleUsage = {
+  id: string;
+  name: string;
+  is_active: boolean;
+};
+
+export type BackendTemplateVersionRow = {
+  version_number: number;
+  checksum: string | null;
+  created_at: string;
+  is_current?: boolean;
+};
+
+export type TemplateVersionsLoadResult = {
+  ok: boolean;
+  versions: BackendTemplateVersionRow[];
+  currentVersion?: number;
+  error?: string;
+};
+
+export type TemplateVersionLoadResult = {
+  ok: boolean;
+  html?: string;
+  versionNumber?: number;
+  error?: string;
+};
+
+export type TemplateUsageResult = {
+  ok: boolean;
+  inUse?: boolean;
+  schedules?: TemplateScheduleUsage[];
+  error?: string;
+};
+
+export async function loadTemplateUsageFromBackend(
+  app: KissflowApplication,
+  templateId: string,
+): Promise<TemplateUsageResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const environment = toDbEnvironment(app.environment);
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/${encodeURIComponent(templateId)}/usage?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{
+    in_use: boolean;
+    schedule_count: number;
+    schedules: TemplateScheduleUsage[];
+  }>(path);
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Failed to check template usage' };
+  }
+
+  return {
+    ok: true,
+    inUse: res.data.in_use,
+    schedules: res.data.schedules || [],
+  };
 }
 
 export async function deleteTemplateOnBackend(
   app: KissflowApplication,
   templateId: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; errorCode?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
   }
@@ -369,7 +500,7 @@ export async function deleteTemplateOnBackend(
   const res = await apiV1Fetch<{ deleted: boolean }>(path, { method: 'DELETE' });
 
   if (!res.ok) {
-    return { ok: false, error: res.error || 'Failed to delete template' };
+    return { ok: false, error: res.error || 'Failed to delete template', errorCode: res.errorCode };
   }
 
   return { ok: true };

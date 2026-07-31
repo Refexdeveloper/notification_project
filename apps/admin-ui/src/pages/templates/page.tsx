@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Mail, Plus, Search, Sparkles } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { getApplications } from '@/mocks/applications';
+import type { KissflowApplication } from '@/mocks/applications';
 import {
   createTemplate,
   getTemplates,
   type ReportTemplate,
   type TemplateStatus,
 } from '@/stores/reportTemplates';
+import { isBackendApiMode } from '@/services/backendApi';
+import { loadApplicationsFromBackend } from '@/services/applicationsApi';
+import { createTemplateOnBackend, loadTemplatesFromBackend } from '@/services/reportsApi';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -21,17 +25,61 @@ export default function TemplatesPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const appFilterParam = searchParams.get('app') || '';
+  const backendMode = isBackendApiMode();
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | TemplateStatus>('all');
   const [appFilter, setAppFilter] = useState(appFilterParam);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(backendMode);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [backendApps, setBackendApps] = useState<KissflowApplication[]>([]);
+  const [backendTemplates, setBackendTemplates] = useState<ReportTemplate[]>([]);
 
-  const apps = useMemo(() => getApplications(), []);
+  useEffect(() => {
+    if (!backendMode) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+
+    loadApplicationsFromBackend().then(async (appsResult) => {
+      if (cancelled) return;
+      const apps = appsResult.applications || [];
+      setBackendApps(apps);
+
+      if (appsResult.error) {
+        setLoadError(appsResult.error);
+      }
+
+      const all: ReportTemplate[] = [];
+      for (const app of apps) {
+        const tplResult = await loadTemplatesFromBackend(app);
+        if (tplResult.templates?.length) {
+          all.push(...tplResult.templates);
+        }
+      }
+
+      if (!cancelled) {
+        setBackendTemplates(all);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backendMode, tick]);
+
+  const apps = useMemo(() => {
+    if (backendMode) return backendApps;
+    return getApplications();
+  }, [backendMode, backendApps, tick]);
+
   const templates = useMemo(() => {
+    if (backendMode) return backendTemplates;
     void tick;
     return getTemplates();
-  }, [tick]);
+  }, [backendMode, backendTemplates, tick]);
 
   const filtered = useMemo(() => {
     return templates.filter((t) => {
@@ -51,13 +99,35 @@ export default function TemplatesPage() {
   const appName = (id: string) =>
     apps.find((a) => a.id === id)?.displayName || apps.find((a) => a.id === id)?.name || 'App';
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!apps.length) {
       navigate('/applications');
       return;
     }
     const applicationId = appFilter || apps[0].id;
     setCreating(true);
+
+    if (backendMode) {
+      const app = apps.find((a) => a.id === applicationId);
+      if (!app) {
+        setCreating(false);
+        return;
+      }
+      const result = await createTemplateOnBackend(app, {
+        name: `Report template ${new Date().toLocaleDateString()}`,
+        description: 'HTML email report for this Kissflow app',
+        subject: `{{ReportTitle}} — ${appName(applicationId)}`,
+      });
+      setCreating(false);
+      if (result.ok && result.template) {
+        setTick((n) => n + 1);
+        navigate(`/templates/${result.template.id}?app=${app.id}`);
+      } else {
+        setLoadError(result.error || 'Failed to create template');
+      }
+      return;
+    }
+
     const tpl = createTemplate({
       applicationId,
       name: `Report template ${new Date().toLocaleDateString()}`,
@@ -69,6 +139,11 @@ export default function TemplatesPage() {
     navigate(`/templates/${tpl.id}`);
   };
 
+  const openTemplate = (tpl: ReportTemplate) => {
+    const appQuery = tpl.applicationId ? `?app=${encodeURIComponent(tpl.applicationId)}` : '';
+    navigate(`/templates/${tpl.id}${appQuery}`);
+  };
+
   return (
     <Layout breadcrumbs={[{ label: 'Home', path: '/applications' }, { label: 'Email templates' }]}>
       <div className="mb-7 flex items-end justify-between gap-4 flex-wrap">
@@ -77,12 +152,19 @@ export default function TemplatesPage() {
           <p className="page-subtitle">
             Create multiple HTML report designs per Kissflow app, then pick the best one for a
             schedule.
+            {backendMode && <span className="ml-1 text-foreground-400">· PostgreSQL</span>}
           </p>
         </div>
-        <Button loading={creating} onClick={handleCreate} leftIcon={<Plus className="w-4 h-4" />}>
+        <Button loading={creating} onClick={() => void handleCreate()} leftIcon={<Plus className="w-4 h-4" />}>
           New template
         </Button>
       </div>
+
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {loadError}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-5 min-h-[520px]">
         <div>
@@ -123,7 +205,9 @@ export default function TemplatesPage() {
             </div>
           </div>
 
-          {!apps.length ? (
+          {loading ? (
+            <div className="surface p-8 text-center text-sm text-foreground-500">Loading templates…</div>
+          ) : !apps.length ? (
             <EmptyState
               variant="apps"
               title="Connect an application first"
@@ -137,7 +221,7 @@ export default function TemplatesPage() {
               title="No templates for this filter"
               description="Create an HTML report template for this app. You can make several and choose the best for your schedule."
               primaryLabel="New template"
-              onPrimary={handleCreate}
+              onPrimary={() => void handleCreate()}
             />
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -145,7 +229,7 @@ export default function TemplatesPage() {
                 <button
                   key={tpl.id}
                   type="button"
-                  onClick={() => navigate(`/templates/${tpl.id}`)}
+                  onClick={() => openTemplate(tpl)}
                   className="surface p-4 text-left hover:border-primary-300/70 cursor-pointer group"
                 >
                   <div className="flex items-start gap-3">
@@ -191,7 +275,7 @@ export default function TemplatesPage() {
               <Button
                 className="mt-4 w-full"
                 variant="secondary"
-                onClick={() => navigate(`/templates/${selectedPreview.id}`)}
+                onClick={() => openTemplate(selectedPreview)}
               >
                 Open editor
               </Button>

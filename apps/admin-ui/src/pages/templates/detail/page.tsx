@@ -5,24 +5,45 @@ import {
   Check,
   Code2,
   Eye,
+  History,
+  PanelsTopBottom,
   Save,
+  Send,
   Trash2,
 } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { getApplicationById, getApplications } from '@/mocks/applications';
 import {
   deleteTemplate,
+  extractVariables,
   getTemplateById,
   renderPreviewHtml,
   updateTemplate,
 } from '@/stores/reportTemplates';
+import {
+  detectTemplateAppKind,
+  PLACEHOLDER_HINTS_BY_APP,
+  type PreviewContext,
+} from '@/lib/templatePreview';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import {
   deleteTemplateOnBackend,
   loadTemplateFromBackend,
+  loadTemplateUsageFromBackend,
+  loadTemplateVersionFromBackend,
+  loadTemplateVersionsFromBackend,
+  testSendScheduleOnBackend,
   updateTemplateOnBackend,
+  type PipelineSyncResult,
 } from '@/services/reportsApi';
+import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
+import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
+import type { TemplateVersion } from '@/mocks/templates';
+import {
+  formatSchedulersInUseMessage,
+  getSchedulersByTemplateId,
+} from '@/stores/reportSchedulers';
 import type { KissflowApplication } from '@/mocks/applications';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -45,8 +66,16 @@ export default function TemplateDetailPage() {
   const [status, setStatus] = useState<'draft' | 'published' | 'archived'>('draft');
   const [applicationId, setApplicationId] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
-  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [pipelineMsg, setPipelineMsg] = useState('');
+  const [mode, setMode] = useState<'edit' | 'preview' | 'split'>('split');
   const [saving, setSaving] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionHistory, setVersionHistory] = useState<TemplateVersion[]>([]);
+  const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
+  const [testEmailOpen, setTestEmailOpen] = useState(false);
 
   const localExisting = !backendMode && id ? getTemplateById(id) : undefined;
 
@@ -100,6 +129,36 @@ export default function TemplateDetailPage() {
     };
   }, [backendMode, id, appRouteId]);
 
+  const reloadVersionHistory = useCallback(async () => {
+    if (!backendMode || !id) return;
+    const appForVersions =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+    if (!appForVersions.id && !appRouteId) return;
+
+    setVersionsLoading(true);
+    const result = await loadTemplateVersionsFromBackend(appForVersions, id);
+    setVersionsLoading(false);
+
+    if (!result.ok) return;
+
+    setCurrentVersionNumber(result.currentVersion || 0);
+    setVersionHistory(
+      (result.versions || []).map((v) => ({
+        id: `v${v.version_number}`,
+        version: v.version_number,
+        author: 'engagement_reporting',
+        timestamp: v.created_at,
+        message: v.checksum ? `Saved · ${v.checksum.slice(0, 8)}…` : 'Saved version',
+        blocks: [],
+      })),
+    );
+  }, [backendMode, id, backendApp, appRouteId]);
+
+  useEffect(() => {
+    if (!backendMode || !id || loading) return;
+    void reloadVersionHistory();
+  }, [backendMode, id, loading, reloadVersionHistory]);
+
   useEffect(() => {
     if (backendMode || !localExisting) return;
     setName(localExisting.name);
@@ -117,13 +176,58 @@ export default function TemplateDetailPage() {
       ? getApplicationById(applicationId)
       : undefined;
 
-  const previewHtml = useMemo(() => renderPreviewHtml(html), [html]);
+  const previewContext = useMemo<PreviewContext>(
+    () => ({
+      templateName: name,
+      subject,
+      kissflowAppId: app?.appId || applicationId,
+      applicationId,
+    }),
+    [name, subject, app?.appId, applicationId],
+  );
+
+  const previewHtml = useMemo(
+    () => renderPreviewHtml(html, previewContext),
+    [html, previewContext],
+  );
+
+  const previewSubject = useMemo(
+    () => renderPreviewHtml(subject || name, previewContext),
+    [subject, name, previewContext],
+  );
+
+  const previewKey = useMemo(
+    () => `${name}::${subject}::${html.length}::${html.slice(0, 120)}`,
+    [name, subject, html],
+  );
+
+  const placeholderHints = useMemo(() => {
+    const fromTemplate = extractVariables(html, subject);
+    if (fromTemplate.length > 0) {
+      return fromTemplate;
+    }
+    const kind = detectTemplateAppKind(previewContext);
+    return PLACEHOLDER_HINTS_BY_APP[kind];
+  }, [html, subject, previewContext]);
+
+  const formatPipelineSync = (sync?: PipelineSyncResult) => {
+    if (!sync) return '';
+    if (sync.synced) {
+      const cacheNote =
+        sync.cache_invalidation?.deleted != null && sync.cache_invalidation.deleted > 0
+          ? ` · cleared ${sync.cache_invalidation.deleted} cached report(s)`
+          : '';
+      return `Pipeline synced to ${sync.path || 'seed file'}${cacheNote}`;
+    }
+    return `Pipeline sync skipped: ${sync.reason || 'unknown reason'}`;
+  };
 
   const persist = useCallback(
     async (publish = false) => {
       if (!id) return;
       setSaving(true);
       setSaveMsg('');
+      setPipelineMsg('');
 
       if (backendMode) {
         if (!backendApp && !appRouteId) {
@@ -136,13 +240,21 @@ export default function TemplateDetailPage() {
           backendApp ||
           ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
 
-        const result = await updateTemplateOnBackend(appForSave, id, {
-          name,
-          subject,
-          description,
-          html,
-          status: publish ? 'published' : 'draft',
-        });
+        const payload: {
+          name: string;
+          subject: string;
+          description: string;
+          html: string;
+          status?: 'draft' | 'published';
+        } = { name, subject, description, html };
+
+        if (publish) {
+          payload.status = 'published';
+        } else if (status !== 'published') {
+          payload.status = 'draft';
+        }
+
+        const result = await updateTemplateOnBackend(appForSave, id, payload);
 
         setSaving(false);
         if (!result.ok) {
@@ -160,21 +272,35 @@ export default function TemplateDetailPage() {
           setStatus('published');
         }
 
-        setSaveMsg(publish ? 'Published' : 'Saved');
-        setTimeout(() => setSaveMsg(''), 2000);
+        setSaveMsg(publish ? 'Published to backend' : 'Saved to backend');
+        if (publish && result.pipelineSync) {
+          setPipelineMsg(formatPipelineSync(result.pipelineSync));
+        }
+        void reloadVersionHistory();
+        setTimeout(() => {
+          setSaveMsg('');
+          setPipelineMsg('');
+        }, publish ? 6000 : 2000);
         return;
       }
 
       if (!localExisting) return;
-      updateTemplate(id, {
+      const patch: Parameters<typeof updateTemplate>[1] = {
         name,
         subject,
         description,
         html,
         applicationId,
-        status: publish ? 'published' : 'draft',
-      });
-      setStatus(publish ? 'published' : 'draft');
+      };
+      if (publish) {
+        patch.status = 'published';
+      } else if (status !== 'published') {
+        patch.status = 'draft';
+      }
+      updateTemplate(id, patch);
+      if (publish) {
+        setStatus('published');
+      }
       setSaveMsg(publish ? 'Published' : 'Saved');
       setSaving(false);
       setTimeout(() => setSaveMsg(''), 2000);
@@ -190,26 +316,122 @@ export default function TemplateDetailPage() {
       html,
       applicationId,
       localExisting,
+      status,
+      reloadVersionHistory,
     ],
   );
 
+  const handleRestoreVersion = async (version: TemplateVersion) => {
+    if (!id || !backendMode) return;
+    if (
+      !window.confirm(
+        `Restore v${version.version} into the editor? Save draft to persist — this does not auto-publish.`,
+      )
+    ) {
+      return;
+    }
+
+    const appForRestore =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+    const result = await loadTemplateVersionFromBackend(appForRestore, id, version.version);
+    if (!result.ok || !result.html) {
+      setLoadError(result.error || 'Failed to load version');
+      return;
+    }
+    setHtml(result.html);
+    setSaveMsg(`Loaded v${version.version} — save draft to persist`);
+    setTimeout(() => setSaveMsg(''), 4000);
+  };
+
+  const handleTestEmailSend = async (recipient: string) => {
+    if (!id || !backendMode) {
+      return { ok: false, error: 'Test email requires backend API mode' };
+    }
+
+    const appForTest =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+
+    const usage = await loadTemplateUsageFromBackend(appForTest, id);
+    if (!usage.ok) {
+      return { ok: false, error: usage.error || 'Could not find a schedule for this template' };
+    }
+    if (!usage.schedules?.length) {
+      return {
+        ok: false,
+        error:
+          'No schedule uses this template yet. Create a schedule in Application → Schedulers, then retry test email.',
+      };
+    }
+
+    const schedule = usage.schedules[0];
+    const result = await testSendScheduleOnBackend(appForTest, schedule.id, recipient);
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error || result.logExcerpt || 'Test send failed',
+      };
+    }
+
+    return {
+      ok: true,
+      message: result.message || 'Delivery confirmed by schedule runner.',
+    };
+  };
+
   const handleDelete = async () => {
-    if (!id || !confirm('Delete this template?')) return;
+    if (!id) return;
+    setDeleteError(null);
 
     if (backendMode) {
       const appForDelete =
         backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+
+      setDeleting(true);
+      const usage = await loadTemplateUsageFromBackend(appForDelete, id);
+      setDeleting(false);
+
+      if (!usage.ok) {
+        setDeleteError(usage.error || 'Could not verify whether this template is in use.');
+        return;
+      }
+
+      if (usage.inUse) {
+        const names = (usage.schedules || []).map((s) => s.name).join(', ');
+        const suffix = (usage.schedules?.length || 0) === 1 ? 'schedule' : 'schedules';
+        setDeleteError(
+          `This template is already in use by ${usage.schedules?.length || 0} ${suffix}: ${names}. Pause or delete those schedulers first, or assign a different template.`,
+        );
+        return;
+      }
+
+      if (!window.confirm('Do you want to delete this template?')) return;
+
+      setDeleting(true);
       const result = await deleteTemplateOnBackend(appForDelete, id);
+      setDeleting(false);
+
       if (!result.ok) {
-        setLoadError(result.error || 'Delete failed');
+        setDeleteError(
+          result.errorCode === 'TEMPLATE_IN_USE'
+            ? result.error || 'This template is already in use by a schedule.'
+            : result.error || 'Delete failed',
+        );
         return;
       }
       navigate(appRouteId ? `/applications/${appRouteId}?tab=templates` : '/templates');
       return;
     }
 
+    const linked = getSchedulersByTemplateId(id);
+    if (linked.length > 0) {
+      setDeleteError(formatSchedulersInUseMessage(linked));
+      return;
+    }
+
+    if (!window.confirm('Do you want to delete this template?')) return;
+
     deleteTemplate(id);
-    navigate('/templates');
+    navigate(appRouteId ? `/applications/${appRouteId}?tab=templates` : '/templates');
   };
 
   if (loading) {
@@ -268,10 +490,23 @@ export default function TemplateDetailPage() {
                 </span>
               )}
             </p>
+            {pipelineMsg && (
+              <p className="text-xs text-emerald-700 mt-1">{pipelineMsg}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex glass rounded-[12px] p-1">
+            <button
+              type="button"
+              onClick={() => setMode('split')}
+              className={`h-8 px-3 rounded-[10px] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                mode === 'split' ? 'bg-primary-600 text-white' : 'text-foreground-600'
+              }`}
+            >
+              <PanelsTopBottom className="w-3.5 h-3.5" />
+              Split
+            </button>
             <button
               type="button"
               onClick={() => setMode('edit')}
@@ -294,10 +529,31 @@ export default function TemplateDetailPage() {
             </button>
           </div>
           <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setTestEmailOpen(true)}
+            disabled={!backendMode}
+            title={backendMode ? 'Send test via linked schedule' : 'Test email requires backend mode'}
+            leftIcon={<Send className="w-3.5 h-3.5" />}
+          >
+            Test email
+          </Button>
+          {backendMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowVersionHistory((v) => !v)}
+              leftIcon={<History className="w-3.5 h-3.5" />}
+            >
+              History
+            </Button>
+          )}
+          <Button
             variant="danger"
             size="sm"
-            onClick={handleDelete}
-            leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+            onClick={() => void handleDelete()}
+            loading={deleting}
+            leftIcon={!deleting ? <Trash2 className="w-3.5 h-3.5" /> : undefined}
           >
             Delete
           </Button>
@@ -321,6 +577,12 @@ export default function TemplateDetailPage() {
         </div>
       </div>
 
+      {deleteError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          {deleteError}
+        </div>
+      )}
+
       {loadError && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {loadError}
@@ -331,6 +593,12 @@ export default function TemplateDetailPage() {
         <div className="surface p-4 space-y-3.5 h-fit">
           <Input label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Email subject" value={subject} onChange={(e) => setSubject(e.target.value)} hint="Use {{ReportTitle}} etc." />
+          <div className="rounded-[14px] bg-background-50 border border-background-200/80 p-3">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-1">
+              Subject preview
+            </p>
+            <p className="text-xs text-foreground-700 break-words">{previewSubject || '—'}</p>
+          </div>
           {!backendMode && (
             <div>
               <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Application</label>
@@ -361,31 +629,63 @@ export default function TemplateDetailPage() {
             <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-2">
               Placeholders
             </p>
-            <p className="text-xs text-foreground-500 leading-relaxed">
-              {'{{ReportTitle}} {{ReportDate}} {{WebsiteName}} {{TotalLeads}} {{OpenLeads}} {{ClosedLeads}} {{LeadTableHtml}} {{SignedInToday}}'}
+            <p className="text-xs text-foreground-500 leading-relaxed font-mono">
+              {placeholderHints.map((key) => `{{${key}}}`).join(' ')}
             </p>
           </div>
         </div>
 
-        <div className="surface overflow-hidden min-h-[560px] flex flex-col">
-          {mode === 'edit' ? (
+        <div className="flex min-h-[560px] gap-0">
+          <div className="surface overflow-hidden min-h-[560px] flex flex-col flex-1 min-w-0">
+          {(mode === 'edit' || mode === 'split') && (
             <textarea
               value={html}
               onChange={(e) => setHtml(e.target.value)}
               spellCheck={false}
-              className="flex-1 w-full min-h-[560px] p-4 font-mono text-xs leading-relaxed bg-foreground-950 text-accent-100 outline-none resize-none border-0"
+              className={`w-full p-4 font-mono text-xs leading-relaxed bg-foreground-950 text-accent-100 outline-none resize-none border-0 ${
+                mode === 'split' ? 'min-h-[280px] flex-1 border-b border-background-200' : 'flex-1 min-h-[560px]'
+              }`}
               aria-label="HTML template editor"
             />
-          ) : (
-            <iframe
-              title="Email preview"
-              sandbox=""
-              srcDoc={previewHtml}
-              className="flex-1 w-full min-h-[560px] bg-white border-0"
+          )}
+          {(mode === 'preview' || mode === 'split') && (
+            <div className={mode === 'split' ? 'flex-1 min-h-[280px] flex flex-col' : 'flex-1 min-h-[560px] flex flex-col'}>
+              {mode === 'split' && (
+                <div className="px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-foreground-400 border-b border-background-200 bg-background-50">
+                  Live preview
+                </div>
+              )}
+              <iframe
+                key={previewKey}
+                title="Email preview"
+                sandbox=""
+                srcDoc={previewHtml}
+                className="flex-1 w-full bg-white border-0 min-h-[240px]"
+              />
+            </div>
+          )}
+          </div>
+
+          {backendMode && showVersionHistory && (
+            <VersionHistory
+              isOpen={showVersionHistory}
+              onClose={() => setShowVersionHistory(false)}
+              versions={versionHistory}
+              currentVersion={currentVersionNumber}
+              onRestoreVersion={(v) => void handleRestoreVersion(v)}
+              loading={versionsLoading}
             />
           )}
         </div>
       </div>
+
+      <TestEmailDialog
+        isOpen={testEmailOpen}
+        onClose={() => setTestEmailOpen(false)}
+        templateName={name}
+        subject={previewSubject}
+            onSend={async (recipient, _overrides) => handleTestEmailSend(recipient)}
+      />
     </Layout>
   );
 }

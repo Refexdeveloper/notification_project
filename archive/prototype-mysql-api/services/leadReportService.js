@@ -3,6 +3,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const adminUiEnv = path.join(__dirname, '../../../apps/admin-ui/.env.local');
 require('dotenv').config({ path: adminUiEnv });
@@ -15,6 +16,58 @@ const LEAD_TRACKER_TEMPLATE_PATH = path.join(
   REPO_ROOT,
   'db/seeds/lead-tracker-report-template.html',
 );
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeLeadTemplateHtml(html) {
+  return String(html || '')
+    .replace(/refex-logo\.png/gi, 'refexone-logo.png')
+    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+}
+
+function resolveContentRef(contentRef) {
+  if (!contentRef || !String(contentRef).trim()) return null;
+  const trimmed = String(contentRef).trim();
+  if (trimmed.startsWith('<')) return normalizeLeadTemplateHtml(trimmed);
+  const abs = path.isAbsolute(trimmed) ? trimmed : path.join(REPO_ROOT, trimmed);
+  if (fs.existsSync(abs)) {
+    return normalizeLeadTemplateHtml(fs.readFileSync(abs, 'utf8'));
+  }
+  return null;
+}
+
+function loadLeadTrackerTemplateFromPg() {
+  const templateId = (process.env.TEMPLATE_ID || '').trim();
+  if (!UUID_RE.test(templateId)) return null;
+
+  const pgHost = process.env.PGHOST || 'localhost';
+  const pgPort = process.env.PGPORT || '5432';
+  const pgDb = process.env.PGDATABASE || 'engagement_reporting';
+  const pgUser = process.env.PGUSER || 'postgres';
+
+  try {
+    const contentRef = execFileSync(
+      'psql',
+      [
+        `host=${pgHost}`,
+        `port=${pgPort}`,
+        `dbname=${pgDb}`,
+        `user=${pgUser}`,
+        '-t',
+        '-A',
+        '-c',
+        `SELECT COALESCE((SELECT rtv.content_ref FROM engagement_reporting.report_template_version rtv WHERE rtv.report_template_id = '${templateId}'::uuid ORDER BY rtv.version_number DESC LIMIT 1), '')`,
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, PGPASSWORD: process.env.PGPASSWORD || '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    ).trim();
+    return resolveContentRef(contentRef);
+  } catch {
+    return null;
+  }
+}
 
 function replaceTemplateVariables(templateBody, variables = {}) {
   let body = String(templateBody || '');
@@ -25,8 +78,10 @@ function replaceTemplateVariables(templateBody, variables = {}) {
 }
 
 function loadLeadTrackerTemplate() {
+  const fromPg = loadLeadTrackerTemplateFromPg();
+  if (fromPg) return fromPg;
   if (fs.existsSync(LEAD_TRACKER_TEMPLATE_PATH)) {
-    return fs.readFileSync(LEAD_TRACKER_TEMPLATE_PATH, 'utf8');
+    return normalizeLeadTemplateHtml(fs.readFileSync(LEAD_TRACKER_TEMPLATE_PATH, 'utf8'));
   }
   return null;
 }

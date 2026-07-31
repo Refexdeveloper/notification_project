@@ -198,7 +198,7 @@ case "${APPLICATION_ID}" in
       send_test_report \
         "${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html" \
         "$(report_cache_key)" \
-        "" \
+        "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh" \
         "lead-tracker:"
       log "Lead Tracker test send completed"
     else

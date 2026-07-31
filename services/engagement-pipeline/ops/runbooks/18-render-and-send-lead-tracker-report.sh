@@ -39,6 +39,7 @@ if [[ -n "${SCHEDULE_ID}" ]]; then
         rdv.config->>'website_filter' AS website_filter,
         rdv.config->>'user_group_filter' AS user_group_filter,
         rdv.config->>'group_slug' AS group_slug,
+        rdv.config->>'template_id' AS template_id,
         COALESCE(
           json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'TO'),
           '[]'::json
@@ -62,6 +63,7 @@ if [[ -n "${SCHEDULE_ID}" ]]; then
   GROUP_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.user_group_filter // .schedule_name // empty')"
   WEBSITE_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // empty')"
   GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // "modepro"')"
+  export TEMPLATE_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_id // empty')"
   export SUBJECT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.subject // empty')"
   export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
   TO_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to | join(",")')"
@@ -83,8 +85,19 @@ export GROUP_NAME WEBSITE_FILTER GROUP_SLUG
 export SUBJECT="${SUBJECT:-Lead Tracker — ${GROUP_NAME} sales report}"
 
 LATEST_FILE="${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
-if [[ -n "${TEST_RECIPIENT:-}" && -f "${LATEST_FILE}" ]]; then
-  log "Test send: skipping Kissflow render, using cached report ${LATEST_FILE}"
+REPORT_CACHE_KEY="lead-tracker:${GROUP_SLUG}"
+if [[ -n "${TEST_RECIPIENT:-}" ]]; then
+  export REPORT_CACHE_KEY
+  if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "${REPORT_CACHE_KEY}" "${LATEST_FILE}" \
+    || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${LATEST_FILE}" "lead-tracker:"; then
+    log "Test send: loaded cached Lead Tracker report"
+  elif [[ -f "${LATEST_FILE}" ]]; then
+    log "Test send: using on-disk report ${LATEST_FILE}"
+  else
+    log "Test send: no cache — rendering Lead Tracker report (live Kissflow)"
+    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${LATEST_FILE}" "${REPORT_CACHE_KEY}" || true
+  fi
 else
   log "Step 1/2: Rendering Lead Tracker report"
   bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
