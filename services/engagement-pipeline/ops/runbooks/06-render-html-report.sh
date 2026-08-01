@@ -5,6 +5,9 @@ REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-06"
 
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/report-template-lib.sh"
+
 PGDATABASE="${PGDATABASE:-engagement_reporting}"
 PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
@@ -18,6 +21,7 @@ AUDIT_FILE="${AUDIT_DIR}/runbook-06-${TIMESTAMP}.json"
 
 LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
+REFEXONE_LOGO_URL="${LOGO_URL}"
 
 apply_template_branding_from_pg() {
   local template_id="${TEMPLATE_ID:-}"
@@ -39,15 +43,22 @@ apply_template_branding_from_pg() {
   [[ -n "${content_ref}" ]] || return 0
 
   local extracted_logo
-  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refex' | head -1 || true)"
+  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refexone-logo' | head -1 || true)"
   if [[ -n "${extracted_logo}" ]]; then
     LOGO_URL="${extracted_logo}"
-    log "Using logo from published template ${template_id}"
+    log "Using refexOne logo from published template ${template_id}"
+  fi
+}
+
+ensure_refexone_logo() {
+  if [[ "${LOGO_URL}" == *"refex-logo.png"* ]] || [[ "${LOGO_URL}" != *"refexone"* ]]; then
+    LOGO_URL="${REFEXONE_LOGO_URL}"
   fi
 }
 
 ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
 ITSM_PROCESS_ID="${ITSM_PROCESS_ID:-${PROCESS_ID:-Live_IT_Service_Request_A00}}"
+APPLICATION_ID="${APPLICATION_ID:-${ITSM_APP_ID}}"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -70,7 +81,8 @@ WITH latest AS (
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
     AND environment = 'production'
-  ORDER BY created_at DESC
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 sla AS (
@@ -107,7 +119,8 @@ WITH latest AS (
   WHERE application_id = '${ITSM_APP_ID}'
     AND process_id = '${ITSM_PROCESS_ID}'
     AND environment = 'production'
-  ORDER BY created_at DESC
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 )
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
@@ -173,132 +186,56 @@ SLA_BREACHED_TOTAL="$(( SLA_BREACHED_OPEN + SLA_BREACHED_CLOSED ))"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
-cat > "${OUTPUT_FILE}" <<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light only">
-<title>Kissflow User Engagement Report</title>
-</head>
-<body style="margin:0; padding:0; background-color:#eef0f2 !important;" bgcolor="#eef0f2">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef0f2 !important;" bgcolor="#eef0f2">
-<tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff !important; border-radius:10px; overflow:hidden; box-shadow:0 4px 18px rgba(0,0,0,0.10);" bgcolor="#ffffff">
+log "Rendering HTML from published template (PostgreSQL or seed fallback)"
 
-<tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="180" valign="middle">
-<img src="${LOGO_URL}" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
-</td>
-<td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
-<div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">Kissflow User Engagement Report</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; IT Service Management</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated ${GENERATED_AT_DISPLAY} &middot; Refex tickets only</div>
-</td>
-</tr></table>
-</td></tr>
+TEMPLATE_SRC="$(mktemp)"
+VARS_JSON="$(mktemp)"
+trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
-<tr><td style="padding:0; line-height:0;">
-<img src="${DIVIDER_GIF_URL}" alt="" width="680" height="6" style="display:block; width:100%; height:6px; border:0;">
-</td></tr>
+report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
 
-<tr><td style="padding:24px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">User Sign-in Overview</div>
-</td></tr>
-<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${SIGNED_IN}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Signed In (Overall)</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${SIGNIN_PCT}%</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Sign-in Rate (Overall)</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${SIGNED_IN_TODAY}</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Signed In Today</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#1a8c5c !important;">${SIGNIN_RATE_TODAY}%</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Sign-in Rate Today</div></td>
-</tr></table></td></tr>
+jq -n \
+  --arg ReportTitle "Kissflow User Engagement Report" \
+  --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg SignedInUsers "${SIGNED_IN}" \
+  --arg SignInRate "${SIGNIN_PCT}" \
+  --arg SignedInToday "${SIGNED_IN_TODAY}" \
+  --arg SignInRateToday "${SIGNIN_RATE_TODAY}" \
+  --arg NeverSignedIn "${NEVER_LOGGED_IN}" \
+  --arg TotalUsers "${TOTAL_USERS}" \
+  --arg TotalTickets "${TOTAL_TICKETS}" \
+  --arg OpenTickets "${TOTAL_OPEN}" \
+  --arg ClosedTickets "${TOTAL_CLOSED}" \
+  --arg SlaBreachedTotal "${SLA_BREACHED_TOTAL}" \
+  --arg SlaBreachedOpen "${SLA_BREACHED_OPEN}" \
+  --arg SlaBreachedClosed "${SLA_BREACHED_CLOSED}" \
+  --arg OpenedToday "${OPENED_TODAY}" \
+  --arg ClosedToday "${CLOSED_TODAY}" \
+  --arg UserTableHtml "${ROWS_HTML}" \
+  --arg ReportBody "Scoped to Entity = Refex only. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix." \
+  '{
+    ReportTitle: $ReportTitle,
+    ReportDate: $ReportDate,
+    SignedInUsers: $SignedInUsers,
+    SignInRate: $SignInRate,
+    SignedInToday: $SignedInToday,
+    SignInRateToday: $SignInRateToday,
+    NeverSignedIn: $NeverSignedIn,
+    TotalUsers: $TotalUsers,
+    TotalTickets: $TotalTickets,
+    OpenTickets: $OpenTickets,
+    ClosedTickets: $ClosedTickets,
+    SlaBreachedTotal: $SlaBreachedTotal,
+    SlaBreachedOpen: $SlaBreachedOpen,
+    SlaBreachedClosed: $SlaBreachedClosed,
+    OpenedToday: $OpenedToday,
+    ClosedToday: $ClosedToday,
+    UserTableHtml: $UserTableHtml,
+    ReportBody: $ReportBody
+  }' > "${VARS_JSON}"
 
-<tr><td style="padding:16px 32px 0 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(90deg,#fff7f0 0%,#fef2e6 100%) !important; border:1px solid #f3d9c4; border-radius:8px;" bgcolor="#fff7f0">
-<tr><td style="padding:14px 18px; font-size:12.5px; color:#7a4a1a !important;">
-<b>${NEVER_LOGGED_IN} of ${TOTAL_USERS} users</b> have never signed in to Kissflow.
-</td></tr></table></td></tr>
-
-<tr><td style="padding:0 32px;">
-<div style="height:1px; background-color:#ececea; margin-top:24px;"></div>
-</td></tr>
-
-<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Overall ITSM Ticket Summary</div>
-</td></tr>
-<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${TOTAL_TICKETS}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">All Tickets</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(180,120,20,0.07);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${TOTAL_OPEN}</div>
-<div style="font-size:10.5px; color:#9a7a3a !important; margin-top:4px;">Open Tickets</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${TOTAL_CLOSED}</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Closed Tickets</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#fff5f5 0%,#ffe9e9 100%) !important; border:1px solid #f3cccc; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(200,16,46,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#c8102e !important;">${SLA_BREACHED_TOTAL}</div>
-<div style="font-size:10.5px; color:#a35560 !important; margin-top:4px;">SLA Breached</div>
-<div style="font-size:9.5px; color:#a35560 !important; margin-top:2px;">Open ${SLA_BREACHED_OPEN} &middot; Closed ${SLA_BREACHED_CLOSED}</div></td>
-</tr></table></td></tr>
-
-<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Today's Ticket Activity</div>
-</td></tr>
-<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="48%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fdecd0 100%) !important; border:1px solid #f0d9a8; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(180,120,20,0.10);">
-<div style="font-size:30px; font-weight:bold; color:#9a7a3a !important;">${OPENED_TODAY}</div>
-<div style="font-size:12px; color:#9a7a3a !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Opened Today</div></td>
-<td width="4%"></td>
-<td width="48%" align="center" style="background:linear-gradient(180deg,#f2f6fb 0%,#dfeafa 100%) !important; border:1px solid #bcd6f0; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(30,80,160,0.10);">
-<div style="font-size:30px; font-weight:bold; color:#3468a8 !important;">${CLOSED_TODAY}</div>
-<div style="font-size:12px; color:#3468a8 !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Closed Today</div></td>
-</tr></table></td></tr>
-
-<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with open or recent activity</td></tr>
-<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12.5px; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
-<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">User</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Open Tickets</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Closed Tickets</td>
-</tr>
-${ROWS_HTML}
-</table></td></tr>
-
-<tr><td style="padding:4px 32px 24px 32px; font-size:11px; color:#a0a0a0 !important; line-height:1.6;" bgcolor="#ffffff">
-Scoped to Entity = Refex only. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix.
-</td></tr>
-
-<tr><td style="background-color:#faf9f7 !important; padding:18px 32px; border-top:1px solid #ececea; font-size:11px; color:#a0a0a0 !important;" bgcolor="#faf9f7">
-Refex User Engagement Report &middot; Automated &middot; Do not reply to this email
-</td></tr>
-
-</table>
-</td></tr>
-</table>
-</body>
-</html>
-HTML
+report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
+  || stop "Failed to render ITSM report template."
 
 cp "${OUTPUT_FILE}" "${LATEST_FILE}"
 

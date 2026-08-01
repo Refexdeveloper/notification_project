@@ -5,6 +5,9 @@ REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-14"
 
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/report-template-lib.sh"
+
 PGDATABASE="${PGDATABASE:-engagement_reporting}"
 PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
@@ -16,6 +19,7 @@ AUDIT_FILE="${AUDIT_DIR}/runbook-14-${TIMESTAMP}.json"
 
 LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
+REFEXONE_LOGO_URL="${LOGO_URL}"
 
 PG_CONN_STRING="host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}"
 
@@ -39,15 +43,22 @@ apply_template_branding_from_pg() {
   [[ -n "${content_ref}" ]] || return 0
 
   local extracted_logo
-  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refex' | head -1 || true)"
+  extracted_logo="$(printf '%s' "${content_ref}" | sed -n 's/.*src="\([^"]*\)".*/\1/p' | grep -i 'refexone-logo' | head -1 || true)"
   if [[ -n "${extracted_logo}" ]]; then
     LOGO_URL="${extracted_logo}"
-    log "Using logo from published template ${template_id}"
+    log "Using refexOne logo from published template ${template_id}"
+  fi
+}
+
+ensure_refexone_logo() {
+  if [[ "${LOGO_URL}" == *"refex-logo.png"* ]] || [[ "${LOGO_URL}" != *"refexone"* ]]; then
+    LOGO_URL="${REFEXONE_LOGO_URL}"
   fi
 }
 
 PM_APP_ID="${PM_APP_ID:-Project_Management_Tracker_A00}"
 PM_PROCESS_ID="${PM_PROCESS_ID:-${PROCESS_ID:-Project_Sub_Task_A01}}"
+APPLICATION_ID="${APPLICATION_ID:-${PM_APP_ID}}"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -69,7 +80,9 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${PM_APP_ID}'
     AND process_id = '${PM_PROCESS_ID}'
-  ORDER BY created_at DESC
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 tasks AS (
@@ -115,7 +128,9 @@ WITH latest AS (
   FROM engagement_reporting.snapshot_run
   WHERE application_id = '${PM_APP_ID}'
     AND process_id = '${PM_PROCESS_ID}'
-  ORDER BY created_at DESC
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
 latest_users AS (
@@ -138,19 +153,34 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     JOIN engagement_reporting.item i
       ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
     WHERE ia.process_id = '${PM_PROCESS_ID}'
+      AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     GROUP BY ia.principal_id
   ) pending_t ON pending_t.user_id = u.user_id
   LEFT JOIN (
-    SELECT ia.principal_id AS user_id, count(*) AS completed_count
-    FROM engagement_reporting.item_assignment ia
-    JOIN engagement_reporting.item i
-      ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
-    WHERE ia.process_id = '${PM_PROCESS_ID}'
-      AND i.process_status = 'Completed'
-      AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
-    GROUP BY ia.principal_id
+    SELECT assignee_id AS user_id, count(*) AS completed_count
+    FROM (
+      SELECT DISTINCT ON (i.instance_id)
+        i.instance_id,
+        COALESCE(
+          NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
+          NULLIF(ia.principal_id, ''),
+          NULLIF(i.source_payload->'_modified_by'->>'_id', '')
+        ) AS assignee_id
+      FROM engagement_reporting.item i
+      LEFT JOIN engagement_reporting.item_assignment ia
+        ON ia.instance_id = i.instance_id
+       AND ia.snapshot_at = i.snapshot_at
+       AND ia.principal_type = 'USER'
+       AND ia.snapshot_run_id = i.snapshot_run_id
+      WHERE i.process_id = '${PM_PROCESS_ID}'
+        AND i.process_status = 'Completed'
+        AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      ORDER BY i.instance_id, ia.principal_id NULLS LAST
+    ) completed_items
+    WHERE assignee_id IS NOT NULL
+    GROUP BY assignee_id
   ) completed_t ON completed_t.user_id = u.user_id
   WHERE (COALESCE(pending_t.pending_count,0) > 0 OR COALESCE(completed_t.completed_count,0) > 0)
   ORDER BY pending_count DESC, completed_count DESC
@@ -182,99 +212,40 @@ PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
-cat > "${OUTPUT_FILE}" <<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="color-scheme" content="light only">
-<meta name="supported-color-schemes" content="light only">
-<title>Project Management Task Report</title>
-</head>
-<body style="margin:0; padding:0; background-color:#eef0f2 !important;" bgcolor="#eef0f2">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef0f2 !important;" bgcolor="#eef0f2">
-<tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff !important; border-radius:10px; overflow:hidden; box-shadow:0 4px 18px rgba(0,0,0,0.10);" bgcolor="#ffffff">
+log "Rendering PM HTML from published template (PostgreSQL or seed fallback)"
 
-<tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="180" valign="middle">
-<img src="${LOGO_URL}" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
-</td>
-<td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
-<div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">Project Management Task Report</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Project Task &middot; Project Management Tracker</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated ${GENERATED_AT_DISPLAY}</div>
-</td>
-</tr></table>
-</td></tr>
+TEMPLATE_SRC="$(mktemp)"
+VARS_JSON="$(mktemp)"
+trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
-<tr><td style="padding:0; line-height:0;">
-<img src="${DIVIDER_GIF_URL}" alt="" width="680" height="6" style="display:block; width:100%; height:6px; border:0;">
-</td></tr>
+report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
 
-<tr><td style="padding:24px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Task Summary</div>
-</td></tr>
-<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${PM_TOTAL}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Tasks</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#f2f0fb 0%,#e6e0f5 100%) !important; border:1px solid #d8ceec; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(90,60,160,0.07);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${PM_ASSIGNED}</div>
-<div style="font-size:10.5px; color:#6a53a3 !important; margin-top:4px;">Assigned Tasks</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(180,120,20,0.07);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${PM_PENDING}</div>
-<div style="font-size:10.5px; color:#9a7a3a !important; margin-top:4px;">Pending Tasks</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${PM_COMPLETED}</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Completed Tasks</div></td>
-</tr></table></td></tr>
+jq -n \
+  --arg ReportTitle "Project Management Task Report" \
+  --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg TotalTasks "${PM_TOTAL}" \
+  --arg AssignedTasks "${PM_ASSIGNED}" \
+  --arg PendingTasks "${PM_PENDING}" \
+  --arg CompletedTasks "${PM_COMPLETED}" \
+  --arg OpenedToday "${PM_OPENED_TODAY}" \
+  --arg ClosedToday "${PM_CLOSED_TODAY}" \
+  --arg UserTableHtml "${PM_ROWS_HTML}" \
+  --arg ReportBody "Project Tracker covers all entities group-wide." \
+  '{
+    ReportTitle: $ReportTitle,
+    ReportDate: $ReportDate,
+    TotalTasks: $TotalTasks,
+    AssignedTasks: $AssignedTasks,
+    PendingTasks: $PendingTasks,
+    CompletedTasks: $CompletedTasks,
+    OpenedToday: $OpenedToday,
+    ClosedToday: $ClosedToday,
+    UserTableHtml: $UserTableHtml,
+    ReportBody: $ReportBody
+  }' > "${VARS_JSON}"
 
-<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Today's Task Activity</div>
-</td></tr>
-<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="48%" align="center" style="background:linear-gradient(180deg,#f2f0fb 0%,#e2d9f5 100%) !important; border:1px solid #cdb8e8; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(90,60,160,0.10);">
-<div style="font-size:30px; font-weight:bold; color:#6a3fa8 !important;">${PM_OPENED_TODAY}</div>
-<div style="font-size:12px; color:#6a3fa8 !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Opened Today</div></td>
-<td width="4%"></td>
-<td width="48%" align="center" style="background:linear-gradient(180deg,#f2f6fb 0%,#dfeafa 100%) !important; border:1px solid #bcd6f0; border-radius:10px; padding:26px 10px; box-shadow:0 3px 10px rgba(30,80,160,0.10);">
-<div style="font-size:30px; font-weight:bold; color:#3468a8 !important;">${PM_CLOSED_TODAY}</div>
-<div style="font-size:12px; color:#3468a8 !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Closed Today</div></td>
-</tr></table></td></tr>
-
-<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending or recent activity</td></tr>
-<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12.5px; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
-<tr style="background:linear-gradient(90deg,#4b2e83 0%,#7b52c9 100%) !important;" bgcolor="#4b2e83">
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">User</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Completed</td>
-</tr>
-${PM_ROWS_HTML}
-</table></td></tr>
-
-<tr><td style="padding:4px 32px 24px 32px; font-size:11px; color:#a0a0a0 !important; line-height:1.6;" bgcolor="#ffffff">
-Project Tracker covers all entities group-wide.
-</td></tr>
-
-<tr><td style="background-color:#faf9f7 !important; padding:18px 32px; border-top:1px solid #ececea; font-size:11px; color:#a0a0a0 !important;" bgcolor="#faf9f7">
-Refex Project Management Report &middot; Automated &middot; Do not reply to this email
-</td></tr>
-
-</table>
-</td></tr>
-</table>
-</body>
-</html>
-HTML
+report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
+  || stop "Failed to render PM report template."
 
 cp "${OUTPUT_FILE}" "${LATEST_FILE}"
 

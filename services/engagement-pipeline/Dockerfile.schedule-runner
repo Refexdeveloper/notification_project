@@ -4,7 +4,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash curl jq ca-certificates postgresql-client python3 \
+    bash curl jq ca-certificates postgresql-client python3 nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -sSL -o /usr/local/bin/cloud-sql-proxy \
@@ -15,9 +15,14 @@ WORKDIR /app
 
 COPY ops/runbooks/ ./ops/runbooks/
 COPY services/engagement-pipeline/ops/runbooks/ ./services/engagement-pipeline/ops/runbooks/
+COPY services/engagement-pipeline/scripts/ ./services/engagement-pipeline/scripts/
 COPY services/engagement-pipeline/entrypoint.py ./entrypoint.py
+COPY archive/prototype-mysql-api/services/leadReportService.js ./archive/prototype-mysql-api/services/leadReportService.js
 COPY templates/ ./templates/
 COPY db/ ./db/
+
+RUN mkdir -p ./archive/prototype-mysql-api/services ./apps/admin-ui \
+    && npm install --prefix ./archive/prototype-mysql-api --omit=dev dotenv@16.4.5
 
 RUN chmod +x ./ops/runbooks/*.sh ./services/engagement-pipeline/ops/runbooks/*.sh
 

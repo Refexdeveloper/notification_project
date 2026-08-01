@@ -49,6 +49,7 @@ async function invokeScheduleRunner(scheduleId, options = {}) {
   const sent =
     res.ok &&
     (/Email sent successfully/i.test(body) ||
+      /test send completed/i.test(body) ||
       /ingest-render-send completed/i.test(body) ||
       /render-and-send completed/i.test(body));
 

@@ -95,15 +95,42 @@ async function assertTemplateForApplication(pool, { environment, applicationId, 
 }
 
 async function templateInUse(client, templateId) {
+  const usage = await getTemplateScheduleUsage(client, templateId);
+  return usage.count > 0;
+}
+
+async function getTemplateScheduleUsage(client, templateId) {
   const { rows } = await client.query(
-    `SELECT count(*)::int AS count
+    `SELECT
+       rs.report_schedule_id::text AS id,
+       rd.name AS name,
+       rs.is_active AS is_active
      FROM engagement_reporting.report_schedule rs
      JOIN engagement_reporting.report_definition_version rdv
        ON rdv.report_definition_version_id = rs.report_definition_version_id
-     WHERE rdv.config->>'template_id' = $1`,
+     JOIN engagement_reporting.report_definition rd
+       ON rd.report_definition_id = rdv.report_definition_id
+     WHERE rdv.config->>'template_id' = $1
+     ORDER BY rd.name NULLS LAST, rs.created_at DESC`,
     [templateId],
   );
-  return rows[0].count > 0;
+  return {
+    count: rows.length,
+    schedules: rows.map((row) => ({
+      id: row.id,
+      name: row.name || 'Unnamed schedule',
+      is_active: Boolean(row.is_active),
+    })),
+  };
+}
+
+function formatTemplateInUseMessage(schedules) {
+  if (!schedules?.length) {
+    return 'This template is linked to a schedule and cannot be deleted.';
+  }
+  const names = schedules.map((s) => s.name).join(', ');
+  const suffix = schedules.length === 1 ? 'schedule' : 'schedules';
+  return `This template is already in use by ${schedules.length} ${suffix}: ${names}. Pause or delete those schedulers first, or assign a different template.`;
 }
 
 async function getTemplateRow(pool, { environment, applicationId, templateId }) {
@@ -186,6 +213,27 @@ async function appendTemplateVersion(client, templateId, contentRef, checksum) {
   return nextVersion;
 }
 
+async function listTemplateVersions(pool, templateId) {
+  const { rows } = await pool.query(
+    `SELECT version_number, checksum, created_at, content_ref
+     FROM engagement_reporting.report_template_version
+     WHERE report_template_id = $1::uuid
+     ORDER BY version_number DESC`,
+    [templateId],
+  );
+  return rows;
+}
+
+async function getTemplateVersion(pool, templateId, versionNumber) {
+  const { rows } = await pool.query(
+    `SELECT version_number, checksum, created_at, content_ref
+     FROM engagement_reporting.report_template_version
+     WHERE report_template_id = $1::uuid AND version_number = $2`,
+    [templateId, versionNumber],
+  );
+  return rows[0] || null;
+}
+
 async function updateTemplateBinding(client, { templateId, applicationId, patch }) {
   const configPatch = {};
   if (patch.subject !== undefined) configPatch.subject = patch.subject;
@@ -231,8 +279,12 @@ module.exports = {
   getTemplateRow,
   createTemplate,
   appendTemplateVersion,
+  listTemplateVersions,
+  getTemplateVersion,
   updateTemplateBinding,
   templateInUse,
+  getTemplateScheduleUsage,
+  formatTemplateInUseMessage,
   assertTemplateForApplication,
   resolveAccountId,
 };

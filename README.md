@@ -28,6 +28,8 @@ See `docs/architecture/consolidation-stack.md` for full stack decision.
 | `cloudbuild/` | Validation, migration, service build pipelines |
 | `ops/runbooks/` | Idempotent operational runbooks |
 | `docs/architecture/` | Architecture and convergence docs |
+| `docs/onboarding-new-application.md` | Connect application → templates → schedules → ingest |
+| `docs/release-notes/` | Shipped changes and production verification |
 | `tests/` | Repository-level automated checks |
 
 ## Quick start (local)
@@ -87,8 +89,17 @@ Do **not** activate schedulers or delete the legacy full-pipeline service withou
 - Customer discovery data and generated HTML are **gitignored**
 - Never commit `.env`, `.env.local`, or `notification_engine.json`
 
+## Documentation
+
+| Doc | Purpose |
+|-----|---------|
+| [Onboarding a new application](docs/onboarding-new-application.md) | Connect Kissflow app, APIs called, PostgreSQL records, ingest |
+| [Production hardening (Jul 2026)](docs/release-notes/2026-07-31-production-hardening.md) | CORS fix, dashboard perf, template sync, PM ingest |
+| [Deployment and cutover](docs/architecture/deployment-and-cutover.md) | Shadow deploy → scheduler cutover |
+
 ## Status
 
-- **Done:** UI wired to backend-api; prototype tabs hidden; Lead Tracker end-to-end on PostgreSQL
+- **Done:** Admin UI same-origin `/api/v1` proxy; backend-api + PostgreSQL production path
+- **Done:** Template sync, PM ingest fixes, dashboard perf, Lead Tracker on PostgreSQL
 - **Done:** MySQL prototype archived; single local dev proxy path
-- **Next:** Shadow deploy runbook 28 → cutover validation → retire legacy Cloud Run pipeline
+- **Next:** Merge feature branch to `main`; optional combined report template sync

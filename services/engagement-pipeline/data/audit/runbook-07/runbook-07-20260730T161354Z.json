@@ -1,0 +1,9 @@
+{
+  "action": "SEND_EMAIL_REPORT",
+  "generated_at": "2026-07-30T16:14:01Z",
+  "recipient": "raghul.je@refex.co.in",
+  "subject": "Lead Tracker — Sales Team Refex Mobility sales report",
+  "status": "SENT",
+  "report_file": "/Users/mohamedasaikilahi/Desktop/Notification Engine Data/templates/generated/lead-tracker-refex-mobility-latest.html",
+  "mutation_performed": false
+}

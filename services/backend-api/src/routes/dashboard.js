@@ -16,36 +16,11 @@ WHERE is_current = true AND environment = $1
 ORDER BY application_name
 `;
 
-const RECENT_SENDS_QUERY = `
-SELECT
-  rr.report_run_id,
-  rr.application_id,
-  rr.status AS run_status,
-  rr.scheduled_at,
-  rr.completed_at,
-  a.application_name
-FROM engagement_reporting.report_run rr
-LEFT JOIN engagement_reporting.application a
-  ON a.environment = rr.environment
- AND a.application_id = rr.application_id
- AND a.is_current = true
-WHERE rr.environment = $1
-ORDER BY COALESCE(rr.completed_at, rr.scheduled_at) DESC NULLS LAST
-LIMIT 20
-`;
-
 function normalizeEnvironment(value) {
   const lower = String(value || 'production').toLowerCase();
   if (lower === 'production' || lower === 'prod') return 'production';
   if (lower === 'development' || lower === 'dev') return 'development';
   return lower;
-}
-
-function mapSendStatus(runStatus) {
-  const upper = String(runStatus || '').toUpperCase();
-  if (upper === 'COMPLETED') return 'delivered';
-  if (upper === 'FAILED') return 'failed';
-  return 'pending';
 }
 
 function isItsmLikeApplication(applicationId, applicationName) {
@@ -69,101 +44,93 @@ router.get('/', async (req, res) => {
   try {
     const pool = getPool();
     const { rows: apps } = await pool.query(APPLICATIONS_QUERY, [environment]);
-
-    const applications = [];
     const refreshWarnings = [];
 
-    for (const app of apps) {
-      if (liveRefresh) {
-        try {
-          const live = await fetchLiveAppMetrics(environment, app.application_id);
-          applications.push({
-            environment: app.environment,
-            application_id: app.application_id,
-            application_name: app.application_name,
-            snapshot_at: live.snapshot_at,
-            fetched_at: live.fetched_at,
-            data_source: 'live',
-            metrics: live.metrics,
-            metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
-              ? {
-                  sign_in_today: 'Signed in today',
-                  sign_in_rate_overall: 'Sign-in rate (overall)',
-                  sign_in_rate_today: 'Sign-in rate today',
-                  open_tickets: 'Open tickets',
-                  closed_tickets: 'Closed tickets',
-                }
-              : {
-                  sign_in_today: 'Active today',
-                  sign_in_rate_overall: 'Login rate (overall)',
-                  sign_in_rate_today: 'Login rate today',
-                  open_tickets: 'Open items',
-                  closed_tickets: 'Completed items',
-                },
-          });
-          continue;
-        } catch (liveErr) {
-          refreshWarnings.push(
-            `${app.application_name}: live refresh failed (${liveErr.message || liveErr.code || 'error'}) — showing cached snapshot`,
-          );
+    const appResults = await Promise.all(
+      apps.map(async (app) => {
+        if (liveRefresh) {
+          try {
+            const live = await fetchLiveAppMetrics(environment, app.application_id);
+            return {
+              environment: app.environment,
+              application_id: app.application_id,
+              application_name: app.application_name,
+              snapshot_at: live.snapshot_at,
+              fetched_at: live.fetched_at,
+              data_source: 'live',
+              metrics: live.metrics,
+              metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
+                ? {
+                    sign_in_today: 'Signed in today',
+                    sign_in_rate_overall: 'Sign-in rate (overall)',
+                    sign_in_rate_today: 'Sign-in rate today',
+                    open_tickets: 'Open tickets',
+                    closed_tickets: 'Closed tickets',
+                  }
+                : {
+                    sign_in_today: 'Active today',
+                    sign_in_rate_overall: 'Login rate (overall)',
+                    sign_in_rate_today: 'Login rate today',
+                    open_tickets: 'Open items',
+                    closed_tickets: 'Completed items',
+                  },
+            };
+          } catch (liveErr) {
+            refreshWarnings.push(
+              `${app.application_name}: live refresh failed (${liveErr.message || liveErr.code || 'error'}) — showing cached snapshot`,
+            );
+          }
         }
-      }
 
-      const { rows } = await pool.query(APP_ENGAGEMENT_QUERY, [environment, app.application_id]);
-      const totals = buildEngagementTotals(rows);
-      const snapshotAt = rows[0]?.snapshot_at || null;
-      const ageHours = snapshotAgeHours(snapshotAt);
-      const snapshotStale =
-        !snapshotAt ||
-        !isSameCalendarDay(new Date(snapshotAt), new Date(), DEFAULT_REPORT_TIMEZONE) ||
-        (ageHours != null && ageHours > 24);
-      applications.push({
-        environment: app.environment,
-        application_id: app.application_id,
-        application_name: app.application_name,
-        snapshot_at: snapshotAt,
-        fetched_at: null,
-        data_source: 'snapshot',
-        snapshot_stale: snapshotStale,
-        metrics: {
-          total_users: totals.total_users,
-          sign_in_today: totals.active_today,
-          sign_in_rate_overall: totals.sign_in_rate_overall,
-          sign_in_rate_today: totals.sign_in_rate_today,
-          open_tickets: totals.open_tickets,
-          closed_tickets: totals.closed_tickets,
-        },
-        metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
-          ? {
-              sign_in_today: 'Signed in today',
-              sign_in_rate_overall: 'Sign-in rate (overall)',
-              sign_in_rate_today: 'Sign-in rate today',
-              open_tickets: 'Open tickets',
-              closed_tickets: 'Closed tickets',
-            }
-          : {
-              sign_in_today: 'Active today',
-              sign_in_rate_overall: 'Login rate (overall)',
-              sign_in_rate_today: 'Login rate today',
-              open_tickets: 'Open items',
-              closed_tickets: 'Completed items',
-            },
-      });
-    }
+        const { rows } = await pool.query(APP_ENGAGEMENT_QUERY, [environment, app.application_id]);
+        const totals = buildEngagementTotals(rows);
+        const snapshotAt = rows[0]?.snapshot_at || null;
+        const ageHours = snapshotAgeHours(snapshotAt);
+        const snapshotStale =
+          !snapshotAt ||
+          !isSameCalendarDay(new Date(snapshotAt), new Date(), DEFAULT_REPORT_TIMEZONE) ||
+          (ageHours != null && ageHours > 24);
+        return {
+          environment: app.environment,
+          application_id: app.application_id,
+          application_name: app.application_name,
+          snapshot_at: snapshotAt,
+          fetched_at: null,
+          data_source: 'snapshot',
+          snapshot_stale: snapshotStale,
+          metrics: {
+            total_users: totals.total_users,
+            sign_in_today: totals.active_today,
+            sign_in_rate_overall: totals.sign_in_rate_overall,
+            sign_in_rate_today: totals.sign_in_rate_today,
+            open_tickets: totals.open_tickets,
+            closed_tickets: totals.closed_tickets,
+          },
+          metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
+            ? {
+                sign_in_today: 'Signed in today',
+                sign_in_rate_overall: 'Sign-in rate (overall)',
+                sign_in_rate_today: 'Sign-in rate today',
+                open_tickets: 'Open tickets',
+                closed_tickets: 'Closed tickets',
+              }
+            : {
+                sign_in_today: 'Active today',
+                sign_in_rate_overall: 'Login rate (overall)',
+                sign_in_rate_today: 'Login rate today',
+                open_tickets: 'Open items',
+                closed_tickets: 'Completed items',
+              },
+        };
+      }),
+    );
 
-    const sendsResult = await pool.query(RECENT_SENDS_QUERY, [environment]);
-    const recentSends = sendsResult.rows.map((row) => ({
-      id: row.report_run_id,
-      application_id: row.application_id,
-      application_name: row.application_name || row.application_id,
-      status: mapSendStatus(row.run_status),
-      sent_at: row.completed_at || row.scheduled_at,
-    }));
+    const applications = appResults.filter(Boolean);
 
     return ok(res, req.correlationId, {
       environment,
       applications,
-      recent_sends: recentSends,
+      recent_sends: [],
       generated_at: new Date().toISOString(),
       refresh_mode: liveRefresh ? 'live' : 'snapshot',
       timezone: DEFAULT_REPORT_TIMEZONE,

@@ -23,17 +23,37 @@ function toDbEnvironment(env: RefexEnvironment | string): string {
   return 'development';
 }
 
-/** Backend APIs use registered Kissflow application_id (not legacy process id). */
+/** Backend APIs use registered Kissflow application_id (not legacy process id or route id). */
 export function resolveBackendApplicationId(app: KissflowApplication): string {
   const appId = (app.appId || '').trim();
-  if (
+  const routeId = (app.id || '').trim();
+
+  const isLeadTracker =
     appId === 'Lead_tracker_1_A00' ||
-    app.id.includes('lead-tracker') ||
-    app.name.toLowerCase().includes('lead tracker')
-  ) {
+    appId.includes('Lead_tracker') ||
+    appId.includes('Lead_Trcaker') ||
+    routeId.includes('lead-tracker') ||
+    app.name.toLowerCase().includes('lead tracker');
+
+  if (isLeadTracker) {
     return 'Lead_Trcaker_A00';
   }
-  return appId;
+
+  if (appId && !/^production-/i.test(appId) && !/^development-/i.test(appId)) {
+    return appId;
+  }
+
+  const fromAppId = appId ? parseBackendApplicationRouteId(appId) : null;
+  if (fromAppId?.applicationId) {
+    return fromAppId.applicationId;
+  }
+
+  const fromRoute = routeId ? parseBackendApplicationRouteId(routeId) : null;
+  if (fromRoute?.applicationId) {
+    return fromRoute.applicationId;
+  }
+
+  return appId || routeId;
 }
 
 function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {

@@ -47,8 +47,10 @@ export const LEAD_TRACKER_REPORT_HTML = `<!DOCTYPE html>
 <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border:1px solid #e5e5e0; border-radius:6px; overflow:hidden;">
 <tr><td style="background-color:#ffffff; padding:24px 32px; border-bottom:3px solid #c8102e;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{CompanyName}}</td>
-<td align="right" style="font-size:12px; color:#888888;">Lead Tracker &middot; {{GroupName}}</td>
+<td width="180" valign="middle">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
+</td>
+<td align="right" valign="middle" style="font-size:12px; color:#888888;">Lead Tracker &middot; {{GroupName}}</td>
 </tr></table></td></tr>
 <tr><td style="padding:28px 32px 8px 32px;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a;">{{ReportTitle}}</div>
@@ -56,21 +58,17 @@ export const LEAD_TRACKER_REPORT_HTML = `<!DOCTYPE html>
 </td></tr>
 <tr><td style="padding:20px 32px 8px 32px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="23%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
+<td width="31%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{TotalLeads}}</div>
 <div style="font-size:11px; color:#888888; margin-top:2px;">Total Leads</div></td>
-<td width="2%"></td>
-<td width="23%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
+<td width="3.5%"></td>
+<td width="31%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
 <div style="font-size:20px; font-weight:bold; color:#c8102e;">{{OpenLeads}}</div>
 <div style="font-size:11px; color:#888888; margin-top:2px;">Open Leads</div></td>
-<td width="2%"></td>
-<td width="23%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
+<td width="3.5%"></td>
+<td width="31%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{ClosedLeads}}</div>
 <div style="font-size:11px; color:#888888; margin-top:2px;">Closed Leads</div></td>
-<td width="2%"></td>
-<td width="23%" align="center" style="background-color:#faf9f7; border:1px solid #ececea; border-radius:4px; padding:14px 4px;">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a;">{{SignedInToday}}</div>
-<div style="font-size:11px; color:#888888; margin-top:2px;">Signed In Today</div></td>
 </tr></table></td></tr>
 <tr><td style="padding:20px 32px 8px 32px;">
 <div style="font-size:14px; font-weight:bold; color:#1a1a1a; margin-bottom:4px;">Sales team overview</div>
