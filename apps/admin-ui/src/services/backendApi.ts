@@ -20,7 +20,9 @@ function correlationId(): string {
 function resolveV1Url(path: string): string {
   const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  if (base) return `${base}${normalized}`;
+  if (base) {
+    return `${base}${normalized}`;
+  }
   return `/api/v1${normalized}`;
 }
 
@@ -29,7 +31,7 @@ export async function apiV1Fetch<T>(
   path: string,
   init: RequestInit = {},
   options?: { timeoutMs?: number },
-): Promise<{ ok: boolean; status: number; data: T | null; error?: string; correlationId?: string }> {
+): Promise<{ ok: boolean; status: number; data: T | null; error?: string; errorCode?: string; correlationId?: string }> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'X-Correlation-Id': correlationId(),
@@ -54,6 +56,7 @@ export async function apiV1Fetch<T>(
         status: res.status,
         data: null,
         error: json.error?.message || `HTTP ${res.status}`,
+        errorCode: json.error?.code,
         correlationId: cid,
       };
     }

@@ -88,7 +88,10 @@ assignment_counts AS (
       ia.principal_id AS user_id,
       COUNT(*)::int AS assigned,
       COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
-      COUNT(*) FILTER (WHERE i.process_status = 'Completed')::int AS completed_count,
+      COUNT(*) FILTER (
+        WHERE i.process_status = 'Completed'
+          AND $2 <> 'Project_Management_Tracker_A00'
+      )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
     INNER JOIN latest_runs lr ON ia.snapshot_run_id = lr.snapshot_run_id
@@ -109,7 +112,10 @@ assignment_counts AS (
       pu.user_id,
       COUNT(*)::int AS assigned,
       COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
-      COUNT(*) FILTER (WHERE i.process_status = 'Completed')::int AS completed_count,
+      COUNT(*) FILTER (
+        WHERE i.process_status = 'Completed'
+          AND $2 <> 'Project_Management_Tracker_A00'
+      )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
     INNER JOIN latest_runs lr ON ia.snapshot_run_id = lr.snapshot_run_id
@@ -131,6 +137,26 @@ assignment_counts AS (
         OR ia.process_id IN (SELECT process_id FROM app_processes)
       )
     GROUP BY pu.user_id
+    UNION ALL
+    SELECT
+      COALESCE(
+        NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
+        NULLIF(i.source_payload->'_modified_by'->>'_id', '')
+      ) AS user_id,
+      0::int AS assigned,
+      0::int AS open_count,
+      COUNT(*)::int AS completed_count,
+      0::int AS rejected_count
+    FROM engagement_reporting.item i
+    INNER JOIN latest_runs lr ON i.snapshot_run_id = lr.snapshot_run_id
+    WHERE i.environment = $1
+      AND i.process_status = 'Completed'
+      AND $2 = 'Project_Management_Tracker_A00'
+      AND COALESCE(
+        NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
+        NULLIF(i.source_payload->'_modified_by'->>'_id', '')
+      ) IS NOT NULL
+    GROUP BY 1
   ) merged
   GROUP BY user_id
 )

@@ -6,6 +6,7 @@ interface VersionHistoryProps {
   versions: TemplateVersion[];
   currentVersion: number;
   onRestoreVersion: (version: TemplateVersion) => void;
+  loading?: boolean;
 }
 
 export default function VersionHistory({
@@ -14,6 +15,7 @@ export default function VersionHistory({
   versions,
   currentVersion,
   onRestoreVersion,
+  loading = false,
 }: VersionHistoryProps) {
   const sorted = [...versions].sort((a, b) => b.version - a.version);
 
@@ -46,6 +48,12 @@ export default function VersionHistory({
         </div>
 
         <div className="space-y-0">
+          {loading && (
+            <p className="text-xs text-foreground-500 pb-4">Loading version history…</p>
+          )}
+          {!loading && sorted.length === 0 && (
+            <p className="text-xs text-foreground-500 pb-4">No saved versions yet.</p>
+          )}
           {sorted.map((version, idx) => {
             const isLatest = version.version === currentVersion;
 

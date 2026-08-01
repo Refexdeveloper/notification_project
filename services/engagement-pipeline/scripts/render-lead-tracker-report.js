@@ -34,6 +34,8 @@ loadAdminUiEnv();
 const groupName = process.env.GROUP_NAME || 'Sales Team Modepro';
 const websiteFilter = process.env.WEBSITE_FILTER || 'Modepro';
 const groupSlug = process.env.GROUP_SLUG || 'modepro';
+// Published template from PostgreSQL (fallback: seed file on disk)
+process.env.APPLICATION_ID = process.env.APPLICATION_ID || 'Lead_Trcaker_A00';
 
 const templatesDir = path.join(repoRoot, 'templates/generated');
 const auditDir = path.join(repoRoot, 'data/audit/runbook-17');

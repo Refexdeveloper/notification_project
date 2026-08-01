@@ -7,7 +7,10 @@ interface TestEmailDialogProps {
   onClose: () => void;
   templateName: string;
   subject: string;
-  onSend: (recipient: string, overrides: Record<string, string>) => void;
+  onSend: (
+    recipient: string,
+    overrides: Record<string, string>,
+  ) => Promise<{ ok: boolean; error?: string; message?: string }>;
 }
 
 export default function TestEmailDialog({
@@ -19,10 +22,11 @@ export default function TestEmailDialog({
 }: TestEmailDialogProps) {
   const [recipient, setRecipient] = useState('');
   const [overrides, setOverrides] = useState<Record<string, string>>({});
-  const [step, setStep] = useState<'form' | 'sending' | 'sent'>('form');
+  const [step, setStep] = useState<'form' | 'sending' | 'sent' | 'error'>('form');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!recipient.trim() || !recipient.includes('@')) {
       setError('Please enter a valid email address');
       return;
@@ -30,10 +34,19 @@ export default function TestEmailDialog({
     setError('');
     setStep('sending');
 
-    setTimeout(() => {
-      onSend(recipient, overrides);
+    try {
+      const result = await onSend(recipient, overrides);
+      if (!result.ok) {
+        setError(result.error || 'Test send failed');
+        setStep('error');
+        return;
+      }
+      setSuccessMessage(result.message || 'Check the inbox for the test report.');
       setStep('sent');
-    }, 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Test send failed');
+      setStep('error');
+    }
   };
 
   const handleClose = () => {
@@ -41,6 +54,7 @@ export default function TestEmailDialog({
     setRecipient('');
     setOverrides({});
     setError('');
+    setSuccessMessage('');
     onClose();
   };
 
@@ -54,7 +68,7 @@ export default function TestEmailDialog({
             <div className="p-5 border-b border-background-200/70">
               <h3 className="text-sm font-semibold text-foreground-900">Send Test Email</h3>
               <p className="text-xs text-foreground-500 mt-0.5">
-                Send a preview of "{templateName}" to a test recipient with optional variable overrides.
+                Sends via the first schedule linked to this template (cached report or live render).
               </p>
             </div>
 
@@ -82,6 +96,15 @@ export default function TestEmailDialog({
 
               <div>
                 <label className="block text-xs font-medium text-foreground-700 mb-1.5">
+                  Template
+                </label>
+                <div className="text-sm text-foreground-600 bg-background-50 border border-background-200/70 rounded-lg px-3 py-2">
+                  {templateName}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-foreground-700 mb-1.5">
                   Subject Preview
                 </label>
                 <div className="text-sm text-foreground-600 bg-background-50 border border-background-200/70 rounded-lg px-3 py-2">
@@ -92,7 +115,7 @@ export default function TestEmailDialog({
               <div>
                 <label className="block text-xs font-medium text-foreground-700 mb-2">
                   Variable Overrides
-                  <span className="text-foreground-400 font-normal ml-1">(optional)</span>
+                  <span className="text-foreground-400 font-normal ml-1">(optional — preview only)</span>
                 </label>
                 <div className="space-y-2">
                   {relevantVars.map((v) => (
@@ -125,7 +148,7 @@ export default function TestEmailDialog({
               </button>
               <button
                 type="button"
-                onClick={handleSend}
+                onClick={() => void handleSend()}
                 className="h-8 px-4 rounded-lg text-xs font-medium bg-primary-500 text-white hover:bg-primary-600 transition-colors duration-150 cursor-pointer whitespace-nowrap active:scale-95"
               >
                 <i className="ri-send-plane-line mr-1.5"></i>
@@ -150,7 +173,7 @@ export default function TestEmailDialog({
             </div>
             <h4 className="text-sm font-semibold text-foreground-900 mb-1">Test Email Sent!</h4>
             <p className="text-xs text-foreground-500 mb-4">
-              The test email was sent to <strong>{recipient}</strong>. Please check the inbox.
+              The test email was sent to <strong>{recipient}</strong>. {successMessage}
             </p>
             <button
               type="button"
@@ -158,6 +181,23 @@ export default function TestEmailDialog({
               className="h-8 px-4 rounded-lg text-xs font-medium bg-primary-500 text-white hover:bg-primary-600 transition-colors duration-150 cursor-pointer whitespace-nowrap active:scale-95"
             >
               Done
+            </button>
+          </div>
+        )}
+
+        {step === 'error' && (
+          <div className="p-10 text-center">
+            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
+              <i className="ri-error-warning-line text-xl text-red-500"></i>
+            </div>
+            <h4 className="text-sm font-semibold text-foreground-900 mb-1">Test Send Failed</h4>
+            <p className="text-xs text-foreground-500 mb-4">{error}</p>
+            <button
+              type="button"
+              onClick={() => setStep('form')}
+              className="h-8 px-4 rounded-lg text-xs font-medium bg-primary-500 text-white hover:bg-primary-600 transition-colors duration-150 cursor-pointer whitespace-nowrap active:scale-95"
+            >
+              Try Again
             </button>
           </div>
         )}

@@ -166,4 +166,19 @@ fi
 
 [[ "${STATUS}" == "SENT" ]] || stop "Delivery failed. See audit record: ${AUDIT_FILE}"
 
+if [[ "${STATUS}" == "SENT" && -f "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" ]]; then
+  if [[ -z "${REPORT_CACHE_KEY:-}" ]]; then
+    case "${APPLICATION_ID:-}" in
+      Lead_Trcaker_A00) export REPORT_CACHE_KEY="lead-tracker:${GROUP_SLUG:-modepro}" ;;
+      IT_Service_Management_A00) export REPORT_CACHE_KEY="itsm:${ENVIRONMENT:-production}" ;;
+      Project_Management_Tracker_A00) export REPORT_CACHE_KEY="pm:${ENVIRONMENT:-production}" ;;
+    esac
+  fi
+  if [[ -n "${REPORT_CACHE_KEY:-}" ]]; then
+    export REPORT_CACHE_KEY REPORT_CACHE_KEY_SCHEDULE
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${REPORT_FILE}" "${REPORT_CACHE_KEY}" \
+      || log "Warning: failed to cache report HTML in PostgreSQL (non-fatal)"
+  fi
+fi
+
 printf '\nAudit record:\n%s\n' "${AUDIT_FILE}"
