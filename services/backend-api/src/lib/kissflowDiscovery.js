@@ -25,22 +25,66 @@ const CLOSED_STATUSES = new Set([
   'withdrawn',
 ]);
 
+function normalizeKissflowSubdomain(raw) {
+  let value = String(raw || '').trim().toLowerCase();
+  if (!value) return '';
+
+  // Accept pasted URLs / hostnames:
+  //   https://refexgroup.kissflow.com
+  //   refexgroup.kissflow.com
+  //   refexgroup.kissflow.eu/
+  value = value.replace(/^https?:\/\//, '');
+  value = value.split('/')[0];
+  value = value.split('?')[0];
+
+  const hostMatch = value.match(/^([a-z0-9][a-z0-9.-]*)\.kissflow\.(com|eu)$/i);
+  if (hostMatch) {
+    return { subdomain: hostMatch[1], region: hostMatch[2].toLowerCase() };
+  }
+
+  // Strip accidental trailing ".kissflow.com" / ".kissflow.eu"
+  value = value.replace(/\.kissflow\.(com|eu)$/i, '');
+  value = value.replace(/\.+$/, '');
+  return { subdomain: value, region: null };
+}
+
 function buildBaseUrl(subdomain, region) {
-  const sub = String(subdomain || 'refexgroup').trim();
-  const reg = String(region || 'com').trim() || 'com';
+  const normalized =
+    typeof subdomain === 'object' && subdomain
+      ? subdomain
+      : normalizeKissflowSubdomain(subdomain);
+  const sub =
+    (normalized && normalized.subdomain) ||
+    (typeof subdomain === 'string' ? String(subdomain).trim() : '') ||
+    'refexgroup';
+  const reg =
+    String(region || (normalized && normalized.region) || 'com')
+      .trim()
+      .toLowerCase() || 'com';
   return `https://${sub}.kissflow.${reg}`;
 }
 
 async function kissflowFetch({ baseUrl, accountId, keyId, secret, path, query = {} }) {
   const params = new URLSearchParams(query);
   const url = `${baseUrl}${path}${params.toString() ? `?${params}` : ''}`;
-  const res = await fetch(url, {
-    headers: {
-      'X-Access-Key-Id': keyId,
-      'X-Access-Key-Secret': secret,
-      Accept: 'application/json',
-    },
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: {
+        'X-Access-Key-Id': keyId,
+        'X-Access-Key-Secret': secret,
+        Accept: 'application/json',
+      },
+    });
+  } catch (err) {
+    const detail = err && err.message ? err.message : 'network error';
+    const wrapped = new Error(
+      `Cannot reach Kissflow at ${baseUrl} (${detail}). Use subdomain only (e.g. refexgroup), not the full host.`,
+    );
+    wrapped.status = 0;
+    wrapped.code = 'KISSFLOW_NETWORK_ERROR';
+    throw wrapped;
+  }
   const text = await res.text();
   let data;
   try {
@@ -194,19 +238,32 @@ async function validateAndDiscoverRegistrationInput(input) {
     connectionOk = true;
   } catch (userErr) {
     warnings.push(`User API probe: ${userErr.message}`);
-    const probeProcess = normalizeIdList(input.processIds)[0] || input.applicationId;
-    if (probeProcess) {
-      await kissflowFetch({
-        baseUrl,
-        accountId,
-        keyId,
-        secret,
-        path: `/process/2/${encodeURIComponent(accountId)}/admin/${encodeURIComponent(probeProcess)}/item`,
-        query: { page_number: 1, page_size: 1, apply_preference: '1' },
-      });
-      connectionOk = true;
-    } else {
-      throw userErr;
+    const probeCandidates = normalizeIdList([
+      ...(input.processIds || []),
+      input.applicationId,
+    ]);
+    let probed = false;
+    let lastProbeErr = userErr;
+    for (const probeProcess of probeCandidates.slice(0, 5)) {
+      try {
+        await kissflowFetch({
+          baseUrl,
+          accountId,
+          keyId,
+          secret,
+          path: `/process/2/${encodeURIComponent(accountId)}/admin/${encodeURIComponent(probeProcess)}/item`,
+          query: { page_number: 1, page_size: 1, apply_preference: '1' },
+        });
+        connectionOk = true;
+        probed = true;
+        break;
+      } catch (probeErr) {
+        lastProbeErr = probeErr;
+        warnings.push(`Process probe ${probeProcess}: ${probeErr.message}`);
+      }
+    }
+    if (!probed) {
+      throw lastProbeErr;
     }
   }
 
@@ -237,6 +294,7 @@ async function validateAndDiscoverRegistrationInput(input) {
 
 module.exports = {
   buildBaseUrl,
+  normalizeKissflowSubdomain,
   kissflowFetch,
   filterItemsForFieldDiscovery,
   classifyItemStatus,
