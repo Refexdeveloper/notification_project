@@ -157,8 +157,7 @@ export default function Header({ breadcrumbs = [], title }: HeaderProps) {
                 type="button"
                 onClick={() => {
                   setUserMenuOpen(false);
-                  logout();
-                  navigate('/login', { replace: true });
+                  void logout().then(() => navigate('/login', { replace: true }));
                 }}
                 className="w-full px-4 py-2.5 text-sm text-[#DC3545] hover:bg-[#FDECEC] text-left cursor-pointer font-semibold inline-flex items-center gap-2"
               >

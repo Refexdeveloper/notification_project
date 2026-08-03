@@ -1,3 +1,5 @@
+import { getAccessToken } from './api';
+
 /** True when Admin UI should use backend-api (OpenAPI v1) instead of prototype MySQL API. */
 export function isBackendApiMode(): boolean {
   const flag = import.meta.env.VITE_USE_BACKEND_API as string | undefined;
@@ -40,6 +42,10 @@ export async function apiV1Fetch<T>(
   if (init.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
+  const token = getAccessToken();
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
   const signal =
     options?.timeoutMs && options.timeoutMs > 0
@@ -81,7 +87,8 @@ export type SessionContext = {
   email: string;
   display_name: string;
   role: string;
-  source: 'iap' | 'dev_stub';
+  source: 'iap' | 'dev_stub' | 'platform';
+  admin_user_id?: string;
 };
 
 export type BackendApplicationRow = {

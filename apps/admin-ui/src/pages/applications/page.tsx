@@ -16,6 +16,7 @@ import {
 import { springSnappy, staggerContainer } from '@/lib/motion';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationsFromBackend } from '@/services/applicationsApi';
+import { useAuth } from '@/hooks/AuthContext';
 
 const ENV_STORAGE_KEY = 'ne_apps_environment';
 
@@ -30,6 +31,7 @@ function readEnvPreference(): RefexEnvironment {
 }
 
 export default function ApplicationsPage() {
+  const { isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [tick, setTick] = useState(0);
@@ -114,9 +116,11 @@ export default function ApplicationsPage() {
 
         <div className="flex flex-1 flex-col sm:flex-row sm:items-center gap-3 lg:justify-end">
           <EnvToggle value={environment} onChange={selectEnvironment} />
-          <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
-            Connect
-          </Button>
+          {isAdmin && (
+            <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
+              Connect
+            </Button>
+          )}
         </div>
       </div>
 
@@ -186,8 +190,8 @@ export default function ApplicationsPage() {
               ? 'Connect a Kissflow application for this environment. Registration stores account metadata and credential refs in PostgreSQL (secrets are not stored in the database).'
               : 'Connect a Kissflow account for this environment to sync fields and schedule reports.'
           }
-          primaryLabel="Connect Application"
-          onPrimary={() => setFormOpen(true)}
+          primaryLabel={isAdmin ? 'Connect Application' : undefined}
+          onPrimary={isAdmin ? () => setFormOpen(true) : undefined}
         />
       )}
 

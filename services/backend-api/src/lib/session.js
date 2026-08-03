@@ -1,29 +1,53 @@
 'use strict';
 
-function resolveSession(req) {
-  const iapEmail = req.headers['x-goog-authenticated-user-email'];
-  if (typeof iapEmail === 'string' && iapEmail.includes(':')) {
-    const email = iapEmail.split(':').pop();
-    return {
-      subject: iapEmail,
-      email,
-      display_name: email.split('@')[0],
-      role: 'OPERATOR',
-      source: 'iap',
-    };
+const { extractBearerToken, verifyPlatformToken } = require('./platformToken');
+const { loadPlatformUserByEmail, normalizeRole } = require('./platformUsers');
+
+async function resolveSession(req) {
+  const bearer = extractBearerToken(req);
+  if (bearer) {
+    const payload = verifyPlatformToken(bearer);
+    if (payload?.email) {
+      const row = await loadPlatformUserByEmail(payload.email);
+      if (row && row.is_active) {
+        return {
+          subject: `platform:${row.email}`,
+          email: row.email,
+          display_name: row.display_name,
+          role: normalizeRole(row.role) || 'VIEWER',
+          source: 'platform',
+          admin_user_id: row.id,
+        };
+      }
+      return null;
+    }
   }
 
-  if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_AUTH_STUB === 'true') {
-    return {
-      subject: `dev:${process.env.DEV_AUTH_EMAIL || 'dev@refex.co.in'}`,
-      email: process.env.DEV_AUTH_EMAIL || 'dev@refex.co.in',
-      display_name: process.env.DEV_AUTH_NAME || 'Dev Operator',
-      role: process.env.DEV_AUTH_ROLE || 'ADMIN',
-      source: 'dev_stub',
-    };
+  // IAP / Cloud Run identity is not enough for Admin UI login.
+  // Keep as a soft hint only when explicitly enabled for service tooling.
+  if (process.env.ALLOW_IAP_SESSION === 'true') {
+    const iapEmail = req.headers['x-goog-authenticated-user-email'];
+    if (typeof iapEmail === 'string' && iapEmail.includes(':')) {
+      const email = iapEmail.split(':').pop();
+      const row = await loadPlatformUserByEmail(email);
+      if (row && row.is_active) {
+        return {
+          subject: iapEmail,
+          email: row.email,
+          display_name: row.display_name,
+          role: normalizeRole(row.role) || 'VIEWER',
+          source: 'iap',
+          admin_user_id: row.id,
+        };
+      }
+    }
   }
 
   return null;
 }
 
-module.exports = { resolveSession };
+function requireSession(session) {
+  return Boolean(session && session.email);
+}
+
+module.exports = { resolveSession, requireSession };

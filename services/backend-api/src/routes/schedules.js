@@ -244,7 +244,7 @@ router.post('/', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -345,7 +345,7 @@ router.post('/:scheduleId/test-send', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -445,7 +445,7 @@ router.delete('/:scheduleId', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
