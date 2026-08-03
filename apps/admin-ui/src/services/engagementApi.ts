@@ -40,7 +40,37 @@ export type EngagementListResponse = {
   scope?: string;
   warning?: string;
   hint?: string;
+  data_source?: string;
+  cache_ttl_ms?: number;
 };
+
+/** Client-side TTL — skip network if last successful load is fresher than 2 hours. */
+export const ENGAGEMENT_CLIENT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+
+function cacheKey(appId: string): string {
+  return `ne_engagement_backend_${appId}`;
+}
+
+function readClientCache(appId: string): EngagementLoadResult | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(appId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { ts: number; result: EngagementLoadResult };
+    if (!parsed?.ts || !parsed.result?.report) return null;
+    if (Date.now() - parsed.ts > ENGAGEMENT_CLIENT_CACHE_TTL_MS) return null;
+    return parsed.result;
+  } catch {
+    return null;
+  }
+}
+
+function writeClientCache(appId: string, result: EngagementLoadResult) {
+  try {
+    localStorage.setItem(cacheKey(appId), JSON.stringify({ ts: Date.now(), result }));
+  } catch {
+    /* ignore quota */
+  }
+}
 
 function toDbEnvironment(environment: KissflowApplication['environment']): string {
   return environment === 'Production' ? 'production' : 'development';
@@ -111,24 +141,41 @@ export type EngagementLoadResult = {
   report: EngagementReport | null;
   error?: string;
   warning?: string;
+  fromClientCache?: boolean;
 };
 
-/** Load user engagement from backend-api PostgreSQL snapshot. */
+/** Load user engagement from backend-api (snapshot / 2h cache / live). */
 export async function loadEngagementFromBackend(
   app: KissflowApplication,
-  options?: { live?: boolean },
+  options?: { live?: boolean; forceNetwork?: boolean },
 ): Promise<EngagementLoadResult> {
   if (!isBackendApiMode()) {
     return { report: null };
   }
 
-  const environment = toDbEnvironment(app.environment);
   const applicationId = resolveBackendApplicationId(app);
+  const live = Boolean(options?.live);
+  const forceNetwork = Boolean(options?.forceNetwork) || live;
+
+  if (!forceNetwork) {
+    const cached = readClientCache(applicationId);
+    if (cached?.report?.users.length) {
+      return {
+        ...cached,
+        fromClientCache: true,
+        warning:
+          cached.warning ||
+          'Showing cached engagement (< 2h). Click Refresh for a live Kissflow pull.',
+      };
+    }
+  }
+
+  const environment = toDbEnvironment(app.environment);
   const params = new URLSearchParams({
     environment,
     _: String(Date.now()),
   });
-  if (options?.live) {
+  if (live) {
     params.set('refresh', 'live');
   }
   const path = `/applications/${encodeURIComponent(applicationId)}/engagement?${params.toString()}`;
@@ -144,11 +191,15 @@ export async function loadEngagementFromBackend(
   }
 
   const users = res.data.items.map(mapRow);
+  const source = res.data.data_source;
   const liveNote =
-    res.data.data_source === 'live'
-      ? 'Live data from Kissflow (Asia/Kolkata for sign-in today).'
-      : undefined;
-  return {
+    source === 'live' || source === 'live_bootstrap' || source === 'live_stale_refresh'
+      ? 'Live data from Kissflow (related users only; Asia/Kolkata for sign-in today).'
+      : source === 'cache' || source === 'cache_stale'
+        ? res.data.hint || 'Cached engagement (< 2h).'
+        : undefined;
+
+  const result: EngagementLoadResult = {
     report: {
       applicationId: app.id,
       generatedAt: res.data.generated_at || new Date().toISOString(),
@@ -161,8 +212,14 @@ export async function loadEngagementFromBackend(
         totalAssigned: res.data.totals.total_assigned,
       },
       errors: res.data.warning ? [res.data.warning] : [],
-      source: res.data.data_source === 'live' ? 'live' : 'cache',
+      source: source === 'live' || source?.startsWith('live') ? 'live' : 'cache',
     },
     warning: liveNote || res.data.warning || res.data.hint,
   };
+
+  if (result.report?.users.length) {
+    writeClientCache(applicationId, result);
+  }
+
+  return result;
 }

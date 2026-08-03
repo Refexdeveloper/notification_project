@@ -190,7 +190,17 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'LeadTableHtml',
     'ReportBody',
   ],
-  generic: ['ReportTitle', 'ReportDate', 'ReportBody', 'RecipientName', 'CompanyName'],
+  generic: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalTickets',
+    'OpenTickets',
+    'ClosedTickets',
+    'UserTableHtml',
+    'ReportBody',
+    'RecipientName',
+    'CompanyName',
+  ],
 };
 
 /** Placeholders the engagement-pipeline render runbooks actually fill at send time. */

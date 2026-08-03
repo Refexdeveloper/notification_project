@@ -15,7 +15,7 @@ function mapEnvironment(env: string): RefexEnvironment {
   return 'Development';
 }
 
-function toDbEnvironment(env: RefexEnvironment | string): string {
+export function toDbEnvironment(env: RefexEnvironment | string): string {
   const lower = String(env).toLowerCase();
   if (lower === 'production' || lower === 'prod') return 'production';
   if (lower === 'uat') return 'uat';
@@ -335,6 +335,25 @@ export async function createApplicationOnBackend(
   };
 }
 
+/** Sync fields + related-user engagement cache once after Connect. */
+export async function bootstrapApplicationOnBackend(
+  applicationId: string,
+  environment: RefexEnvironment | string = 'Production',
+): Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const env = toDbEnvironment(environment);
+  const path = `/applications/${encodeURIComponent(applicationId)}/bootstrap?environment=${encodeURIComponent(env)}`;
+  const res = await apiV1Fetch<Record<string, unknown>>(path, { method: 'POST', body: '{}' });
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Bootstrap failed' };
+  }
+  return { ok: true, data: res.data || undefined };
+}
+
 /** Soft-delete an application in PostgreSQL (backend-api mode). */
 export async function deleteApplicationOnBackend(
   routeId: string,
@@ -426,5 +445,3 @@ export async function updateApplicationOnBackend(
 
   return { ok: true, application: mapRowToApplication(res.data.item) };
 }
-
-export { toDbEnvironment };

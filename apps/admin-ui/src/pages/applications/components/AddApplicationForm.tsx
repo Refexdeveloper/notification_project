@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createApplicationFromForm, type AddApplicationInput } from '@/mocks/applications';
-import { createApplicationOnBackend, toDbEnvironment, validateApplicationOnBackend } from '@/services/applicationsApi';
+import {
+  bootstrapApplicationOnBackend,
+  createApplicationOnBackend,
+  toDbEnvironment,
+  validateApplicationOnBackend,
+} from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 
@@ -165,11 +170,23 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
       setSaving(true);
       setError('');
       const result = await createApplicationOnBackend(buildPayload());
-      setSaving(false);
       if (!result.ok || !result.routeId) {
+        setSaving(false);
         setError(result.error || 'Registration failed');
         return;
       }
+
+      // First-time: sync fields + related users/items once (cached 2h for engagement).
+      const appId = result.item?.application_id || buildPayload().application_id;
+      const env = buildPayload().environment;
+      setError('');
+      const boot = await bootstrapApplicationOnBackend(appId, env);
+      setSaving(false);
+      if (!boot.ok) {
+        // Still navigate — registration succeeded; user can Sync fields / Refresh later.
+        console.warn('Application bootstrap warning:', boot.error);
+      }
+
       const routeId = result.routeId;
       handleClose();
       onCreated?.();
@@ -396,7 +413,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
               </button>
             )}
             <button type="button" disabled={saving || validating} onClick={() => handleSubmit()} className="btn-primary">
-              {saving ? 'Connecting…' : 'Connect application'}
+              {saving ? 'Connecting & syncing…' : 'Connect application'}
             </button>
           </div>
 

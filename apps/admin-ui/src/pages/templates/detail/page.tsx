@@ -6,6 +6,7 @@ import {
   Code2,
   Eye,
   History,
+  LayoutTemplate,
   PanelsTopBottom,
   Save,
   Send,
@@ -39,6 +40,7 @@ import {
 import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
 import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
 import PlaceholderPicker from '@/pages/templates/detail/components/PlaceholderPicker';
+import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
 import type { TemplateVersion } from '@/mocks/templates';
 import {
   formatSchedulersInUseMessage,
@@ -76,6 +78,7 @@ export default function TemplateDetailPage() {
   const [versionHistory, setVersionHistory] = useState<TemplateVersion[]>([]);
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [testEmailOpen, setTestEmailOpen] = useState(false);
+  const [starterOpen, setStarterOpen] = useState(false);
   const htmlEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const subjectInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -576,6 +579,16 @@ export default function TemplateDetailPage() {
             <Button
               variant="secondary"
               size="sm"
+              onClick={() => setStarterOpen(true)}
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              Load starter
+            </Button>
+          )}
+          {backendMode && (
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setShowVersionHistory((v) => !v)}
               leftIcon={<History className="w-3.5 h-3.5" />}
             >
@@ -665,6 +678,11 @@ export default function TemplateDetailPage() {
               placeholder="When to use this design…"
             />
           </div>
+          <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-[11px] text-emerald-900 leading-relaxed">
+            <strong className="font-semibold">Easy path:</strong> click <em>Load starter</em> for a
+            full report layout, then use the placeholder chips below. Do not invent field names —
+            only pipeline tokens are filled when the email sends.
+          </div>
           <PlaceholderPicker
             appKind={appKind}
             usedInTemplate={placeholderHints}
@@ -724,6 +742,30 @@ export default function TemplateDetailPage() {
         subject={previewSubject}
             onSend={async (recipient, _overrides) => handleTestEmailSend(recipient)}
       />
+
+      {backendMode && (backendApp || appRouteId) && (
+        <StarterPickerModal
+          open={starterOpen}
+          onClose={() => setStarterOpen(false)}
+          app={
+            backendApp ||
+            ({ id: appRouteId, environment: 'Production', name: name || 'Application' } as KissflowApplication)
+          }
+          mode="load"
+          onConfirmLoad={(nextHtml) => {
+            if (
+              html.trim() &&
+              !window.confirm('Replace the current HTML with this starter layout? Unsaved edits in the editor will be overwritten (Save draft still needed).')
+            ) {
+              return;
+            }
+            setHtml(nextHtml);
+            setMode('split');
+            setSaveMsg('Starter loaded — save draft when ready');
+            setStarterOpen(false);
+          }}
+        />
+      )}
     </Layout>
   );
 }
