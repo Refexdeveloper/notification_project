@@ -238,6 +238,19 @@ echo "\copy engagement_reporting.stg_roles FROM '${COPY_NORM_DIR}/roles-staging.
 echo "\copy engagement_reporting.stg_items FROM '${COPY_NORM_DIR}/items-staging.csv' WITH (FORMAT csv)" | run_sql
 echo "\copy engagement_reporting.stg_assignments FROM '${COPY_NORM_DIR}/assignments-staging.csv' WITH (FORMAT csv)" | run_sql
 
+# Incremental deltas alone create a sparse "latest" snapshot → later schedule renders
+# (11:00 / 13:00) show empty UserTableHtml and zero ticket KPIs. Carry forward prior
+# items/assignments the same way PM ingest does (12-ingest-pm-and-load.sh).
+PREV_SNAPSHOT_RUN_ID=""
+if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
+  PREV_SNAPSHOT_RUN_ID="$(ingest_get_best_base_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
+  if [[ -n "${PREV_SNAPSHOT_RUN_ID}" ]]; then
+    log "Incremental merge: carrying forward items from snapshot ${PREV_SNAPSHOT_RUN_ID}"
+  else
+    log "Incremental merge: no previous completed snapshot to carry forward"
+  fi
+fi
+
 echo "
 BEGIN;
 
@@ -274,6 +287,50 @@ INSERT INTO engagement_reporting.role_membership_resolution (snapshot_run_id, en
 SELECT '${RUN_ID}', '${ENVIRONMENT}', '${APPLICATION_ID}', role_id, 'PENDING', 0 FROM engagement_reporting.stg_roles
 ON CONFLICT (snapshot_run_id, environment, application_id, role_id) DO NOTHING;
 
+INSERT INTO engagement_reporting.stg_assignments (instance_id, snapshot_at, principal_id, principal_kind, assignment_source)
+SELECT
+  prev.instance_id,
+  '${GENERATED_AT}',
+  prev.principal_id,
+  prev.principal_type,
+  COALESCE(prev.assignment_source, '_current_assigned_to')
+FROM engagement_reporting.item_assignment prev
+WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
+  AND prev.process_id = '${PROCESS_ID}'
+  AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_items s WHERE s.instance_id = prev.instance_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_assignments s
+    WHERE s.instance_id = prev.instance_id
+      AND s.principal_id = prev.principal_id
+      AND s.principal_kind = prev.principal_type
+  );
+
+INSERT INTO engagement_reporting.stg_items (
+  instance_id, snapshot_at, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload
+)
+SELECT
+  prev.instance_id,
+  '${GENERATED_AT}',
+  prev.process_status,
+  COALESCE(prev.current_step, ''),
+  COALESCE(prev.stage::text, ''),
+  COALESCE(prev.request_number::text, ''),
+  COALESCE(prev.request_id, ''),
+  COALESCE(prev.criticality, ''),
+  COALESCE(prev.entity, ''),
+  COALESCE(prev.requester_email, ''),
+  prev.source_payload::text
+FROM engagement_reporting.item prev
+WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
+  AND prev.process_id = '${PROCESS_ID}'
+  AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
+  AND NOT EXISTS (
+    SELECT 1 FROM engagement_reporting.stg_items s WHERE s.instance_id = prev.instance_id
+  );
+
 INSERT INTO engagement_reporting.item (environment, process_id, instance_id, snapshot_at, snapshot_run_id, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload, row_hash)
 SELECT '${ENVIRONMENT}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', process_status, NULLIF(current_step,''), NULLIF(stage,''), NULLIF(request_number,'')::integer, NULLIF(request_id,''), NULLIF(criticality,''), NULLIF(entity,''), NULLIF(requester_email,''), source_payload::jsonb, md5(source_payload)
 FROM engagement_reporting.stg_items
@@ -286,7 +343,14 @@ SELECT '${ENVIRONMENT}', '${APPLICATION_ID}', '${PROCESS_ID}', instance_id, snap
 FROM engagement_reporting.stg_assignments
 ON CONFLICT (environment, process_id, instance_id, snapshot_at, principal_id, principal_type) DO NOTHING;
 
-UPDATE engagement_reporting.snapshot_run SET status = 'PARTIAL', load_completed_at = now(), updated_at = now() WHERE snapshot_run_id = '${RUN_ID}';
+UPDATE engagement_reporting.snapshot_run
+SET
+  status = 'PARTIAL',
+  item_record_count = (SELECT COUNT(*) FROM engagement_reporting.item WHERE snapshot_run_id = '${RUN_ID}'),
+  assignment_record_count = (SELECT COUNT(*) FROM engagement_reporting.item_assignment WHERE snapshot_run_id = '${RUN_ID}'),
+  load_completed_at = now(),
+  updated_at = now()
+WHERE snapshot_run_id = '${RUN_ID}';
 
 COMMIT;
 " | run_sql

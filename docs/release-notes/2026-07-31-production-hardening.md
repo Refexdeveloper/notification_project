@@ -161,3 +161,21 @@ Per project scope decisions:
 
 - [Onboarding a new application](../onboarding-new-application.md)
 - [Deployment and cutover](../architecture/deployment-and-cutover.md)
+
+---
+
+## Follow-up — Aug 2026 (ITSM empty table + placeholders)
+
+### ITSM 11:00 / 13:00 empty user table
+
+**Cause:** Incremental ITSM ingest wrote a sparse “latest” snapshot (delta-only tickets). Render filters `entity = Refex` and drops users with zero open/closed tickets → blank `{{UserTableHtml}}` and zero ticket KPIs. 09:00 looked fine when it still ran against a full snapshot (or legacy full pipeline).
+
+**Fix:**
+
+- Carry-forward prior items/assignments in `09-ingest-and-load.sh` (same pattern as PM)
+- Prefer richest completed snapshot in last 7 days as merge base (`ingest_get_best_base_snapshot_run_id`)
+- Empty-table fallback message in `06-render-html-report.sh`
+
+### Template placeholder picker
+
+Template editor now shows click-to-insert pipeline placeholders and warns when tokens are not filled at send time.

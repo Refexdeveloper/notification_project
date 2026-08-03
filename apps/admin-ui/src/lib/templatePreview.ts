@@ -159,6 +159,8 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'OpenTickets',
     'ClosedTickets',
     'SlaBreachedTotal',
+    'SlaBreachedOpen',
+    'SlaBreachedClosed',
     'OpenedToday',
     'ClosedToday',
     'UserTableHtml',
@@ -184,8 +186,22 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalLeads',
     'OpenLeads',
     'ClosedLeads',
+    'SalesPersons',
     'LeadTableHtml',
     'ReportBody',
   ],
   generic: ['ReportTitle', 'ReportDate', 'ReportBody', 'RecipientName', 'CompanyName'],
 };
+
+/** Placeholders the engagement-pipeline render runbooks actually fill at send time. */
+export function pipelinePlaceholdersForApp(kind: TemplateAppKind): string[] {
+  return PLACEHOLDER_HINTS_BY_APP[kind] || PLACEHOLDER_HINTS_BY_APP.generic;
+}
+
+export function unknownPlaceholders(
+  usedKeys: string[],
+  kind: TemplateAppKind,
+): string[] {
+  const known = new Set(pipelinePlaceholdersForApp(kind));
+  return usedKeys.filter((key) => !known.has(key));
+}

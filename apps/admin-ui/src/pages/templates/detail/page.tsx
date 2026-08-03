@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -22,7 +22,6 @@ import {
 } from '@/stores/reportTemplates';
 import {
   detectTemplateAppKind,
-  PLACEHOLDER_HINTS_BY_APP,
   type PreviewContext,
 } from '@/lib/templatePreview';
 import { isBackendApiMode } from '@/services/backendApi';
@@ -39,6 +38,7 @@ import {
 } from '@/services/reportsApi';
 import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
 import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
+import PlaceholderPicker from '@/pages/templates/detail/components/PlaceholderPicker';
 import type { TemplateVersion } from '@/mocks/templates';
 import {
   formatSchedulersInUseMessage,
@@ -76,6 +76,8 @@ export default function TemplateDetailPage() {
   const [versionHistory, setVersionHistory] = useState<TemplateVersion[]>([]);
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [testEmailOpen, setTestEmailOpen] = useState(false);
+  const htmlEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const subjectInputRef = useRef<HTMLInputElement | null>(null);
 
   const localExisting = !backendMode && id ? getTemplateById(id) : undefined;
 
@@ -201,14 +203,46 @@ export default function TemplateDetailPage() {
     [name, subject, html],
   );
 
-  const placeholderHints = useMemo(() => {
-    const fromTemplate = extractVariables(html, subject);
-    if (fromTemplate.length > 0) {
-      return fromTemplate;
+  const placeholderHints = useMemo(() => extractVariables(html, subject), [html, subject]);
+
+  const appKind = useMemo(() => detectTemplateAppKind(previewContext), [previewContext]);
+
+  const insertPlaceholder = useCallback((token: string, target: 'html' | 'subject') => {
+    if (target === 'subject') {
+      const el = subjectInputRef.current;
+      if (el) {
+        const start = el.selectionStart ?? subject.length;
+        const end = el.selectionEnd ?? start;
+        const next = `${subject.slice(0, start)}${token}${subject.slice(end)}`;
+        setSubject(next);
+        requestAnimationFrame(() => {
+          el.focus();
+          const pos = start + token.length;
+          el.setSelectionRange(pos, pos);
+        });
+        return;
+      }
+      setSubject((prev) => `${prev}${token}`);
+      return;
     }
-    const kind = detectTemplateAppKind(previewContext);
-    return PLACEHOLDER_HINTS_BY_APP[kind];
-  }, [html, subject, previewContext]);
+
+    const el = htmlEditorRef.current;
+    if (el) {
+      const start = el.selectionStart ?? html.length;
+      const end = el.selectionEnd ?? start;
+      const next = `${html.slice(0, start)}${token}${html.slice(end)}`;
+      setHtml(next);
+      if (mode === 'preview') setMode('split');
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + token.length;
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+    setHtml((prev) => `${prev}\n${token}`);
+    if (mode === 'preview') setMode('split');
+  }, [html, subject, mode]);
 
   const formatPipelineSync = (sync?: PipelineSyncResult) => {
     if (!sync) return '';
@@ -592,7 +626,13 @@ export default function TemplateDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
         <div className="surface p-4 space-y-3.5 h-fit">
           <Input label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input label="Email subject" value={subject} onChange={(e) => setSubject(e.target.value)} hint="Use {{ReportTitle}} etc." />
+          <Input
+            ref={subjectInputRef}
+            label="Email subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            hint="Use {{ReportTitle}} etc."
+          />
           <div className="rounded-[14px] bg-background-50 border border-background-200/80 p-3">
             <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-1">
               Subject preview
@@ -625,20 +665,18 @@ export default function TemplateDetailPage() {
               placeholder="When to use this design…"
             />
           </div>
-          <div className="rounded-[14px] bg-background-50 border border-background-200/80 p-3">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-2">
-              Placeholders
-            </p>
-            <p className="text-xs text-foreground-500 leading-relaxed font-mono">
-              {placeholderHints.map((key) => `{{${key}}}`).join(' ')}
-            </p>
-          </div>
+          <PlaceholderPicker
+            appKind={appKind}
+            usedInTemplate={placeholderHints}
+            onInsert={insertPlaceholder}
+          />
         </div>
 
         <div className="flex min-h-[560px] gap-0">
           <div className="surface overflow-hidden min-h-[560px] flex flex-col flex-1 min-w-0">
           {(mode === 'edit' || mode === 'split') && (
             <textarea
+              ref={htmlEditorRef}
               value={html}
               onChange={(e) => setHtml(e.target.value)}
               spellCheck={false}

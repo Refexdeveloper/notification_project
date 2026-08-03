@@ -134,6 +134,32 @@ LIMIT 1;
 " | tr -d '[:space:]'
 }
 
+# Prefer a recent high-volume completed snapshot as the incremental merge base.
+# Avoids carrying forward from a sparse delta snapshot (which zeros ITSM UserTableHtml).
+ingest_get_best_base_snapshot_run_id() {
+  local env="$1"
+  local app_id="$2"
+  local process_id="$3"
+  local chosen
+  chosen="$(ingest_psql -t -A -c "
+SELECT snapshot_run_id
+FROM engagement_reporting.snapshot_run
+WHERE environment = '$(ingest_sql_escape "${env}")'
+  AND application_id = '$(ingest_sql_escape "${app_id}")'
+  AND process_id = '$(ingest_sql_escape "${process_id}")'
+  AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  AND COALESCE(load_completed_at, extraction_completed_at, created_at) > now() - interval '7 days'
+ORDER BY COALESCE(item_record_count, 0) DESC,
+         COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
+LIMIT 1;
+" | tr -d '[:space:]')"
+  if [[ -n "${chosen}" ]]; then
+    printf '%s' "${chosen}"
+    return 0
+  fi
+  ingest_get_previous_completed_snapshot_run_id "${env}" "${app_id}" "${process_id}"
+}
+
 # Filter items.jsonl to rows modified since watermark (with overlap).
 ingest_filter_items_jsonl_since_watermark() {
   local input_file="$1"
