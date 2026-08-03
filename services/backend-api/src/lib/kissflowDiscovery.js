@@ -154,9 +154,11 @@ async function tryDiscoverProcesses({ baseUrl, accountId, keyId, secret, applica
   const discovered = [];
   const warnings = [];
 
+  // Prefer explicit process IDs. Application ID is often NOT a process
+  // (e.g. Expense_and_Travel_Management_A00 vs Travel_Management_A02).
   const candidates = normalizeIdList(processIds);
-  if (applicationId && !candidates.includes(applicationId)) {
-    candidates.unshift(applicationId);
+  if (candidates.length === 0 && applicationId) {
+    candidates.push(applicationId);
   }
 
   for (const processId of candidates.slice(0, 5)) {
@@ -171,8 +173,21 @@ async function tryDiscoverProcesses({ baseUrl, accountId, keyId, secret, applica
       });
       discovered.push(processId);
     } catch (err) {
-      warnings.push(`Process ${processId}: ${err.message}`);
+      const status = err && err.status;
+      if (status === 403) {
+        warnings.push(
+          `Process ${processId}: Admin Access Key required (403). Use a Kissflow Admin API key with access to this process.`,
+        );
+      } else if (status === 404) {
+        warnings.push(`Process ${processId}: not found (404). Check the Process ID.`);
+      } else {
+        warnings.push(`Process ${processId}: ${err.message}`);
+      }
     }
+  }
+
+  if (candidates.length === 0) {
+    warnings.push('No process IDs provided — add at least one process (e.g. Travel_Management_A02).');
   }
 
   return { process_ids: discovered, warnings };
@@ -181,9 +196,9 @@ async function tryDiscoverProcesses({ baseUrl, accountId, keyId, secret, applica
 async function tryDiscoverOptionalResources({ baseUrl, accountId, keyId, secret }) {
   const result = { dataform_ids: [], board_ids: [], dataset_ids: [], warnings: [] };
   const attempts = [
-    { key: 'dataform_ids', path: `/dataform/2/${encodeURIComponent(accountId)}/` },
-    { key: 'board_ids', path: `/board/2/${encodeURIComponent(accountId)}/` },
-    { key: 'dataset_ids', path: `/dataset/2/${encodeURIComponent(accountId)}/` },
+    { key: 'dataform_ids', label: 'Dataforms', path: `/dataform/2/${encodeURIComponent(accountId)}/` },
+    { key: 'board_ids', label: 'Boards', path: `/board/2/${encodeURIComponent(accountId)}/` },
+    { key: 'dataset_ids', label: 'Datasets', path: `/dataset/2/${encodeURIComponent(accountId)}/` },
   ];
 
   for (const attempt of attempts) {
@@ -200,7 +215,12 @@ async function tryDiscoverOptionalResources({ baseUrl, accountId, keyId, secret 
         rows.map((row) => row._id || row.id || row.Id || row.name || row.Name),
       );
     } catch (err) {
-      result.warnings.push(`${attempt.key}: ${err.message}`);
+      // Optional resources — 404/403 are common and non-blocking for process apps.
+      const status = err && err.status;
+      if (status === 404 || status === 403) {
+        continue;
+      }
+      result.warnings.push(`${attempt.label}: ${err.message}`);
     }
   }
 
@@ -237,11 +257,11 @@ async function validateAndDiscoverRegistrationInput(input) {
     });
     connectionOk = true;
   } catch (userErr) {
-    warnings.push(`User API probe: ${userErr.message}`);
-    const probeCandidates = normalizeIdList([
-      ...(input.processIds || []),
-      input.applicationId,
-    ]);
+    // User list probe often needs different scopes — fall back to process Admin API.
+    const probeCandidates = normalizeIdList(input.processIds || []);
+    if (probeCandidates.length === 0 && input.applicationId) {
+      probeCandidates.push(input.applicationId);
+    }
     let probed = false;
     let lastProbeErr = userErr;
     for (const probeProcess of probeCandidates.slice(0, 5)) {
@@ -259,7 +279,6 @@ async function validateAndDiscoverRegistrationInput(input) {
         break;
       } catch (probeErr) {
         lastProbeErr = probeErr;
-        warnings.push(`Process probe ${probeProcess}: ${probeErr.message}`);
       }
     }
     if (!probed) {
@@ -276,6 +295,17 @@ async function validateAndDiscoverRegistrationInput(input) {
     processIds: input.processIds,
   });
   warnings.push(...processDiscovery.warnings);
+
+  const requestedProcesses = normalizeIdList(input.processIds);
+  if (requestedProcesses.length > 0 && processDiscovery.process_ids.length === 0) {
+    const err = new Error(
+      `Could not access process Admin API for: ${requestedProcesses.join(', ')}. ` +
+        'Use a Kissflow Admin Access Key that can call Admin Get-all-items for this process.',
+    );
+    err.code = 'KISSFLOW_VALIDATION_FAILED';
+    err.status = 403;
+    throw err;
+  }
 
   const optional = await tryDiscoverOptionalResources({ baseUrl, accountId, keyId, secret });
   warnings.push(...optional.warnings);
