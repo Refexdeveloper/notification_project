@@ -21,7 +21,14 @@ LEFT JOIN LATERAL (
   SELECT version_number, content_ref, checksum, created_at
   FROM engagement_reporting.report_template_version rtv
   WHERE rtv.report_template_id = rt.report_template_id
-  ORDER BY version_number DESC
+  ORDER BY
+    CASE
+      WHEN ltrim(content_ref) LIKE '<!%' THEN 0
+      WHEN ltrim(content_ref) ILIKE '<html%' THEN 0
+      WHEN ltrim(content_ref) LIKE '<%' THEN 0
+      ELSE 1
+    END,
+    version_number DESC
   LIMIT 1
 ) rtv ON true
 LEFT JOIN LATERAL (

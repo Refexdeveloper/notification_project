@@ -275,7 +275,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           <h2 className="text-base font-semibold text-foreground-950">User Engagement</h2>
           <p className="text-xs text-foreground-500 mt-0.5">
             {isBackendApiMode()
-              ? 'Related users for this app (assignees / roles). Cached up to 2 hours — Refresh forces a live Kissflow pull.'
+              ? 'Related users for this app (assignees / roles). Cached up to 1 hour — Refresh forces a live Kissflow pull.'
               : 'Assigned workload and login activity across processes, boards, and dataforms'}
             {report?.generatedAt
               ? ` · Updated ${new Date(report.generatedAt).toLocaleString()}`

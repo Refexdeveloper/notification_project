@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { apiFetch, clearAuthSession, getAccessToken, setAuthSession } from '@/services/api';
+import { apiFetch, clearAuthSession, setAuthSession } from '@/services/api';
 import { apiV1Fetch, isBackendApiMode, type SessionContext } from '@/services/backendApi';
 
 interface AuthUser {
@@ -46,18 +46,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authMode = isBackendApiMode() ? 'backend' : 'legacy';
 
   const loginWithSession = useCallback(async () => {
-    if (!getAccessToken()) {
-      return { success: false, error: 'Not signed in' };
-    }
     const res = await apiV1Fetch<SessionContext>('/auth/session');
     if (!res.ok || !res.data) {
-      clearAuthSession();
-      setUser(null);
       return { success: false, error: res.error || 'Session unavailable' };
     }
     const authUser = applySessionUser(res.data);
     setAuthSession({
-      accessToken: getAccessToken() || 'backend-session',
+      accessToken: 'backend-session',
       user: authUser,
     });
     setUser(authUser);
@@ -71,17 +66,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     (async () => {
-      // Only restore session when a password-login token exists.
-      // Do not auto-login via IAP/dev stub — that skipped the login page.
-      if (!getAccessToken()) {
-        if (!cancelled) {
-          setUser(null);
-          setSessionLoading(false);
-        }
-        return;
-      }
+      // Auto-restore session (IAP / stub) — no password gate for Admin UI.
       const result = await loginWithSession();
-      if (!cancelled && !result.success) {
+      if (!cancelled && !result.success && !getStoredUser()) {
         setUser(null);
       }
       if (!cancelled) setSessionLoading(false);
@@ -91,17 +78,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [loginWithSession]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    if (isBackendApiMode()) {
-      const res = await apiV1Fetch<{
-        access_token: string;
-        user: { id: string; email: string; display_name: string; role: string };
-      }>('/auth/login', {
+  const login = useCallback(
+    async (email: string, password: string) => {
+      if (isBackendApiMode()) {
+        return loginWithSession();
+      }
+
+      const res = await apiFetch<{
+        accessToken: string;
+        refreshToken: string;
+        user: { id: number; name: string; email: string; role: string };
+      }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email, password }),
       });
 
-      if (!res.ok || !res.data?.access_token || !res.data.user) {
+      if (!res.ok || !res.data?.accessToken) {
         return {
           success: false,
           error: res.error || 'Invalid email or password. Please try again.',
@@ -110,48 +102,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const authUser: AuthUser = {
         id: res.data.user.id,
-        name: res.data.user.display_name,
+        name: res.data.user.name,
         email: res.data.user.email,
         role: res.data.user.role,
       };
       setAuthSession({
-        accessToken: res.data.access_token,
+        accessToken: res.data.accessToken,
+        refreshToken: res.data.refreshToken,
         user: authUser,
       });
       setUser(authUser);
       return { success: true };
-    }
-
-    const res = await apiFetch<{
-      accessToken: string;
-      refreshToken: string;
-      user: { id: number; name: string; email: string; role: string };
-    }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok || !res.data?.accessToken) {
-      return {
-        success: false,
-        error: res.error || 'Invalid email or password. Please try again.',
-      };
-    }
-
-    const authUser: AuthUser = {
-      id: res.data.user.id,
-      name: res.data.user.name,
-      email: res.data.user.email,
-      role: res.data.user.role,
-    };
-    setAuthSession({
-      accessToken: res.data.accessToken,
-      refreshToken: res.data.refreshToken,
-      user: authUser,
-    });
-    setUser(authUser);
-    return { success: true };
-  }, []);
+    },
+    [loginWithSession],
+  );
 
   const logout = useCallback(async () => {
     if (isBackendApiMode()) {

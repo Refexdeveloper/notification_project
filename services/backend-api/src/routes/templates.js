@@ -21,7 +21,7 @@ const {
 } = require('../lib/templateRepository');
 const { defaultReportHtml } = require('../lib/defaultReportHtml');
 const { syncPublishedTemplateToPipeline, normalizeReportTemplateHtml } = require('../lib/templatePipelineSync');
-const { invalidateReportHtmlCache } = require('../lib/templateCacheInvalidation');
+const { invalidateReportHtmlCache, syncTemplateSubjectToSchedules } = require('../lib/templateCacheInvalidation');
 const { listStarters, getStarterHtml } = require('../lib/reportStarters');
 
 const router = express.Router({ mergeParams: true });
@@ -363,7 +363,13 @@ router.post('/', async (req, res) => {
       try {
         const cacheClient = await getPool().connect();
         try {
-          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId, {
+            templateId,
+          });
+          pipelineSync.schedule_subject_sync = await syncTemplateSubjectToSchedules(cacheClient, templateId, {
+            subject: row.subject,
+            templateName: row.name,
+          });
         } finally {
           cacheClient.release();
         }
@@ -475,7 +481,13 @@ router.patch('/:templateId', async (req, res) => {
       try {
         const cacheClient = await getPool().connect();
         try {
-          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId, {
+            templateId,
+          });
+          pipelineSync.schedule_subject_sync = await syncTemplateSubjectToSchedules(cacheClient, templateId, {
+            subject: row.subject,
+            templateName: row.name,
+          });
         } finally {
           cacheClient.release();
         }

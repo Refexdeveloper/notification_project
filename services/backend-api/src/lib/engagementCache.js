@@ -2,7 +2,7 @@
 
 /** Engagement payload cached on application.source_payload after live/bootstrap fetch. */
 
-const ENGAGEMENT_CACHE_TTL_MS = Number(process.env.ENGAGEMENT_CACHE_TTL_MS || 2 * 60 * 60 * 1000);
+const ENGAGEMENT_CACHE_TTL_MS = Number(process.env.ENGAGEMENT_CACHE_TTL_MS || 1 * 60 * 60 * 1000);
 
 function readEngagementCache(sourcePayload) {
   const cache = sourcePayload && typeof sourcePayload === 'object' ? sourcePayload.engagement_cache : null;

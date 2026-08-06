@@ -21,6 +21,7 @@ const deliveryHistoryRoutes = require('./routes/deliveryHistory');
 const dashboardRoutes = require('./routes/dashboard');
 const fieldsRoutes = require('./routes/fields');
 const platformUsersRoutes = require('./routes/platformUsers');
+const opsRoutes = require('./routes/ops');
 
 function createApp() {
   const app = express();
@@ -34,6 +35,7 @@ function createApp() {
   api.use('/auth', authRoutes);
   api.use('/users', usersRoutes);
   api.use('/platform-users', platformUsersRoutes);
+  api.use('/ops', opsRoutes);
   api.use('/applications', applicationsRoutes);
   api.use('/applications/:applicationId/engagement', engagementRoutes);
   api.use('/applications/:applicationId/templates', templatesRoutes);

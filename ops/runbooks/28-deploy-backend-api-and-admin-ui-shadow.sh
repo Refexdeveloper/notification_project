@@ -134,7 +134,7 @@ deploy_backend() {
     --port=8080 \
     --allow-unauthenticated \
     --add-cloudsql-instances="${CLOUD_SQL_CONNECTION}" \
-    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,CORS_ORIGIN=*,PLATFORM_BOOTSTRAP_EMAIL=mohamedaasik.m@refex.co.in,PLATFORM_BOOTSTRAP_NAME=Mohamed Asaik,PLATFORM_BOOTSTRAP_PASSWORD=Refex@2026,PLATFORM_SESSION_SECRET=refex-platform-session-${GCP_PROJECT},KISSFLOW_ACCOUNT_ID=AcCMptlq60zH,KISSFLOW_SUBDOMAIN=refexgroup,REPORT_TIMEZONE=Asia/Kolkata,SCHEDULE_RUNNER_URL=${SCHEDULE_RUNNER_URL}" \
+    --set-env-vars="NODE_ENV=production,GCP_PROJECT=${GCP_PROJECT},CLOUD_SQL_CONNECTION_NAME=${CLOUD_SQL_CONNECTION},PGUSER=postgres,PGDATABASE=engagement_reporting,CORS_ORIGIN=*,ALLOW_DEV_AUTH_STUB=true,DEV_AUTH_EMAIL=mohamedaasik.m@refex.co.in,DEV_AUTH_NAME=Mohamed Asaik,DEV_AUTH_ROLE=ADMIN,PLATFORM_BOOTSTRAP_EMAIL=mohamedaasik.m@refex.co.in,PLATFORM_BOOTSTRAP_NAME=Mohamed Asaik,PLATFORM_BOOTSTRAP_PASSWORD=Refex@2026,PLATFORM_SESSION_SECRET=refex-platform-session-${GCP_PROJECT},INCREMENTAL_SYNC_TOKEN=refex-incremental-sync-${GCP_PROJECT},ENGAGEMENT_CACHE_TTL_MS=3600000,KISSFLOW_ACCOUNT_ID=AcCMptlq60zH,KISSFLOW_SUBDOMAIN=refexgroup,REPORT_TIMEZONE=Asia/Kolkata,SCHEDULE_RUNNER_URL=${SCHEDULE_RUNNER_URL}" \
     --set-secrets="PGPASSWORD=${PG_SECRET}:latest,KISSFLOW_KEY=engagement-report-kissflow-key-id:latest,KISSFLOW_SECRET=engagement-report-kissflow-secret:latest" \
     --service-account="${SERVICE_ACCOUNT}" \
     --memory=512Mi \

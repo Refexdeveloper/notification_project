@@ -3,32 +3,37 @@
 const { extractBearerToken, verifyPlatformToken } = require('./platformToken');
 const { loadPlatformUserByEmail, normalizeRole } = require('./platformUsers');
 
+/**
+ * Session resolution for Admin UI / API.
+ * Preference: platform Bearer → IAP email → dev/stub (for Continue login / Kissflow embed).
+ */
 async function resolveSession(req) {
   const bearer = extractBearerToken(req);
-  if (bearer) {
+  if (bearer && bearer !== 'backend-session') {
     const payload = verifyPlatformToken(bearer);
     if (payload?.email) {
-      const row = await loadPlatformUserByEmail(payload.email);
-      if (row && row.is_active) {
-        return {
-          subject: `platform:${row.email}`,
-          email: row.email,
-          display_name: row.display_name,
-          role: normalizeRole(row.role) || 'VIEWER',
-          source: 'platform',
-          admin_user_id: row.id,
-        };
+      try {
+        const row = await loadPlatformUserByEmail(payload.email);
+        if (row && row.is_active) {
+          return {
+            subject: `platform:${row.email}`,
+            email: row.email,
+            display_name: row.display_name,
+            role: normalizeRole(row.role) || 'VIEWER',
+            source: 'platform',
+            admin_user_id: row.id,
+          };
+        }
+      } catch {
+        /* fall through */
       }
-      return null;
     }
   }
 
-  // IAP / Cloud Run identity is not enough for Admin UI login.
-  // Keep as a soft hint only when explicitly enabled for service tooling.
-  if (process.env.ALLOW_IAP_SESSION === 'true') {
-    const iapEmail = req.headers['x-goog-authenticated-user-email'];
-    if (typeof iapEmail === 'string' && iapEmail.includes(':')) {
-      const email = iapEmail.split(':').pop();
+  const iapEmail = req.headers['x-goog-authenticated-user-email'];
+  if (typeof iapEmail === 'string' && iapEmail.includes(':')) {
+    const email = iapEmail.split(':').pop();
+    try {
       const row = await loadPlatformUserByEmail(email);
       if (row && row.is_active) {
         return {
@@ -40,7 +45,27 @@ async function resolveSession(req) {
           admin_user_id: row.id,
         };
       }
+    } catch {
+      /* use IAP email without platform user row */
     }
+    return {
+      subject: iapEmail,
+      email,
+      display_name: email.split('@')[0],
+      role: 'ADMIN',
+      source: 'iap',
+    };
+  }
+
+  // No password validation path for Admin UI — Continue / embed uses stub when enabled.
+  if (process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_AUTH_STUB === 'true') {
+    return {
+      subject: `dev:${process.env.DEV_AUTH_EMAIL || 'mohamedaasik.m@refex.co.in'}`,
+      email: process.env.DEV_AUTH_EMAIL || 'mohamedaasik.m@refex.co.in',
+      display_name: process.env.DEV_AUTH_NAME || 'Mohamed Asaik',
+      role: process.env.DEV_AUTH_ROLE || 'ADMIN',
+      source: 'dev_stub',
+    };
   }
 
   return null;

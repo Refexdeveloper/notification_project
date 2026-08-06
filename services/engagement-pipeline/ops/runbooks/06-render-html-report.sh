@@ -198,8 +198,14 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
 
+# Match Admin UI preview: template name → subject → default.
+REPORT_TITLE="${TEMPLATE_NAME:-}"
+if [[ -z "${REPORT_TITLE}" ]]; then
+  REPORT_TITLE="${SUBJECT:-Kissflow User Engagement Report}"
+fi
+
 jq -n \
-  --arg ReportTitle "Kissflow User Engagement Report" \
+  --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
   --arg SignedInUsers "${SIGNED_IN}" \
   --arg SignInRate "${SIGNIN_PCT}" \

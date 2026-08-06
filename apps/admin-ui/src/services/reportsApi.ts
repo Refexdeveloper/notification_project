@@ -338,11 +338,12 @@ export async function loadReportStarterHtmlFromBackend(
 }
 
 export type PipelineSyncResult = {
-  synced: boolean;
+  synced?: boolean;
   reason?: string;
   path?: string;
   bytes?: number;
-  cache_invalidation?: { deleted?: number; patterns?: string[]; error?: string };
+  cache_invalidation?: { deleted?: number; patterns?: string[]; error?: string; deleted_keys?: string[] };
+  schedule_subject_sync?: { updated?: number };
 };
 
 export type TemplateMutationResult = {

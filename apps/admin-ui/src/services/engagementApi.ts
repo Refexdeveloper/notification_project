@@ -44,8 +44,8 @@ export type EngagementListResponse = {
   cache_ttl_ms?: number;
 };
 
-/** Client-side TTL — skip network if last successful load is fresher than 2 hours. */
-export const ENGAGEMENT_CLIENT_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+/** Client-side TTL — skip network if last successful load is fresher than 1 hour. */
+export const ENGAGEMENT_CLIENT_CACHE_TTL_MS = 1 * 60 * 60 * 1000;
 
 function cacheKey(appId: string): string {
   return `ne_engagement_backend_${appId}`;
@@ -165,7 +165,7 @@ export async function loadEngagementFromBackend(
         fromClientCache: true,
         warning:
           cached.warning ||
-          'Showing cached engagement (< 2h). Click Refresh for a live Kissflow pull.',
+          'Showing cached engagement (< 1h). Click Refresh for a live Kissflow pull.',
       };
     }
   }
@@ -196,7 +196,7 @@ export async function loadEngagementFromBackend(
     source === 'live' || source === 'live_bootstrap' || source === 'live_stale_refresh'
       ? 'Live data from Kissflow (related users only; Asia/Kolkata for sign-in today).'
       : source === 'cache' || source === 'cache_stale'
-        ? res.data.hint || 'Cached engagement (< 2h).'
+        ? res.data.hint || 'Cached engagement (< 1h).'
         : undefined;
 
   const result: EngagementLoadResult = {

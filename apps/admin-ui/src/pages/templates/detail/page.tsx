@@ -249,54 +249,66 @@ export default function TemplateDetailPage() {
 
   const formatPipelineSync = (sync?: PipelineSyncResult) => {
     if (!sync) return '';
+    const parts: string[] = [];
     if (sync.synced) {
-      const cacheNote =
-        sync.cache_invalidation?.deleted != null && sync.cache_invalidation.deleted > 0
-          ? ` · cleared ${sync.cache_invalidation.deleted} cached report(s)`
-          : '';
-      return `Pipeline synced to ${sync.path || 'seed file'}${cacheNote}`;
+      parts.push(`pipeline synced${sync.path ? ` → ${sync.path}` : ''}`);
+    } else if (sync.reason) {
+      parts.push(`pipeline: ${sync.reason}`);
     }
-    return `Pipeline sync skipped: ${sync.reason || 'unknown reason'}`;
+    if (sync.cache_invalidation?.deleted != null) {
+      parts.push(`cleared ${sync.cache_invalidation.deleted} cached report(s)`);
+    }
+    if (sync.cache_invalidation?.error) {
+      parts.push(`cache clear error: ${sync.cache_invalidation.error}`);
+    }
+    if (sync.schedule_subject_sync?.updated != null && sync.schedule_subject_sync.updated > 0) {
+      parts.push(`updated ${sync.schedule_subject_sync.updated} schedule subject(s)`);
+    }
+    return parts.join(' · ');
   };
 
   const persist = useCallback(
-    async (publish = false) => {
-      if (!id) return;
+    async (publish = false): Promise<boolean> => {
+      if (!id) return false;
       setSaving(true);
       setSaveMsg('');
       setPipelineMsg('');
+      setLoadError(null);
 
       if (backendMode) {
         if (!backendApp && !appRouteId) {
           setLoadError('Missing application context. Open the template from an application tab.');
           setSaving(false);
-          return;
+          return false;
         }
 
         const appForSave =
           backendApp ||
           ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
 
+        // Always send full editor payload. On publish (or when already published), keep status published
+        // so HTML edits immediately become the live email template.
         const payload: {
           name: string;
           subject: string;
           description: string;
           html: string;
-          status?: 'draft' | 'published';
-        } = { name, subject, description, html };
-
-        if (publish) {
-          payload.status = 'published';
-        } else if (status !== 'published') {
-          payload.status = 'draft';
-        }
+          status: 'draft' | 'published';
+        } = {
+          name,
+          subject,
+          description,
+          html,
+          status: publish || status === 'published' ? 'published' : 'draft',
+        };
+        if (publish) payload.status = 'published';
 
         const result = await updateTemplateOnBackend(appForSave, id, payload);
 
         setSaving(false);
         if (!result.ok) {
           setLoadError(result.error || 'Save failed');
-          return;
+          return false;
         }
 
         if (result.template) {
@@ -309,19 +321,26 @@ export default function TemplateDetailPage() {
           setStatus('published');
         }
 
-        setSaveMsg(publish ? 'Published to backend' : 'Saved to backend');
-        if (publish && result.pipelineSync) {
+        const live = publish || payload.status === 'published';
+        setSaveMsg(
+          publish
+            ? 'Published — next test/scheduled send will use this HTML'
+            : live
+              ? 'Saved (live published template updated)'
+              : 'Saved draft',
+        );
+        if (live && result.pipelineSync) {
           setPipelineMsg(formatPipelineSync(result.pipelineSync));
         }
         void reloadVersionHistory();
         setTimeout(() => {
           setSaveMsg('');
           setPipelineMsg('');
-        }, publish ? 6000 : 2000);
-        return;
+        }, live ? 8000 : 2500);
+        return true;
       }
 
-      if (!localExisting) return;
+      if (!localExisting) return false;
       const patch: Parameters<typeof updateTemplate>[1] = {
         name,
         subject,
@@ -341,6 +360,7 @@ export default function TemplateDetailPage() {
       setSaveMsg(publish ? 'Published' : 'Saved');
       setSaving(false);
       setTimeout(() => setSaveMsg(''), 2000);
+      return true;
     },
     [
       id,
@@ -388,6 +408,15 @@ export default function TemplateDetailPage() {
     const appForTest =
       backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
 
+    // Always publish current editor HTML before test send so the email matches the preview.
+    const publishedOk = await persist(true);
+    if (!publishedOk) {
+      return {
+        ok: false,
+        error: 'Could not publish template before test send. Fix save errors and retry.',
+      };
+    }
+
     const usage = await loadTemplateUsageFromBackend(appForTest, id);
     if (!usage.ok) {
       return { ok: false, error: usage.error || 'Could not find a schedule for this template' };
@@ -411,7 +440,7 @@ export default function TemplateDetailPage() {
 
     return {
       ok: true,
-      message: result.message || 'Delivery confirmed by schedule runner.',
+      message: result.message || 'Delivery confirmed — email uses the HTML you just published.',
     };
   };
 
@@ -679,9 +708,9 @@ export default function TemplateDetailPage() {
             />
           </div>
           <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-[11px] text-emerald-900 leading-relaxed">
-            <strong className="font-semibold">Easy path:</strong> click <em>Load starter</em> for a
-            full report layout, then use the placeholder chips below. Do not invent field names —
-            only pipeline tokens are filled when the email sends.
+            <strong className="font-semibold">Publish flow:</strong> click <em>Publish</em> after
+            HTML edits (or use <em>Test email</em>, which publishes first). Only the published HTML
+            is emailed — draft-only changes are not sent.
           </div>
           <PlaceholderPicker
             appKind={appKind}

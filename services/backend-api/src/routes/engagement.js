@@ -367,7 +367,7 @@ router.get('/', async (req, res) => {
         scope: 'application',
         data_source: 'cache',
         cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
-        hint: 'Serving cached engagement (< 2h). Use Refresh for a live Kissflow pull.',
+        hint: 'Serving cached engagement (< 1h). Use Refresh for a live Kissflow pull.',
       });
     }
 

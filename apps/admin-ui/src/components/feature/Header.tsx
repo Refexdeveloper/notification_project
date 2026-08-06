@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, ChevronDown, LogOut, Search, Settings } from 'lucide-react';
+import { Bell, ChevronDown, LogOut, Search } from 'lucide-react';
 import { useAuth } from '@/hooks/AuthContext';
 
 interface BreadcrumbItem {
@@ -140,19 +140,6 @@ export default function Header({ breadcrumbs = [], title }: HeaderProps) {
               <p className="text-xs text-[#64748B] truncate">{user?.email}</p>
             </div>
             <div className="py-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  navigate('/platform-users');
-                }}
-                className="w-full px-4 py-2.5 text-sm text-[#334155] hover:bg-[#F8FAFC] text-left cursor-pointer font-medium inline-flex items-center gap-2"
-              >
-                <Settings className="w-4 h-4" />
-                Admin users
-              </button>
-            </div>
-            <div className="border-t border-[#EEF2F7] py-1.5">
               <button
                 type="button"
                 onClick={() => {
