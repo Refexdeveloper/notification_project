@@ -4,19 +4,29 @@ const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { resolveSession } = require('../lib/session');
+const { hashPassword } = require('../lib/password');
+const {
+  PLATFORM_ROLES,
+  ensurePlatformRoles,
+  ensurePasswordColumn,
+  ensureBootstrapAdmin,
+  normalizeRole,
+  isAdminRole,
+} = require('../lib/platformUsers');
 
 const router = express.Router();
 
-const ROLES = ['ADMIN', 'OPERATOR', 'VIEWER', 'AUDITOR'];
-
-async function ensureRoles(pool) {
-  for (const name of ROLES) {
-    await pool.query(
-      `INSERT INTO engagement_reporting.admin_role (name) VALUES ($1)
-       ON CONFLICT (name) DO NOTHING`,
-      [name],
-    );
+async function requireAdmin(req, res) {
+  const session = await resolveSession(req);
+  if (!session) {
+    fail(res, req.correlationId, 'UNAUTHENTICATED', 'Sign in required', 401);
+    return null;
   }
+  if (!isAdminRole(session.role)) {
+    fail(res, req.correlationId, 'FORBIDDEN', 'Only Admin users can manage portal accounts', 403);
+    return null;
+  }
+  return session;
 }
 
 router.get('/', async (req, res) => {
@@ -24,7 +34,15 @@ router.get('/', async (req, res) => {
     return ok(res, req.correlationId, { items: [], count: 0, warning: 'DATABASE_NOT_CONFIGURED' });
   }
   try {
-    await ensureRoles(getPool());
+    await ensureBootstrapAdmin();
+    await ensurePasswordColumn();
+    await ensurePlatformRoles();
+
+    const session = await resolveSession(req);
+    if (!session) {
+      return fail(res, req.correlationId, 'UNAUTHENTICATED', 'Sign in required', 401);
+    }
+
     const { rows } = await getPool().query(
       `SELECT
          u.admin_user_id::text AS id,
@@ -33,6 +51,7 @@ router.get('/', async (req, res) => {
          u.display_name,
          u.is_active,
          u.created_at,
+         (u.password_hash IS NOT NULL AND length(u.password_hash) > 0) AS has_password,
          COALESCE(
            json_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL),
            '[]'::json
@@ -43,7 +62,21 @@ router.get('/', async (req, res) => {
        GROUP BY u.admin_user_id
        ORDER BY u.display_name ASC`,
     );
-    return ok(res, req.correlationId, { items: rows, count: rows.length });
+
+    const items = rows.map((row) => ({
+      ...row,
+      roles: (Array.isArray(row.roles) ? row.roles : [])
+        .map((name) => normalizeRole(name))
+        .filter(Boolean)
+        .filter((v, i, arr) => arr.indexOf(v) === i),
+    }));
+
+    return ok(res, req.correlationId, {
+      items,
+      count: items.length,
+      current_user_role: session.role,
+      can_manage: isAdminRole(session.role),
+    });
   } catch (err) {
     if (err.code === '42P01') {
       return ok(res, req.correlationId, { items: [], count: 0, warning: 'SCHEMA_NOT_MIGRATED' });
@@ -53,10 +86,9 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const session = resolveSession(req);
-  if (!session) {
-    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
-  }
+  const session = await requireAdmin(req, res);
+  if (!session) return;
+
   if (!isDatabaseConfigured()) {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
@@ -64,23 +96,28 @@ router.post('/', async (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const email = String(body.email || '').trim().toLowerCase();
   const displayName = String(body.display_name || body.name || '').trim();
-  const role = String(body.role || 'OPERATOR').trim().toUpperCase();
+  const role = normalizeRole(body.role || 'VIEWER');
+  const password = String(body.password || '');
   const identitySubject = String(body.identity_subject || email).trim();
 
   if (!email || !displayName) {
     return fail(res, req.correlationId, 'VALIDATION_FAILED', 'email and display_name are required', 400);
   }
-  if (!ROLES.includes(role)) {
-    return fail(res, req.correlationId, 'VALIDATION_FAILED', `role must be one of: ${ROLES.join(', ')}`, 400);
+  if (!role) {
+    return fail(res, req.correlationId, 'VALIDATION_FAILED', `role must be one of: ${PLATFORM_ROLES.join(', ')}`, 400);
+  }
+  if (password.length < 8) {
+    return fail(res, req.correlationId, 'VALIDATION_FAILED', 'password must be at least 8 characters', 400);
   }
 
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
-    await ensureRoles(client);
+    await ensurePasswordColumn(client);
+    await ensurePlatformRoles(client);
 
     const existing = await client.query(
-      `SELECT admin_user_id FROM engagement_reporting.admin_user WHERE email = $1`,
+      `SELECT admin_user_id FROM engagement_reporting.admin_user WHERE lower(email::text) = lower($1)`,
       [email],
     );
     if (existing.rows.length) {
@@ -89,10 +126,10 @@ router.post('/', async (req, res) => {
     }
 
     const inserted = await client.query(
-      `INSERT INTO engagement_reporting.admin_user (identity_subject, email, display_name, is_active)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO engagement_reporting.admin_user (identity_subject, email, display_name, is_active, password_hash)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING admin_user_id::text AS id, identity_subject, email, display_name, is_active, created_at`,
-      [identitySubject, email, displayName, body.is_active !== false],
+      [identitySubject, email, displayName, body.is_active !== false, hashPassword(password)],
     );
 
     const roleRow = await client.query(
@@ -113,7 +150,12 @@ router.post('/', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    return ok(res, req.correlationId, { item: { ...inserted.rows[0], roles: [role] } }, 201);
+    return ok(
+      res,
+      req.correlationId,
+      { item: { ...inserted.rows[0], roles: [role], has_password: true } },
+      201,
+    );
   } catch (err) {
     await client.query('ROLLBACK');
     return fail(res, req.correlationId, 'PLATFORM_USER_CREATE_FAILED', err.message, 500, true);
@@ -123,10 +165,9 @@ router.post('/', async (req, res) => {
 });
 
 router.patch('/:userId', async (req, res) => {
-  const session = resolveSession(req);
-  if (!session) {
-    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
-  }
+  const session = await requireAdmin(req, res);
+  if (!session) return;
+
   if (!isDatabaseConfigured()) {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
@@ -136,6 +177,7 @@ router.patch('/:userId', async (req, res) => {
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
+    await ensurePasswordColumn(client);
     const { rows } = await client.query(
       `SELECT admin_user_id FROM engagement_reporting.admin_user WHERE admin_user_id = $1::uuid`,
       [userId],
@@ -145,27 +187,37 @@ router.patch('/:userId', async (req, res) => {
       return fail(res, req.correlationId, 'USER_NOT_FOUND', 'Platform user not found', 404);
     }
 
-    if (body.display_name != null || body.is_active != null) {
+    if (body.display_name != null || body.is_active != null || body.password) {
+      const passwordHash =
+        body.password != null && String(body.password).length > 0
+          ? hashPassword(String(body.password))
+          : null;
+      if (body.password != null && String(body.password).length > 0 && String(body.password).length < 8) {
+        await client.query('ROLLBACK');
+        return fail(res, req.correlationId, 'VALIDATION_FAILED', 'password must be at least 8 characters', 400);
+      }
       await client.query(
         `UPDATE engagement_reporting.admin_user
          SET display_name = COALESCE($2, display_name),
-             is_active = COALESCE($3, is_active)
+             is_active = COALESCE($3, is_active),
+             password_hash = COALESCE($4, password_hash)
          WHERE admin_user_id = $1::uuid`,
         [
           userId,
           body.display_name != null ? String(body.display_name).trim() : null,
           body.is_active != null ? Boolean(body.is_active) : null,
+          passwordHash,
         ],
       );
     }
 
     if (body.role) {
-      const role = String(body.role).trim().toUpperCase();
-      if (!ROLES.includes(role)) {
+      const role = normalizeRole(body.role);
+      if (!role) {
         await client.query('ROLLBACK');
-        return fail(res, req.correlationId, 'VALIDATION_FAILED', `Invalid role: ${role}`, 400);
+        return fail(res, req.correlationId, 'VALIDATION_FAILED', `Invalid role: ${body.role}`, 400);
       }
-      await ensureRoles(client);
+      await ensurePlatformRoles(client);
       const roleRow = await client.query(
         `SELECT admin_role_id FROM engagement_reporting.admin_role WHERE name = $1`,
         [role],
@@ -182,6 +234,7 @@ router.patch('/:userId', async (req, res) => {
     await client.query('COMMIT');
     const updated = await getPool().query(
       `SELECT u.admin_user_id::text AS id, u.email, u.display_name, u.is_active,
+              (u.password_hash IS NOT NULL AND length(u.password_hash) > 0) AS has_password,
               COALESCE(json_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL), '[]'::json) AS roles
        FROM engagement_reporting.admin_user u
        LEFT JOIN engagement_reporting.admin_user_role ur ON ur.admin_user_id = u.admin_user_id
@@ -190,7 +243,13 @@ router.patch('/:userId', async (req, res) => {
        GROUP BY u.admin_user_id`,
       [userId],
     );
-    return ok(res, req.correlationId, { item: updated.rows[0] });
+    const item = updated.rows[0];
+    if (item) {
+      item.roles = (Array.isArray(item.roles) ? item.roles : [])
+        .map((name) => normalizeRole(name))
+        .filter(Boolean);
+    }
+    return ok(res, req.correlationId, { item });
   } catch (err) {
     await client.query('ROLLBACK');
     return fail(res, req.correlationId, 'PLATFORM_USER_UPDATE_FAILED', err.message, 500, true);
@@ -200,10 +259,9 @@ router.patch('/:userId', async (req, res) => {
 });
 
 router.delete('/:userId', async (req, res) => {
-  const session = resolveSession(req);
-  if (!session) {
-    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
-  }
+  const session = await requireAdmin(req, res);
+  if (!session) return;
+
   if (!isDatabaseConfigured()) {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }

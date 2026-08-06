@@ -280,14 +280,70 @@ export type TemplateMutationPayload = {
   description?: string;
   html?: string;
   status?: 'draft' | 'published';
+  /** Ready-made layout id: itsm | pm | lead | simple | blank */
+  starter_id?: string;
 };
 
+export type ReportStarter = {
+  id: string;
+  name: string;
+  description: string;
+  placeholders: string[];
+  recommended?: boolean;
+  html?: string;
+};
+
+export type ReportStartersResult = {
+  ok: boolean;
+  items?: ReportStarter[];
+  error?: string;
+};
+
+export async function loadReportStartersFromBackend(
+  app: KissflowApplication,
+): Promise<ReportStartersResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/starters`;
+  const res = await apiV1Fetch<{ items: ReportStarter[] }>(path);
+
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Failed to load starters' };
+  }
+
+  return { ok: true, items: res.data?.items || [] };
+}
+
+export async function loadReportStarterHtmlFromBackend(
+  app: KissflowApplication,
+  starterId: string,
+): Promise<{ ok: boolean; item?: ReportStarter; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const appName = encodeURIComponent(app.displayName || app.name || applicationId);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/starters/${encodeURIComponent(starterId)}?app_name=${appName}`;
+  const res = await apiV1Fetch<{ item: ReportStarter }>(path);
+
+  if (!res.ok || !res.data?.item) {
+    return { ok: false, error: res.error || 'Failed to load starter HTML' };
+  }
+
+  return { ok: true, item: res.data.item };
+}
+
 export type PipelineSyncResult = {
-  synced: boolean;
+  synced?: boolean;
   reason?: string;
   path?: string;
   bytes?: number;
-  cache_invalidation?: { deleted?: number; patterns?: string[]; error?: string };
+  cache_invalidation?: { deleted?: number; patterns?: string[]; error?: string; deleted_keys?: string[] };
+  schedule_subject_sync?: { updated?: number };
 };
 
 export type TemplateMutationResult = {

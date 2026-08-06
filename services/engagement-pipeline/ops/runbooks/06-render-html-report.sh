@@ -158,14 +158,18 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 log "Rendering HTML report"
 
 ROWS_HTML="$(jq -r '
-  to_entries | map(
-    "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.last_sign_in // "Never") + "</td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
-    "</tr>"
-  ) | join("")
+  if length == 0 then
+    "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"4\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No Refex users with open or closed tickets in this snapshot.</td></tr>"
+  else
+    to_entries | map(
+      "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.last_sign_in // "Never") + "</td>" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
+      "</tr>"
+    ) | join("")
+  end
 ' <<< "${USERS_JSON}")"
 
 TOTAL_USERS="$(jq -r '.total_users' <<< "${SUMMARY_JSON}")"
@@ -194,8 +198,14 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
 
+# Match Admin UI preview: template name → subject → default.
+REPORT_TITLE="${TEMPLATE_NAME:-}"
+if [[ -z "${REPORT_TITLE}" ]]; then
+  REPORT_TITLE="${SUBJECT:-Kissflow User Engagement Report}"
+fi
+
 jq -n \
-  --arg ReportTitle "Kissflow User Engagement Report" \
+  --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
   --arg SignedInUsers "${SIGNED_IN}" \
   --arg SignInRate "${SIGNIN_PCT}" \

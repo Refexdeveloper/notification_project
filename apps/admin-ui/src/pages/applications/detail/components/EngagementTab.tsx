@@ -127,7 +127,12 @@ export default function EngagementTab({ app }: EngagementTabProps) {
     setErrorBanner('');
     try {
       if (isBackendApiMode()) {
-        const result = await loadEngagementFromBackend(app, { live });
+        // live=true → force Kissflow; otherwise backend/client use ≤2h cache.
+        let result = await loadEngagementFromBackend(app, {
+          live,
+          forceNetwork: live,
+        });
+
         if (result.report?.users.length) {
           setReport(result.report);
           if (result.warning) setErrorBanner(result.warning);
@@ -155,13 +160,14 @@ export default function EngagementTab({ app }: EngagementTabProps) {
         }
 
         setReport(result.report);
+        const appLabel = app.displayName || app.name || app.appId || 'this app';
         setErrorBanner(
           result.error ||
             (isLeadTrackerApp(app)
               ? hasKissflowCredentials(app)
                 ? 'No lead assignees found in PostgreSQL or Kissflow. Run: bash ops/runbooks/16-ingest-lead-tracker-and-load.sh'
                 : 'Kissflow credentials missing in Admin UI. Run: bash ops/runbooks/sync-kissflow-env-local.sh then restart Admin UI (npm run dev).'
-              : 'Could not load engagement from backend-api'),
+              : `No engagement users for ${appLabel} yet. Connect now auto-syncs fields and related users once. Click Refresh to retry, or wait for ingest (ITSM=09 / PM=12 / Lead=16).`),
         );
         return;
       }
@@ -269,7 +275,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           <h2 className="text-base font-semibold text-foreground-950">User Engagement</h2>
           <p className="text-xs text-foreground-500 mt-0.5">
             {isBackendApiMode()
-              ? 'Users with assignments or app roles in this application only — not the full account directory.'
+              ? 'Related users for this app (assignees / roles). Cached up to 1 hour — Refresh forces a live Kissflow pull.'
               : 'Assigned workload and login activity across processes, boards, and dataforms'}
             {report?.generatedAt
               ? ` · Updated ${new Date(report.generatedAt).toLocaleString()}`

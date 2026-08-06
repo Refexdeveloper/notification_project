@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { normalizeKissflowSubdomain } = require('./kissflowDiscovery');
 
 function normalizeEnvironment(value) {
   const lower = String(value || '').trim().toLowerCase();
@@ -50,14 +51,15 @@ function normalizeRegistrationBody(body) {
 
   const kissflowAccountId = String(source.kissflow_account_id || source.account_id || '').trim();
   const applicationId = String(source.application_id || source.app_id || '').trim();
-  const subdomain = String(source.subdomain || '').trim();
+  const subdomain = normalizeKissflowSubdomain(source.subdomain || '').subdomain;
   const accessKeyId = String(source.access_key_id || '').trim();
   const accessKeySecret = String(source.access_key_secret || '').trim();
   const environment = normalizeEnvironment(source.environment || 'development');
+  const detectedRegion = normalizeKissflowSubdomain(source.subdomain || '').region;
 
   if (!kissflowAccountId) errors.push('kissflow_account_id is required');
   if (!applicationId) errors.push('application_id is required');
-  if (!subdomain) errors.push('subdomain is required');
+  if (!subdomain) errors.push('subdomain is required (e.g. refexgroup — not refexgroup.kissflow.com)');
   if (!accessKeyId) errors.push('access_key_id is required');
   if (!accessKeySecret) errors.push('access_key_secret is required');
   if (!environment) errors.push('environment is required');
@@ -76,7 +78,7 @@ function normalizeRegistrationBody(body) {
       applicationName,
       displayName,
       subdomain,
-      region: String(source.region || 'com').trim() || 'com',
+      region: String(source.region || detectedRegion || 'com').trim() || 'com',
       description: String(source.description || '').trim(),
       environment,
       accessKeyId,
@@ -312,7 +314,7 @@ async function updateApplicationMetadata(
     payloadPatch.description = String(patch.description || '').trim();
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'subdomain')) {
-    payloadPatch.subdomain = String(patch.subdomain || '').trim();
+    payloadPatch.subdomain = normalizeKissflowSubdomain(patch.subdomain || '').subdomain;
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'region')) {
     payloadPatch.region = String(patch.region || 'com').trim() || 'com';

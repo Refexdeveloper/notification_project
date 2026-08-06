@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createApplicationFromForm, type AddApplicationInput } from '@/mocks/applications';
-import { createApplicationOnBackend, toDbEnvironment, validateApplicationOnBackend } from '@/services/applicationsApi';
+import {
+  bootstrapApplicationOnBackend,
+  createApplicationOnBackend,
+  toDbEnvironment,
+  validateApplicationOnBackend,
+} from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 
@@ -62,22 +67,28 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
     onClose();
   };
 
-  const buildPayload = () => ({
-    kissflow_account_id: form.accountId.trim(),
-    application_id: form.appId.trim(),
-    application_name: form.name.trim() || form.appId.trim(),
-    display_name: form.name.trim() || `Refex ${form.environment}`,
-    subdomain: form.subdomain.trim(),
-    region: form.region,
-    environment: toDbEnvironment(form.environment),
-    description: form.description.trim(),
-    access_key_id: form.accessKeyId.trim(),
-    access_key_secret: form.accessKeySecret.trim(),
-    process_ids: processIds.filter((id) => id.trim()),
-    dataform_ids: dataformIds.filter((id) => id.trim()),
-    board_ids: boardIds.filter((id) => id.trim()),
-    dataset_ids: datasetIds.filter((id) => id.trim()),
-  });
+  const buildPayload = () => {
+    // Accept pasted hosts like "refexgroup.kissflow.com" → "refexgroup"
+    let subdomain = form.subdomain.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+    subdomain = subdomain.replace(/\.kissflow\.(com|eu)$/i, '');
+
+    return {
+      kissflow_account_id: form.accountId.trim(),
+      application_id: form.appId.trim(),
+      application_name: form.name.trim() || form.appId.trim(),
+      display_name: form.name.trim() || `Refex ${form.environment}`,
+      subdomain,
+      region: form.region,
+      environment: toDbEnvironment(form.environment),
+      description: form.description.trim(),
+      access_key_id: form.accessKeyId.trim(),
+      access_key_secret: form.accessKeySecret.trim(),
+      process_ids: processIds.filter((id) => id.trim()),
+      dataform_ids: dataformIds.filter((id) => id.trim()),
+      board_ids: boardIds.filter((id) => id.trim()),
+      dataset_ids: datasetIds.filter((id) => id.trim()),
+    };
+  };
 
   const applyDiscoveredIds = (discovery: {
     process_ids?: string[];
@@ -159,11 +170,23 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
       setSaving(true);
       setError('');
       const result = await createApplicationOnBackend(buildPayload());
-      setSaving(false);
       if (!result.ok || !result.routeId) {
+        setSaving(false);
         setError(result.error || 'Registration failed');
         return;
       }
+
+      // First-time: sync fields + related users/items once (cached 2h for engagement).
+      const appId = result.item?.application_id || buildPayload().application_id;
+      const env = buildPayload().environment;
+      setError('');
+      const boot = await bootstrapApplicationOnBackend(appId, env);
+      setSaving(false);
+      if (!boot.ok) {
+        // Still navigate — registration succeeded; user can Sync fields / Refresh later.
+        console.warn('Application bootstrap warning:', boot.error);
+      }
+
       const routeId = result.routeId;
       handleClose();
       onCreated?.();
@@ -227,16 +250,23 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
                 </Field>
               </div>
               <p className="text-[11px] text-foreground-400 -mt-1">
-                App ID is the Kissflow process ID used for Admin Get-all-items and field sync.
+                App ID is the Kissflow application id (e.g.{' '}
+                <span className="font-mono">Expense_and_Travel_Management_A00</span>). Put process ids
+                like <span className="font-mono">Travel_Management_A02</span> under Resource IDs →
+                Processes.
               </p>
               <Field label="Subdomain" required>
                 <input
                   value={form.subdomain}
                   onChange={(e) => update('subdomain', e.target.value)}
-                  placeholder="e.g. development-refexgroup"
-                  className="field"
+                  placeholder="refexgroup"
+                  className="field font-mono text-xs"
                 />
               </Field>
+              <p className="text-[11px] text-foreground-400 -mt-1">
+                Enter only the subdomain (e.g. <span className="font-mono">refexgroup</span>), not
+                the full host <span className="font-mono">refexgroup.kissflow.com</span>.
+              </p>
               <Field label="Application name">
                 <input
                   value={form.name}
@@ -343,8 +373,12 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
             </Section>
 
             {validationWarnings.length > 0 && (
-              <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-900 space-y-1">
-                <p className="font-medium">Discovery notes</p>
+              <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+                <p className="font-medium text-slate-900">Discovery notes (optional)</p>
+                <p className="text-slate-500">
+                  App ID is not always a Process ID. Dataform/Board/Dataset probes are optional and
+                  can be skipped.
+                </p>
                 {validationWarnings.map((warning) => (
                   <p key={warning}>{warning}</p>
                 ))}
@@ -379,7 +413,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
               </button>
             )}
             <button type="button" disabled={saving || validating} onClick={() => handleSubmit()} className="btn-primary">
-              {saving ? 'Connecting…' : 'Connect application'}
+              {saving ? 'Connecting & syncing…' : 'Connect application'}
             </button>
           </div>
 

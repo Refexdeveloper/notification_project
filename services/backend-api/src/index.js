@@ -11,6 +11,9 @@ async function start() {
     try {
       await initDatabase();
       console.log(JSON.stringify({ msg: 'database pool initialized' }));
+      const { ensureBootstrapAdmin } = require('./lib/platformUsers');
+      const bootstrap = await ensureBootstrapAdmin();
+      console.log(JSON.stringify({ msg: 'platform bootstrap', ...bootstrap }));
     } catch (err) {
       console.error(JSON.stringify({ msg: 'database init failed', error: err.message }));
     }

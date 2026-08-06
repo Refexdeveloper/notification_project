@@ -12,6 +12,8 @@ const {
   updateApplicationMetadata,
 } = require('../lib/applicationRegistration');
 const { validateAndDiscoverRegistrationInput } = require('../lib/kissflowDiscovery');
+const { bootstrapApplication } = require('../lib/applicationBootstrap');
+const { normalizeEnvironment } = require('../lib/kissflowClient');
 
 const router = express.Router();
 
@@ -67,7 +69,7 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/validate', async (req, res) => {
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -117,7 +119,7 @@ router.post('/', async (req, res) => {
     );
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -242,7 +244,7 @@ router.patch('/:applicationId', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -306,7 +308,7 @@ router.delete('/:applicationId', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
-  const session = resolveSession(req);
+  const session = await resolveSession(req);
   if (!session) {
     return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
   }
@@ -363,6 +365,33 @@ router.get('/:applicationId/processes', async (req, res) => {
       return ok(res, req.correlationId, { items: [], count: 0, warning: 'SCHEMA_NOT_MIGRATED' });
     }
     fail(res, req.correlationId, 'PROCESSES_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+/** First-time field sync + related-user engagement cache after Connect. */
+router.post('/:applicationId/bootstrap', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);
+  }
+
+  const environment = normalizeEnvironment(
+    req.query.environment || req.body?.environment || 'production',
+  );
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'environment is required', 400);
+  }
+
+  try {
+    const result = await bootstrapApplication({
+      environment,
+      applicationId: req.params.applicationId,
+    });
+    return ok(res, req.correlationId, result);
+  } catch (err) {
+    if (err.code === 'KISSFLOW_CREDENTIALS_MISSING') {
+      return fail(res, req.correlationId, err.code, err.message, 503);
+    }
+    return fail(res, req.correlationId, 'APPLICATION_BOOTSTRAP_FAILED', err.message, 500, true);
   }
 });
 

@@ -73,9 +73,27 @@ PROCESS_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.process_id // empty')"
 TO_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to | join(",")')"
 CC_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_cc | join(",")')"
 export TEMPLATE_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_id // empty')"
+export TEMPLATE_NAME
 export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
 export SUBJECT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.subject // empty')"
 export TO_LIST RECIPIENT="${TO_LIST}"
+
+# Prefer live template name from PostgreSQL (Admin UI rename) over stale schedule config.
+if [[ "${TEMPLATE_ID}" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  LIVE_TEMPLATE_NAME="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+    SELECT COALESCE(NULLIF(rt.name, ''), '')
+    FROM engagement_reporting.report_template rt
+    WHERE rt.report_template_id = '${TEMPLATE_ID}'::uuid
+    LIMIT 1;
+  " 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "${LIVE_TEMPLATE_NAME}" ]]; then
+    export TEMPLATE_NAME="${LIVE_TEMPLATE_NAME}"
+    log "Report title source: live template name '${TEMPLATE_NAME}'"
+  fi
+fi
+if [[ -z "${TEMPLATE_NAME}" && -n "${SUBJECT}" ]]; then
+  log "Report title source: schedule subject '${SUBJECT}'"
+fi
 
 if [[ -n "${TEMPLATE_APP_ID}" && "${TEMPLATE_APP_ID}" != "${APPLICATION_ID}" ]]; then
   log "Schedule config application_id=${APPLICATION_ID} does not match template binding (${TEMPLATE_APP_ID}). Using template application."
@@ -141,18 +159,18 @@ send_test_report() {
   local cache_prefix="${4:-}"
   export REPORT_CACHE_KEY="${cache_key}"
   export REPORT_CACHE_KEY_SCHEDULE="$(schedule_cache_key)"
-  if ! resolve_test_report_file "${report_file}" "${cache_key}" "${cache_prefix}"; then
-    if [[ -n "${render_runbook}" ]]; then
-      log "Test send: no cache yet — rendering from last PostgreSQL snapshot (no Kissflow ingest)"
-      bash "${render_runbook}"
-      [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
-      bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
-        || log "Warning: failed to cache rendered report (non-fatal)"
-      bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${REPORT_CACHE_KEY_SCHEDULE}" \
-        || true
-    else
-      stop "No cached report for ${cache_key}. Run one full scheduled send first, then retry test email."
-    fi
+  # Prefer re-render so a newly published template is used. Cached HTML is only a
+  # fallback when no render runbook is available (avoids sending stale schedule:* cache).
+  if [[ -n "${render_runbook}" ]]; then
+    log "Test send: rendering with latest published template from PostgreSQL snapshot (no Kissflow ingest)"
+    bash "${render_runbook}"
+    [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
+      || log "Warning: failed to cache rendered report (non-fatal)"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${REPORT_CACHE_KEY_SCHEDULE}" \
+      || true
+  elif ! resolve_test_report_file "${report_file}" "${cache_key}" "${cache_prefix}"; then
+    stop "No cached report for ${cache_key}. Run one full scheduled send first, then retry test email."
   fi
   export REPORT_FILE_OVERRIDE="${report_file}"
   export DELIVERY_KIND="test"

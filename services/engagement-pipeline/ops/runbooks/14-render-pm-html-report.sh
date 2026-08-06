@@ -220,8 +220,13 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
 
+REPORT_TITLE="${TEMPLATE_NAME:-}"
+if [[ -z "${REPORT_TITLE}" ]]; then
+  REPORT_TITLE="${SUBJECT:-Project Management Task Report}"
+fi
+
 jq -n \
-  --arg ReportTitle "Project Management Task Report" \
+  --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
   --arg TotalTasks "${PM_TOTAL}" \
   --arg AssignedTasks "${PM_ASSIGNED}" \

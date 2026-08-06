@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, ChevronDown, LogOut, Search, Settings } from 'lucide-react';
+import { Bell, ChevronDown, LogOut, Search } from 'lucide-react';
 import { useAuth } from '@/hooks/AuthContext';
 
 interface BreadcrumbItem {
@@ -144,21 +144,7 @@ export default function Header({ breadcrumbs = [], title }: HeaderProps) {
                 type="button"
                 onClick={() => {
                   setUserMenuOpen(false);
-                  navigate('/settings');
-                }}
-                className="w-full px-4 py-2.5 text-sm text-[#334155] hover:bg-[#F8FAFC] text-left cursor-pointer font-medium inline-flex items-center gap-2"
-              >
-                <Settings className="w-4 h-4" />
-                Settings & users
-              </button>
-            </div>
-            <div className="border-t border-[#EEF2F7] py-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  logout();
-                  navigate('/login', { replace: true });
+                  void logout().then(() => navigate('/login', { replace: true }));
                 }}
                 className="w-full px-4 py-2.5 text-sm text-[#DC3545] hover:bg-[#FDECEC] text-left cursor-pointer font-semibold inline-flex items-center gap-2"
               >

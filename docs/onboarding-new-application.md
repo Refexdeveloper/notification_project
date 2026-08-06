@@ -360,6 +360,14 @@ OpenAPI contract: `openapi/backend-api.yaml`
 
 ---
 
+## Placeholders (HTML templates)
+
+Templates use Mustache tokens like `{{SignInRate}}` and `{{UserTableHtml}}`.
+
+- **Not AI-generated** — click placeholders in the template editor (or type them).
+- Pipeline fills only app-specific keys (ITSM / PM / Lead). Unknown tokens stay literal in sent email.
+- See template editor **Placeholders** panel for the click-to-insert list and warnings.
+
 ## New application checklist
 
 - [ ] Connect at `/applications` with valid Kissflow keys

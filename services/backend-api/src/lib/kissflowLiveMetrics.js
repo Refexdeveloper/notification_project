@@ -5,12 +5,12 @@ const { buildEngagementTotals, APP_ENGAGEMENT_QUERY } = require('./engagementSum
 const { isLoggedInToday } = require('./reportTimezone');
 const {
   resolveKissflowCredentials,
-  fetchAllKissflowUsers,
-  enrichKissflowUsersWithDetails,
+  fetchKissflowUserDetail,
   fetchAllProcessItems,
   pickString,
   normalizeProcessStatus,
 } = require('./kissflowClient');
+const { saveEngagementCache } = require('./engagementCache');
 
 const APP_MEMBER_QUERY = `
 SELECT DISTINCT user_id
@@ -93,7 +93,99 @@ function countTicketStatuses(items) {
   return { open, closed };
 }
 
-async function fetchLiveAppMetrics(environment, applicationId) {
+function pushUserId(set, value) {
+  if (!value) return;
+  if (typeof value === 'string' && value.trim()) {
+    set.add(value.trim());
+    return;
+  }
+  if (typeof value === 'object') {
+    const id = value._id || value.Id || value.id || value.UserId;
+    if (typeof id === 'string' && id.trim()) set.add(id.trim());
+  }
+}
+
+/** Collect assignee / requester ids from process items — related users only. */
+function collectRelatedUserIdsFromItems(items) {
+  const ids = new Set();
+  for (const item of items || []) {
+    if (!item || typeof item !== 'object') continue;
+    pushUserId(ids, item.Assigned_To);
+    pushUserId(ids, item.Assignee);
+    pushUserId(ids, item.assigned_to);
+    pushUserId(ids, item.Requester);
+    pushUserId(ids, item.Requested_By);
+    pushUserId(ids, item.Employee);
+    pushUserId(ids, item.Employee_Name);
+    pushUserId(ids, item._created_by);
+    pushUserId(ids, item._modified_by);
+    pushUserId(ids, item._submitted_by);
+    // Common nested activity actor
+    if (Array.isArray(item._activity_instance)) {
+      for (const act of item._activity_instance) {
+        pushUserId(ids, act?._created_by);
+        pushUserId(ids, act?.Assigned_To);
+      }
+    }
+  }
+  return ids;
+}
+
+function applyItemCountsToUsers(userRows, items) {
+  const byUser = new Map(userRows.map((u) => [u.user_id, { ...u }]));
+  for (const item of items || []) {
+    const status = normalizeProcessStatus(item);
+    const assigneeIds = new Set();
+    pushUserId(assigneeIds, item.Assigned_To);
+    pushUserId(assigneeIds, item.Assignee);
+    pushUserId(assigneeIds, item.assigned_to);
+    // fall back to creator for completed attribution
+    if (!assigneeIds.size) {
+      pushUserId(assigneeIds, item._created_by);
+    }
+    for (const userId of assigneeIds) {
+      const row = byUser.get(userId);
+      if (!row) continue;
+      row.assigned = (row.assigned || 0) + 1;
+      if (status === 'InProgress') row.open_count = (row.open_count || 0) + 1;
+      if (status === 'Completed') row.completed_count = (row.completed_count || 0) + 1;
+    }
+  }
+  return [...byUser.values()];
+}
+
+async function fetchRelatedUserDetails({
+  environment,
+  accountId,
+  userIds,
+  credentials,
+  concurrency = 8,
+}) {
+  const ids = [...userIds].filter(Boolean);
+  const out = [];
+  for (let i = 0; i < ids.length; i += concurrency) {
+    const chunk = ids.slice(i, i + concurrency);
+    const batch = await Promise.all(
+      chunk.map(async (userId) => {
+        try {
+          const detail = await fetchKissflowUserDetail({
+            environment,
+            accountId,
+            userId,
+            credentials,
+          });
+          return { _id: userId, ...(detail && typeof detail === 'object' ? detail : {}) };
+        } catch {
+          return { _id: userId };
+        }
+      }),
+    );
+    out.push(...batch);
+  }
+  return out;
+}
+
+async function fetchLiveAppMetrics(environment, applicationId, { persistCache = true } = {}) {
   const pool = getPool();
   const appResult = await pool.query(
     `SELECT
@@ -138,38 +230,9 @@ async function fetchLiveAppMetrics(environment, applicationId) {
   }
 
   const credentials = await resolveKissflowCredentials(environment);
-  const memberResult = await pool.query(APP_MEMBER_QUERY, [environment, applicationId, processIds]);
-  let memberIds = new Set(memberResult.rows.map((r) => r.user_id).filter(Boolean));
-  const snapshotMembers = await pool.query(APP_ENGAGEMENT_QUERY, [environment, applicationId]);
-  const snapshotByUser = new Map(snapshotMembers.rows.map((row) => [row.user_id, row]));
-  if (!memberIds.size) {
-    memberIds = new Set(snapshotMembers.rows.map((r) => r.user_id).filter(Boolean));
-  }
 
-  const rawUsers = await fetchAllKissflowUsers({ environment, accountId, credentials });
-  let filteredRaw = rawUsers.filter((raw) => {
-    const userId = pickString(raw, ['_id', 'Id', 'id', 'UserId']);
-    return userId && (!memberIds.size || memberIds.has(userId));
-  });
-  filteredRaw = await enrichKissflowUsersWithDetails({
-    environment,
-    accountId,
-    rawUsers: filteredRaw,
-    credentials,
-  });
-
-  let userRows = filteredRaw.map(normalizeUserRow).filter((u) => u.user_id);
-  userRows = userRows.map((row) => {
-    const snap = snapshotByUser.get(row.user_id);
-    if (!snap) return row;
-    const lastSignIn = row.last_sign_in || snap.last_sign_in || null;
-    return {
-      ...row,
-      last_sign_in: lastSignIn,
-      ever_logged_in: row.ever_logged_in || snap.ever_logged_in || Boolean(lastSignIn),
-    };
-  });
-
+  // 1) Items first — needed for related users + ticket totals (no full account user dump).
+  let allItems = [];
   let openTickets = 0;
   let closedTickets = 0;
   for (const processId of processIds) {
@@ -179,20 +242,58 @@ async function fetchLiveAppMetrics(environment, applicationId) {
       processId,
       credentials,
     });
+    allItems = allItems.concat(items);
     const counts = countTicketStatuses(items);
     openTickets += counts.open;
     closedTickets += counts.closed;
   }
 
+  const itemUserIds = collectRelatedUserIdsFromItems(allItems);
+
+  const memberResult = await pool.query(APP_MEMBER_QUERY, [environment, applicationId, processIds]);
+  let memberIds = new Set(memberResult.rows.map((r) => r.user_id).filter(Boolean));
+  const snapshotMembers = await pool.query(APP_ENGAGEMENT_QUERY, [environment, applicationId]);
+  const snapshotByUser = new Map(snapshotMembers.rows.map((row) => [row.user_id, row]));
+  if (!memberIds.size) {
+    memberIds = new Set(snapshotMembers.rows.map((r) => r.user_id).filter(Boolean));
+  }
+
+  const relatedIds = new Set([...memberIds, ...itemUserIds]);
+
+  // Related users only — never pull the full Kissflow directory for engagement.
+  const rawUsers = relatedIds.size
+    ? await fetchRelatedUserDetails({
+        environment,
+        accountId,
+        userIds: relatedIds,
+        credentials,
+      })
+    : [];
+
+  let userRows = rawUsers.map(normalizeUserRow).filter((u) => u.user_id);
+  userRows = userRows.map((row) => {
+    const snap = snapshotByUser.get(row.user_id);
+    if (!snap) return row;
+    const lastSignIn = row.last_sign_in || snap.last_sign_in || null;
+    return {
+      ...row,
+      last_sign_in: lastSignIn,
+      ever_logged_in: row.ever_logged_in || snap.ever_logged_in || Boolean(lastSignIn),
+      has_app_role: Boolean(snap.has_app_role) || row.has_app_role,
+    };
+  });
+  userRows = applyItemCountsToUsers(userRows, allItems);
+
   const totals = buildEngagementTotals(userRows);
   totals.open_tickets = openTickets;
   totals.closed_tickets = closedTickets;
 
-  return {
+  const fetchedAt = new Date().toISOString();
+  const result = {
     application_id: applicationId,
     application_name: appRow.application_name,
-    snapshot_at: new Date().toISOString(),
-    fetched_at: new Date().toISOString(),
+    snapshot_at: fetchedAt,
+    fetched_at: fetchedAt,
     data_source: 'live',
     users: userRows,
     metrics: {
@@ -204,11 +305,57 @@ async function fetchLiveAppMetrics(environment, applicationId) {
       closed_tickets: totals.closed_tickets,
     },
     live_user_count: userRows.length,
+    related_user_count: relatedIds.size,
+    item_count: allItems.length,
     sign_in_today_basis: 'Asia/Kolkata',
   };
+
+  if (persistCache) {
+    const items = userRows.map((row) => ({
+      user_id: row.user_id,
+      user_name: row.user_name,
+      email: row.email,
+      user_type: null,
+      active_status: null,
+      last_sign_in: row.last_sign_in,
+      ever_logged_in: row.ever_logged_in,
+      assigned: row.assigned || 0,
+      open: row.open_count || 0,
+      completed: row.completed_count || 0,
+      rejected: 0,
+      role_names: [],
+      has_assignment: (row.assigned || 0) > 0,
+      has_app_role: Boolean(row.has_app_role),
+      source_payload: {},
+    }));
+    await saveEngagementCache(pool, {
+      environment,
+      applicationId,
+      payload: {
+        fetched_at: fetchedAt,
+        snapshot_at: fetchedAt,
+        data_source: 'live',
+        items,
+        totals: {
+          total_users: items.length,
+          active_today: items.filter((r) => isLoggedInToday(r.last_sign_in)).length,
+          inactive: items.filter((r) => r.last_sign_in && !isLoggedInToday(r.last_sign_in)).length,
+          never_logged_in: items.filter((r) => !r.ever_logged_in && !r.last_sign_in).length,
+          total_assigned: items.reduce((sum, r) => sum + Number(r.assigned || 0), 0),
+          with_assignments: items.filter((r) => Number(r.assigned || 0) > 0).length,
+          with_app_role: items.filter((r) => r.has_app_role).length,
+          open_tickets: openTickets,
+          closed_tickets: closedTickets,
+        },
+      },
+    });
+  }
+
+  return result;
 }
 
 module.exports = {
   fetchLiveAppMetrics,
   isLoggedInToday,
+  collectRelatedUserIdsFromItems,
 };
