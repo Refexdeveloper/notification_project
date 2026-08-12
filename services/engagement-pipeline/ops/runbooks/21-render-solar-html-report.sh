@@ -260,19 +260,29 @@ SOLAR_ROWS_HTML="$(jq -r '
   end
 ' <<< "${SOLAR_USERS_JSON}")"
 
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${SOLAR_USERS_JSON}")"
 SOLAR_TOTAL="$(jq -r '.total_requests' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_OPEN="$(jq -r '.open_requests' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CLOSED="$(jq -r '.closed_requests' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_OPENED_TODAY="$(jq -r '.opened_today' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_TOTAL_USERS="$(jq -r '.total' <<< "${SOLAR_MIS_COUNTS}")"
+SOLAR_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SOLAR_MIS_COUNTS}")"
 SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
-  (.total_app_users // 0) as $total
+  (.total // 0) as $total
   | (.signed_in_today // 0) as $today
   | (if $total <= 0 then 0 else (($today * 100 / $total) | floor) end)
   | tostring + "%"
-' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_TOTAL_USERS="$(jq -r '.total_app_users // 0' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+' <<< "${SOLAR_MIS_COUNTS}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
@@ -283,6 +293,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load Solar report template HTML."
+report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then

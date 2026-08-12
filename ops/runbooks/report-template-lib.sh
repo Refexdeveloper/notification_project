@@ -206,3 +206,29 @@ report_template_render() {
   TEMPLATE_HTML_OUT="${output_file}" \
   node "${script}"
 }
+
+# Make the Total Users KPI subtitle readable in email: "3 of 32 today".
+report_template_emphasize_users_kpi() {
+  local html_file="$1"
+  [[ -f "${html_file}" ]] || return 0
+  python3 - "${html_file}" <<'PY'
+import re
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+html = path.read_text(encoding="utf-8")
+html = re.sub(
+    r"\{\{\s*SignedInToday\s*\}\}\s+signed in today",
+    "{{SignedInToday}} of {{TotalUsers}} today",
+    html,
+    flags=re.IGNORECASE,
+)
+html = re.sub(
+    r'font-size:9(?:\.5)?px;\s*color:#3f8f63\s*!important;\s*margin-top:2px;">(\{\{\s*SignedInToday\s*\}\})',
+    r'font-size:11px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">\1',
+    html,
+    flags=re.IGNORECASE,
+)
+path.write_text(html, encoding="utf-8")
+PY
+}

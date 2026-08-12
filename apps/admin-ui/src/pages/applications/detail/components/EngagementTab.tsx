@@ -327,6 +327,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
           <Stat
             label={isBackendApiMode() ? 'Users in this app' : 'Total users'}
             value={report.totals.totalUsers}
+            sub={`${report.totals.activeToday} of ${report.totals.totalUsers} today`}
             active={loginFilter === 'all'}
             onClick={() => setLoginFilter('all')}
             hint={
@@ -546,6 +547,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
 function Stat({
   label,
   value,
+  sub,
   accent,
   active,
   onClick,
@@ -553,6 +555,7 @@ function Stat({
 }: {
   label: string;
   value: number;
+  sub?: string;
   accent?: boolean;
   active?: boolean;
   onClick?: () => void;
@@ -573,6 +576,9 @@ function Stat({
       <p className={`text-xl font-semibold mt-0.5 ${accent ? 'text-accent-700' : 'text-foreground-950'}`}>
         {value}
       </p>
+      {sub ? (
+        <p className="text-[11px] font-semibold text-emerald-700 mt-1 leading-tight">{sub}</p>
+      ) : null}
       {active && (
         <p className="text-[10px] text-primary-600 font-medium mt-1">Filtered</p>
       )}

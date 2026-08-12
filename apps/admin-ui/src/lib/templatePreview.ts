@@ -95,11 +95,11 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     CompanyName: 'REFEX',
     WebsiteName: 'Modepro',
     GroupName: 'Sales Team Modepro',
-    TotalUsers: '326',
+    TotalUsers: '2',
     SignedInUsers: '153',
     SignInRate: '46%',
-    SignInRateToday: '2%',
-    SignedInToday: '7',
+    SignInRateToday: '50%',
+    SignedInToday: '1',
     OpenTickets: '5',
     ClosedTickets: '159',
     TotalTickets: '164',
@@ -125,7 +125,6 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     CompletedTasks: '198',
     TotalRequests: '48',
     AssignedRequests: '36',
-    SignInRateToday: '2%',
     OpenRequests: '12',
     ClosedRequests: '36',
     TotalLeads: '6',
@@ -140,13 +139,13 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
 
   if (kind === 'pm') {
     base.UserTableHtml = samplePmUserTableHtml();
-    base.SignedInToday = '11';
-    base.TotalUsers = '86';
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody = 'Project Tracker covers all entities group-wide.';
   } else if (kind === 'solar') {
     base.UserTableHtml = samplePmUserTableHtml();
-    base.SignedInToday = '9';
-    base.TotalUsers = '48';
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody =
       'Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status.';
   } else if (kind === 'lead') {

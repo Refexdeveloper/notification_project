@@ -117,7 +117,7 @@ const REFEX_ENGAGEMENT_HTML = `<!DOCTYPE html>
 <td width="20%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:14px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
 <div style="font-size:18px; font-weight:bold; color:#14503a !important;">{{TotalUsers}}</div>
 <div style="font-size:10px; color:#3f8f63 !important; margin-top:4px;">Total Users</div>
-<div style="font-size:9px; color:#3f8f63 !important; margin-top:2px;">{{SignedInToday}} signed in today</div></td>
+<div style="font-size:11px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">{{SignedInToday}} of {{TotalUsers}} today</div></td>
 </tr></table></td></tr>
 
 {{SourceBreakdownHtml}}

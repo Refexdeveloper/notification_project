@@ -472,16 +472,28 @@ ROWS_HTML="$(jq -r '
   end
 ' <<< "${USERS_JSON}")"
 
-TOTAL_USERS="$(jq -r '.total_users' <<< "${SUMMARY_JSON}")"
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  def is_kissflow_id:
+    type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
+  [ .[]
+    | select((.user_name // "") | tostring | length > 0)
+    | select((.user_name | is_kissflow_id | not))
+  ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${USERS_JSON}")"
+TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
+SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${SUMMARY_JSON}")"
-# jq's // does not treat 0 as missing — guard divide-by-zero when a process has no users.
-SIGNIN_PCT="$(jq -n --argjson s "${SUMMARY_JSON}" '
-  (($s.total_users // 0) | if . <= 0 then 0 else (($s.signed_in_users // 0) * 100 / .) | floor end)
-')"
-SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SUMMARY_JSON}")"
-SIGNIN_RATE_TODAY="$(jq -n --argjson s "${SUMMARY_JSON}" '
-  (($s.total_users // 0) | if . <= 0 then 0 else (($s.signed_in_today // 0) * 100 / .) | floor end)
-')"
+SIGNIN_PCT="$(jq '
+  if (.total // 0) <= 0 then 0 else ((.signed_in_today // 0) * 100 / .total) | floor end
+' <<< "${MIS_COUNTS}")"
+SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
 OPENED_TODAY="$(jq -r '.opened_today' <<< "${SUMMARY_JSON}")"
 CLOSED_TODAY="$(jq -r '.closed_today' <<< "${SUMMARY_JSON}")"
@@ -541,6 +553,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
+report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 # Extrovis reports omit User Sign-in Overview (even if an older published template still has it).
 if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]] && grep -qF 'User Sign-in Overview' "${TEMPLATE_SRC}"; then

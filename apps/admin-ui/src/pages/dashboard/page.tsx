@@ -143,11 +143,13 @@ function KpiCard({
   label,
   value,
   suffix,
+  sub,
   styleIndex = 0,
 }: {
   label: string;
   value: number;
   suffix?: string;
+  sub?: string;
   styleIndex?: number;
 }) {
   const style = KPI_STYLES[styleIndex % KPI_STYLES.length];
@@ -165,6 +167,7 @@ function KpiCard({
             {value.toLocaleString()}
             {suffix}
           </p>
+          {sub ? <p className="mt-2 text-sm font-semibold text-white/95">{sub}</p> : null}
         </div>
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 ring-1 ring-white/30">
           <Icon className="h-5 w-5 text-white" />
@@ -528,7 +531,12 @@ export default function DashboardPage() {
 
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <KpiCard label="Total users" value={totals.total_users} styleIndex={0} />
+                  <KpiCard
+                    label="Total users"
+                    value={totals.total_users}
+                    sub={`${totals.sign_in_today} of ${totals.total_users} today`}
+                    styleIndex={0}
+                  />
                   <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={1} />
                   <KpiCard label="Open items" value={totals.open_tickets} styleIndex={2} />
                   <KpiCard label="Closed items" value={totals.closed_tickets} styleIndex={3} />

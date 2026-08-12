@@ -66,5 +66,14 @@ describe('templatePreview', () => {
   it('uses PM sample table for PM apps', () => {
     const samples = buildPreviewSampleData({ kissflowAppId: 'Project_Management_Tracker_A00' });
     expect(samples.UserTableHtml).toContain('Priya Sharma');
+    expect(samples.TotalUsers).toBe('2');
+    expect(samples.SignedInToday).toBe('1');
+  });
+
+  it('matches ITSM preview Total Users to the sample MIS table', () => {
+    const samples = buildPreviewSampleData({ kissflowAppId: 'IT_Service_Management_A00' });
+    const rows = (samples.UserTableHtml.match(/<tr\b/g) || []).length;
+    expect(samples.TotalUsers).toBe(String(rows));
+    expect(samples.SignedInToday).toBe('1');
   });
 });

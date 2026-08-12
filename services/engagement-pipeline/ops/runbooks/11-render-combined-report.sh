@@ -266,10 +266,20 @@ SELECT json_agg(t) FROM (
 
 log "Rendering combined HTML report"
 
-TOTAL_USERS="$(jq -r '.total_users' <<< "${USER_SUMMARY_JSON}")"
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${ITSM_USERS_JSON}")"
+TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${USER_SUMMARY_JSON}")"
-SIGNIN_PCT="$(jq -n --argjson s "${USER_SUMMARY_JSON}" '(($s.signed_in_users // 0) * 100 / (($s.total_users // 1)) ) | floor')"
-SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${USER_SUMMARY_JSON}")"
+SIGNIN_PCT="$(jq 'if (.total // 0) <= 0 then 0 else ((.signed_in_today // 0) * 100 / .total) | floor end' <<< "${MIS_COUNTS}")"
+SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${USER_SUMMARY_JSON}")"
 
 ITSM_TOTAL="$(jq -r '.total_tickets' <<< "${ITSM_SUMMARY_JSON}")"
@@ -350,7 +360,8 @@ cat > "${OUTPUT_FILE}" <<HTML
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${TOTAL_USERS}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Users</div></td>
+<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Users</div>
+<div style="font-size:12px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">${SIGNED_IN_TODAY} of ${TOTAL_USERS} today</div></td>
 <td width="2.6%"></td>
 <td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${SIGNED_IN}</div>

@@ -255,13 +255,23 @@ PM_ROWS_HTML="$(jq -r '
   ) | join("")
 ' <<< "${PM_USERS_JSON}")"
 
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${PM_USERS_JSON}")"
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
-PM_TOTAL_USERS="$(jq -r '.total_app_users // 0' <<< "${PM_SUMMARY_JSON}")"
-PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
+PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
@@ -272,6 +282,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
+report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
