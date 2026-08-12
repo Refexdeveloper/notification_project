@@ -51,6 +51,7 @@ export type BackendScheduleRow = {
   from_email?: string | null;
   website_filter?: string | null;
   user_group_filter?: string | null;
+  entity_filter?: string | null;
   created_at: string;
 };
 
@@ -102,6 +103,7 @@ function mapScheduleRow(row: BackendScheduleRow, app: KissflowApplication): Repo
     fromEmail: row.from_email || '',
     websiteFilter: row.website_filter || undefined,
     userGroupFilter: row.user_group_filter || undefined,
+    entityFilter: row.entity_filter || undefined,
     lastRunAt: null,
     nextRunAt: null,
     createdAt: row.created_at,
@@ -179,6 +181,7 @@ export type ScheduleUpdatePayload = {
   process_id?: string;
   website_filter?: string;
   user_group_filter?: string;
+  entity_filter?: string;
   subject?: string;
 };
 
@@ -223,6 +226,7 @@ export type ScheduleCreatePayload = {
   subject?: string;
   website_filter?: string;
   user_group_filter?: string;
+  entity_filter?: string;
 };
 
 export type ScheduleCreateResult = {
@@ -280,7 +284,7 @@ export type TemplateMutationPayload = {
   description?: string;
   html?: string;
   status?: 'draft' | 'published';
-  /** Ready-made layout id: itsm | pm | lead | simple | blank */
+  /** Ready-made layout id: itsm | itsm-extrovis | pm | lead | simple | blank */
   starter_id?: string;
 };
 
@@ -335,6 +339,64 @@ export async function loadReportStarterHtmlFromBackend(
   }
 
   return { ok: true, item: res.data.item };
+}
+
+export type GenerateTemplateHtmlResult = {
+  ok: boolean;
+  html?: string;
+  starterId?: string;
+  model?: string;
+  provider?: string;
+  error?: string;
+};
+
+/** AI-generate email HTML from a prompt (does not save — editor must Save draft). */
+export async function generateTemplateHtmlOnBackend(
+  app: KissflowApplication,
+  input: {
+    prompt: string;
+    currentHtml?: string;
+    includeCurrentHtml?: boolean;
+    templateName?: string;
+  },
+): Promise<GenerateTemplateHtmlResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const path = `/applications/${encodeURIComponent(applicationId)}/templates/generate-html?environment=${encodeURIComponent(environment)}`;
+  const res = await apiV1Fetch<{
+    html?: string;
+    starter_id?: string;
+    model?: string;
+    provider?: string;
+  }>(
+    path,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: input.prompt,
+        current_html: input.currentHtml || '',
+        include_current_html: Boolean(input.includeCurrentHtml),
+        template_name: input.templateName || '',
+      }),
+    },
+    { timeoutMs: 120000 },
+  );
+
+  if (!res.ok || !res.data?.html) {
+    return { ok: false, error: res.error || 'AI HTML generation failed' };
+  }
+
+  return {
+    ok: true,
+    html: res.data.html,
+    starterId: res.data.starter_id,
+    model: res.data.model,
+    provider: res.data.provider,
+  };
 }
 
 export type PipelineSyncResult = {
@@ -624,22 +686,30 @@ export async function testSendScheduleOnBackend(
   }>(path, {
     method: 'POST',
     body: JSON.stringify({ test_recipient: testRecipient.trim().toLowerCase() }),
-  }, { timeoutMs: 120000 });
+  }, { timeoutMs: 600000 });
 
   if (!res.ok) {
+    const excerpt = String(res.data?.log_excerpt || res.error || '').trim();
+    const shortError =
+      excerpt
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => /^STOP:/i.test(line) || /failed|error/i.test(line))
+        .slice(-3)
+        .join(' · ') || excerpt.slice(-400) || 'Test send failed';
     return {
       ok: false,
-      error: res.error || res.data?.message || 'Test send failed',
-      logExcerpt: res.data?.log_excerpt,
+      error: shortError,
+      logExcerpt: excerpt.slice(0, 1200),
     };
   }
 
-  const delivered = res.data?.status === 'delivered';
+  const delivered = res.data?.status === 'delivered' || Boolean(res.data?.dispatched);
   return {
-    ok: delivered || Boolean(res.data?.dispatched),
+    ok: delivered,
     dispatched: Boolean(res.data?.dispatched),
     logExcerpt: res.data?.log_excerpt,
-    message: res.data?.message,
-    error: delivered ? undefined : res.data?.log_excerpt || 'Test send did not confirm delivery',
+    message: res.data?.message || 'Test email sent. Check inbox and spam.',
+    error: delivered ? undefined : 'Test send did not confirm delivery',
   };
 }

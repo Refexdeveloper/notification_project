@@ -30,17 +30,82 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
-log "Querying shared user sign-in overview"
+log "Querying Refex ITSM role-member sign-in overview"
 
 USER_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER BY snapshot_at DESC LIMIT 1)
+WITH latest_users AS (
+  SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER BY snapshot_at DESC LIMIT 1
+),
+latest AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.snapshot_run
+  WHERE application_id = '${ITSM_APP_ID}'
+    AND process_id = '${ITSM_PROCESS_ID}'
+  ORDER BY created_at DESC
+  LIMIT 1
+),
+process_roles AS (
+  SELECT DISTINCT ia.principal_id AS role_id
+  FROM engagement_reporting.item_assignment ia
+  JOIN engagement_reporting.item i
+    ON i.instance_id = ia.instance_id
+   AND i.snapshot_at = ia.snapshot_at
+   AND i.snapshot_run_id = ia.snapshot_run_id
+  WHERE ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+    AND ia.principal_type = 'APP_ROLE'
+    AND i.entity = 'Refex'
+),
+app_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN engagement_reporting.principal p
+    ON p.environment = pu.environment
+   AND p.application_id = pu.application_id
+   AND p.principal_id = pu.principal_id
+   AND p.principal_type = pu.principal_type
+   AND p.is_current = true
+  WHERE pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+    AND lower(coalesce(p.principal_name, p.principal_id, '')) LIKE '%refex%'
+    AND lower(coalesce(p.principal_name, p.principal_id, '')) NOT LIKE '%extrovis%'
+  UNION
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN process_roles pr ON pr.role_id = pu.principal_id
+  WHERE pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+)
 SELECT json_build_object(
-  'total_users', (SELECT count(*) FROM engagement_reporting.\"user\" WHERE snapshot_run_id = (SELECT snapshot_run_id FROM latest_users)),
-  'signed_in_users', (SELECT count(*) FROM engagement_reporting.\"user\" WHERE snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) AND ever_logged_in),
-  'signed_in_today', (SELECT count(*) FROM engagement_reporting.\"user\" WHERE snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) AND (last_sign_in AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'never_logged_in', (SELECT count(*) FROM engagement_reporting.\"user\" WHERE snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) AND NOT ever_logged_in)
+  'total_users', (SELECT count(*) FROM app_members),
+  'signed_in_users', (
+    SELECT count(*)
+    FROM engagement_reporting.\"user\" u
+    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    JOIN app_members am ON am.user_id = u.user_id
+    WHERE COALESCE(u.ever_logged_in, false)
+  ),
+  'signed_in_today', (
+    SELECT count(*)
+    FROM engagement_reporting.\"user\" u
+    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    JOIN app_members am ON am.user_id = u.user_id
+    WHERE u.last_sign_in IS NOT NULL
+      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+        = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  ),
+  'never_logged_in', (
+    SELECT count(*)
+    FROM engagement_reporting.\"user\" u
+    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    JOIN app_members am ON am.user_id = u.user_id
+    WHERE NOT COALESCE(u.ever_logged_in, false)
+  )
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -54,18 +119,29 @@ sla AS (
   SELECT instance_id, process_status,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
     (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at
+    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at,
+    (
+      process_status = 'Completed'
+      OR (
+        process_status = 'InProgress'
+        AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+      )
+    ) AS is_closed,
+    (
+      process_status = 'InProgress'
+      AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
+    ) AS is_open
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id AND i.entity = 'Refex'
 )
 SELECT json_build_object(
   'total_tickets', (SELECT count(*) FROM sla),
-  'open_tickets', (SELECT count(*) FROM sla WHERE process_status = 'InProgress'),
-  'closed_tickets', (SELECT count(*) FROM sla WHERE process_status = 'Completed'),
-  'sla_breached_open', (SELECT count(*) FROM sla WHERE process_status = 'InProgress' AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
-  'sla_breached_closed', (SELECT count(*) FROM sla WHERE process_status = 'Completed' AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
+  'open_tickets', (SELECT count(*) FROM sla WHERE is_open),
+  'closed_tickets', (SELECT count(*) FROM sla WHERE is_closed),
+  'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
+  'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE process_status = 'Completed' AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
+  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -88,15 +164,25 @@ SELECT json_agg(t) FROM (
     SELECT ia.principal_id AS user_id, count(*) AS open_count
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
-    WHERE ia.principal_type = 'USER' AND i.process_status = 'InProgress' AND i.entity = 'Refex'
+    WHERE ia.principal_type = 'USER'
+      AND i.entity = 'Refex'
+      AND i.process_status = 'InProgress'
+      AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     GROUP BY ia.principal_id
   ) open_t ON open_t.user_id = u.user_id
   LEFT JOIN (
     SELECT (source_payload->'_created_by'->>'_id') AS user_id, count(*) AS closed_count
     FROM engagement_reporting.item
-    WHERE process_status = 'Completed' AND entity = 'Refex'
+    WHERE entity = 'Refex'
       AND snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND (
+        process_status = 'Completed'
+        OR (
+          process_status = 'InProgress'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+        )
+      )
     GROUP BY (source_payload->'_created_by'->>'_id')
   ) closed_t ON closed_t.user_id = u.user_id
   WHERE (COALESCE(open_t.open_count,0) > 0 OR COALESCE(closed_t.closed_count,0) > 0)
@@ -206,7 +292,7 @@ ITSM_ROWS_HTML="$(jq -r '
   to_entries | map(
     "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.last_sign_in // "Never") + "</td>" +
+    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
     "</tr>"
@@ -217,7 +303,7 @@ PM_ROWS_HTML="$(jq -r '
   to_entries | map(
     "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.last_sign_in // "Never") + "</td>" +
+    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
     "</tr>"

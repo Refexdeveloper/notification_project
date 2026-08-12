@@ -46,17 +46,23 @@ async function invokeScheduleRunner(scheduleId, options = {}) {
   });
 
   const body = await res.text();
-  const sent =
-    res.ok &&
-    (/Email sent successfully/i.test(body) ||
-      /test send completed/i.test(body) ||
-      /ingest-render-send completed/i.test(body) ||
-      /render-and-send completed/i.test(body));
+  const looksLikeFailure =
+    !res.ok ||
+    /\bSTOP:/i.test(body) ||
+    /runbook execution timed out/i.test(body) ||
+    /unexpected error/i.test(body);
+  const looksLikeSuccess =
+    /Email sent successfully/i.test(body) ||
+    /test send completed/i.test(body) ||
+    /ingest-render-send completed/i.test(body) ||
+    /render-and-send completed/i.test(body);
+  // Never treat HTML report content as the failure message (REPORT_FILE_PATH responses).
+  const bodyIsHtml = /^\s*</.test(body) || /<!DOCTYPE html/i.test(body);
 
   return {
-    ok: sent,
+    ok: !looksLikeFailure && (looksLikeSuccess || (res.ok && bodyIsHtml)),
     status: res.status,
-    body: body.slice(0, 8000),
+    body: bodyIsHtml ? '[schedule-runner returned HTML report body]' : body.slice(0, 8000),
     schedule_id: scheduleId,
     test_recipient: options.testRecipient || null,
   };

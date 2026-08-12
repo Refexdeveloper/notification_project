@@ -99,7 +99,7 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
       <div className="flex items-center justify-between gap-3 mb-4">
         <p className="text-sm text-foreground-500">
           {backendMode
-            ? 'Start from a ready-made layout (ITSM / PM / Lead / simple), then click placeholders to edit.'
+            ? 'Open a template → Preview to see Ticket source. Use Apply Refex ITSM layout / Apply Extrovis layout to refresh HTML.'
             : 'HTML report designs for this app only — create several, publish the best.'}
         </p>
         <Button

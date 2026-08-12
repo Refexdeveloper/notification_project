@@ -145,6 +145,10 @@ deploy_backend() {
 
   if [[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]]; then
     log "Routing 100% live traffic to latest ${BACKEND_SERVICE} revision"
+    gcloud run services update-traffic "${BACKEND_SERVICE}" \
+      --project="${GCP_PROJECT}" \
+      --region="${GCP_REGION}" \
+      --to-latest
   fi
 
   local url
@@ -177,6 +181,10 @@ deploy_admin_ui() {
 
   if [[ "${DEPLOY_LIVE_TRAFFIC:-}" == "true" ]]; then
     log "Routing 100% live traffic to latest ${ADMIN_UI_SERVICE} revision"
+    gcloud run services update-traffic "${ADMIN_UI_SERVICE}" \
+      --project="${GCP_PROJECT}" \
+      --region="${GCP_REGION}" \
+      --to-latest
   fi
 
   local url

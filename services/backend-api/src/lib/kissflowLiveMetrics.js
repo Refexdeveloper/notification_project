@@ -9,8 +9,12 @@ const {
   fetchAllProcessItems,
   pickString,
   normalizeProcessStatus,
+  isItsmBusinessClosed,
+  isItsmBusinessOpen,
 } = require('./kissflowClient');
 const { saveEngagementCache } = require('./engagementCache');
+
+const ITSM_APP_ID = 'IT_Service_Management_A00';
 
 const APP_MEMBER_QUERY = `
 SELECT DISTINCT user_id
@@ -82,10 +86,16 @@ function normalizeUserRow(raw) {
   };
 }
 
-function countTicketStatuses(items) {
+function countTicketStatuses(items, { applicationId } = {}) {
+  const itsm = applicationId === ITSM_APP_ID;
   let open = 0;
   let closed = 0;
   for (const raw of items) {
+    if (itsm) {
+      if (isItsmBusinessOpen(raw)) open += 1;
+      else if (isItsmBusinessClosed(raw)) closed += 1;
+      continue;
+    }
     const status = normalizeProcessStatus(raw);
     if (status === 'InProgress') open += 1;
     if (status === 'Completed') closed += 1;
@@ -131,10 +141,13 @@ function collectRelatedUserIdsFromItems(items) {
   return ids;
 }
 
-function applyItemCountsToUsers(userRows, items) {
+function applyItemCountsToUsers(userRows, items, { applicationId } = {}) {
+  const itsm = applicationId === ITSM_APP_ID;
   const byUser = new Map(userRows.map((u) => [u.user_id, { ...u }]));
   for (const item of items || []) {
     const status = normalizeProcessStatus(item);
+    const closed = itsm ? isItsmBusinessClosed(item) : status === 'Completed';
+    const open = itsm ? isItsmBusinessOpen(item) : status === 'InProgress';
     const assigneeIds = new Set();
     pushUserId(assigneeIds, item.Assigned_To);
     pushUserId(assigneeIds, item.Assignee);
@@ -147,8 +160,8 @@ function applyItemCountsToUsers(userRows, items) {
       const row = byUser.get(userId);
       if (!row) continue;
       row.assigned = (row.assigned || 0) + 1;
-      if (status === 'InProgress') row.open_count = (row.open_count || 0) + 1;
-      if (status === 'Completed') row.completed_count = (row.completed_count || 0) + 1;
+      if (open) row.open_count = (row.open_count || 0) + 1;
+      if (closed) row.completed_count = (row.completed_count || 0) + 1;
     }
   }
   return [...byUser.values()];
@@ -243,7 +256,7 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
       credentials,
     });
     allItems = allItems.concat(items);
-    const counts = countTicketStatuses(items);
+    const counts = countTicketStatuses(items, { applicationId });
     openTickets += counts.open;
     closedTickets += counts.closed;
   }
@@ -282,7 +295,7 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
       has_app_role: Boolean(snap.has_app_role) || row.has_app_role,
     };
   });
-  userRows = applyItemCountsToUsers(userRows, allItems);
+  userRows = applyItemCountsToUsers(userRows, allItems, { applicationId });
 
   const totals = buildEngagementTotals(userRows);
   totals.open_tickets = openTickets;

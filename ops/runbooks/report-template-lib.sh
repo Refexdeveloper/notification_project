@@ -37,8 +37,16 @@ report_template_pg_conn() {
 
 report_template_seed_for_app() {
   case "${1:-}" in
-    IT_Service_Management_A00) printf '%s' 'db/seeds/itsm-engagement-template.html' ;;
+    IT_Service_Management_A00)
+      # Extrovis process uses the Extrovis seed (no User Sign-in Overview).
+      if [[ "${ITSM_PROCESS_ID:-${PROCESS_ID:-}}" == *[Ee]xtrovis* ]]; then
+        printf '%s' 'db/seeds/itsm-extrovis-engagement-template.html'
+      else
+        printf '%s' 'db/seeds/itsm-engagement-template.html'
+      fi
+      ;;
     Project_Management_Tracker_A00) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
+    Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
     *) return 1 ;;
   esac

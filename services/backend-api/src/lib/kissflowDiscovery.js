@@ -331,5 +331,7 @@ module.exports = {
   extractProcessStatus,
   mergeIds,
   normalizeIdList,
+  tryDiscoverProcesses,
+  tryDiscoverOptionalResources,
   validateAndDiscoverRegistrationInput,
 };

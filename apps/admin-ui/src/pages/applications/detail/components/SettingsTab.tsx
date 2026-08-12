@@ -5,7 +5,12 @@ import {
   updateApplicationFromForm,
   type KissflowApplication,
 } from '@/mocks/applications';
-import { deleteApplicationOnBackend, loadCredentialsStatusFromBackend, updateApplicationOnBackend } from '@/services/applicationsApi';
+import {
+  attachResourcesOnBackend,
+  deleteApplicationOnBackend,
+  loadCredentialsStatusFromBackend,
+  updateApplicationOnBackend,
+} from '@/services/applicationsApi';
 import type { CredentialsStatusResult } from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
@@ -43,6 +48,8 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
   const [deleting, setDeleting] = useState(false);
   const [credentialsStatus, setCredentialsStatus] = useState<CredentialsStatusResult | null>(null);
   const [credentialsLoading, setCredentialsLoading] = useState(false);
+  const [savingResources, setSavingResources] = useState(false);
+  const [resourceMessage, setResourceMessage] = useState('');
 
   useEffect(() => {
     setAccountId(app.accountId);
@@ -61,6 +68,7 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setAccessKeySecret('');
     setError('');
     setSaved(false);
+    setResourceMessage('');
     setDeleteDialogOpen(false);
     setDeleting(false);
   }, [app.id, app.lastSync]);
@@ -151,6 +159,43 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     setSaved(true);
     onSaved?.();
     setTimeout(() => setSaved(false), 2500);
+  };
+
+  const saveResources = async () => {
+    if (!backendMode) return;
+    const nextProcesses = processIds.map((id) => id.trim()).filter(Boolean);
+    const nextDataforms = dataformIds.map((id) => id.trim()).filter(Boolean);
+    const nextBoards = boardIds.map((id) => id.trim()).filter(Boolean);
+    const nextDatasets = datasetIds.map((id) => id.trim()).filter(Boolean);
+    if (!nextProcesses.length && !nextDataforms.length && !nextBoards.length && !nextDatasets.length) {
+      setError('Add at least one Process, Dataform, Board, or Dataset ID.');
+      return;
+    }
+    setSavingResources(true);
+    setError('');
+    setResourceMessage('');
+    const result = await attachResourcesOnBackend(app, {
+      process_ids: nextProcesses,
+      dataform_ids: nextDataforms,
+      board_ids: nextBoards,
+      dataset_ids: nextDatasets,
+      sync_fields: true,
+    });
+    setSavingResources(false);
+    if (!result.ok) {
+      setError(result.error || 'Could not add resources.');
+      return;
+    }
+    if (result.process_ids) setProcessIds(toRows(result.process_ids));
+    if (result.dataform_ids) setDataformIds(toRows(result.dataform_ids));
+    if (result.board_ids) setBoardIds(toRows(result.board_ids));
+    if (result.dataset_ids) setDatasetIds(toRows(result.dataset_ids));
+    const added = result.added_process_ids?.length
+      ? ` Added ${result.added_process_ids.length} process(es) and synced fields.`
+      : '';
+    const warn = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
+    setResourceMessage(`Resources saved.${added}${warn}`);
+    onSaved?.();
   };
 
   const remove = async () => {
@@ -265,59 +310,56 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
 
         <section className="bg-white border border-background-300/60 rounded-xl p-4 space-y-3">
           <h3 className="text-sm font-semibold text-foreground-900">
-            {backendMode ? 'Registered processes' : 'Resource IDs'}
+            {backendMode ? 'Processes & resources' : 'Resource IDs'}
           </h3>
-          {backendMode ? (
-            <>
-              <p className="text-[11px] text-foreground-400 -mt-1">
-                Processes linked in PostgreSQL during registration and field sync. Edit via re-registration runbooks.
-              </p>
-              {processIds.filter((id) => id.trim()).length === 0 ? (
-                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                  No processes registered yet. Run field sync on the Sync fields tab.
-                </p>
-              ) : (
-                <ul className="space-y-1.5">
-                  {processIds.filter((id) => id.trim()).map((pid) => (
-                    <li key={pid} className="font-mono text-xs bg-background-50 border rounded-lg px-3 py-2">
-                      {pid}
-                    </li>
-                  ))}
-                </ul>
+          <p className="text-[11px] text-foreground-400 -mt-1">
+            {backendMode
+              ? 'Add Kissflow Process / Dataform / Board / Dataset IDs to this connected app. New processes are validated in Kissflow and field-synced automatically.'
+              : 'Add one ID per row. Use + to add more.'}
+          </p>
+          <IdRowList
+            label="Process IDs"
+            icon="ri-git-branch-line"
+            placeholder="e.g. Travel_Management_A02"
+            values={processIds}
+            onChange={setProcessIds}
+          />
+          <IdRowList
+            label="Dataform IDs"
+            icon="ri-survey-line"
+            placeholder="e.g. DF_EmployeeInfo"
+            values={dataformIds}
+            onChange={setDataformIds}
+          />
+          <IdRowList
+            label="Board IDs"
+            icon="ri-kanban-view"
+            placeholder="e.g. Board_NewHire"
+            values={boardIds}
+            onChange={setBoardIds}
+          />
+          <IdRowList
+            label="Dataset IDs"
+            icon="ri-database-2-line"
+            placeholder="e.g. DS_Employees"
+            values={datasetIds}
+            onChange={setDatasetIds}
+          />
+          {backendMode && (
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => void saveResources()}
+                disabled={savingResources}
+                className="h-9 px-3.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <i className="ri-add-line"></i>
+                {savingResources ? 'Saving resources…' : 'Save resources'}
+              </button>
+              {resourceMessage && (
+                <span className="text-xs text-accent-700 font-medium">{resourceMessage}</span>
               )}
-            </>
-          ) : (
-            <>
-              <p className="text-[11px] text-foreground-400 -mt-1">Add one ID per row. Use + to add more.</p>
-              <IdRowList
-                label="Process IDs"
-                icon="ri-git-branch-line"
-                placeholder="e.g. Lead_tracker_1_A00"
-                values={processIds}
-                onChange={setProcessIds}
-              />
-              <IdRowList
-                label="Dataform IDs"
-                icon="ri-survey-line"
-                placeholder="e.g. DF_EmployeeInfo"
-                values={dataformIds}
-                onChange={setDataformIds}
-              />
-              <IdRowList
-                label="Board IDs"
-                icon="ri-kanban-view"
-                placeholder="e.g. Board_NewHire"
-                values={boardIds}
-                onChange={setBoardIds}
-              />
-              <IdRowList
-                label="Dataset IDs"
-                icon="ri-database-2-line"
-                placeholder="e.g. DS_Employees"
-                values={datasetIds}
-                onChange={setDatasetIds}
-              />
-            </>
+            </div>
           )}
         </section>
 

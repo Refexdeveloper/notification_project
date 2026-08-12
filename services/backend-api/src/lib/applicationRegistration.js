@@ -364,10 +364,170 @@ async function updateApplicationMetadata(
   return updated[0];
 }
 
+/**
+ * Attach additional processes / optional resource IDs to an already-registered application.
+ * processIds must already be Kissflow-validated by the caller when provided.
+ */
+async function attachApplicationResources(
+  client,
+  {
+    environment,
+    applicationId,
+    processIds = [],
+    dataformIds,
+    boardIds,
+    datasetIds,
+    actorSubject,
+    correlationId,
+  },
+) {
+  const { rows } = await client.query(
+    `SELECT application_id, application_name, source_payload
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+  if (!rows.length) {
+    const err = new Error('Application not found');
+    err.code = 'APPLICATION_NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+
+  const existingPayload =
+    rows[0].source_payload && typeof rows[0].source_payload === 'object'
+      ? rows[0].source_payload
+      : {};
+
+  const addedProcessIds = [];
+  for (const processId of normalizeStringList(processIds)) {
+    const existingProcess = await client.query(
+      `SELECT process_id, application_id, is_current
+       FROM engagement_reporting.process
+       WHERE environment = $1 AND process_id = $2`,
+      [environment, processId],
+    );
+    if (
+      existingProcess.rows.length &&
+      existingProcess.rows[0].application_id !== applicationId &&
+      existingProcess.rows[0].is_current
+    ) {
+      throw new RegistrationConflictError(
+        'PROCESS_ALREADY_REGISTERED',
+        `Process ${processId} is already registered under application ${existingProcess.rows[0].application_id}`,
+      );
+    }
+
+    const wasNew =
+      !existingProcess.rows.length ||
+      !existingProcess.rows[0].is_current ||
+      existingProcess.rows[0].application_id !== applicationId;
+
+    await client.query(
+      `INSERT INTO engagement_reporting.process
+         (environment, process_id, application_id, process_name, first_seen_at, last_seen_at, is_current, source_payload)
+       VALUES ($1, $2, $3, $4, now(), now(), true, '{}'::jsonb)
+       ON CONFLICT (environment, process_id) DO UPDATE
+         SET application_id = EXCLUDED.application_id,
+             process_name = EXCLUDED.process_name,
+             last_seen_at = now(),
+             is_current = true`,
+      [environment, processId, applicationId, processId],
+    );
+    if (wasNew) addedProcessIds.push(processId);
+  }
+
+  const mergeList = (key, incoming) => {
+    if (incoming === undefined) return undefined;
+    const prev = normalizeStringList(existingPayload[key]);
+    return [...new Set([...prev, ...normalizeStringList(incoming)])];
+  };
+
+  const payloadPatch = {};
+  const nextDataforms = mergeList('dataform_ids', dataformIds);
+  const nextBoards = mergeList('board_ids', boardIds);
+  const nextDatasets = mergeList('dataset_ids', datasetIds);
+  if (nextDataforms) payloadPatch.dataform_ids = nextDataforms;
+  if (nextBoards) payloadPatch.board_ids = nextBoards;
+  if (nextDatasets) payloadPatch.dataset_ids = nextDatasets;
+
+  if (Object.keys(payloadPatch).length) {
+    await client.query(
+      `UPDATE engagement_reporting.application
+       SET last_seen_at = now(),
+           source_payload = COALESCE(source_payload, '{}'::jsonb) || $3::jsonb
+       WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+      [environment, applicationId, JSON.stringify(payloadPatch)],
+    );
+  } else {
+    await client.query(
+      `UPDATE engagement_reporting.application
+       SET last_seen_at = now()
+       WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+      [environment, applicationId],
+    );
+  }
+
+  const { rows: processRows } = await client.query(
+    `SELECT process_id
+     FROM engagement_reporting.process
+     WHERE environment = $1 AND application_id = $2 AND is_current = true
+     ORDER BY process_name`,
+    [environment, applicationId],
+  );
+
+  const { rows: appRows } = await client.query(
+    `SELECT
+       environment,
+       application_id,
+       application_name,
+       last_seen_at,
+       is_current,
+       source_payload->>'kissflow_account_id' AS kissflow_account_id,
+       source_payload->>'subdomain' AS subdomain,
+       source_payload->>'region' AS region,
+       source_payload->>'description' AS description,
+       COALESCE(source_payload->'dataform_ids', '[]'::jsonb) AS dataform_ids,
+       COALESCE(source_payload->'board_ids', '[]'::jsonb) AS board_ids,
+       COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+
+  await client.query(
+    `INSERT INTO engagement_reporting.audit_event
+       (actor_subject, action, resource_type, resource_id, correlation_id, evidence)
+     VALUES ($1, 'ATTACH_APPLICATION_RESOURCES', 'application', $2, $3, $4::jsonb)`,
+    [
+      actorSubject,
+      applicationId,
+      correlationId,
+      JSON.stringify({
+        process_ids: normalizeStringList(processIds),
+        added_process_ids: addedProcessIds,
+        dataform_ids: nextDataforms || null,
+        board_ids: nextBoards || null,
+        dataset_ids: nextDatasets || null,
+      }),
+    ],
+  );
+
+  return {
+    item: appRows[0],
+    process_ids: processRows.map((r) => r.process_id),
+    added_process_ids: addedProcessIds,
+    dataform_ids: nextDataforms || normalizeStringList(existingPayload.dataform_ids),
+    board_ids: nextBoards || normalizeStringList(existingPayload.board_ids),
+    dataset_ids: nextDatasets || normalizeStringList(existingPayload.dataset_ids),
+  };
+}
+
 module.exports = {
   RegistrationConflictError,
   normalizeRegistrationBody,
   registerApplication,
   deleteApplication,
   updateApplicationMetadata,
+  attachApplicationResources,
 };

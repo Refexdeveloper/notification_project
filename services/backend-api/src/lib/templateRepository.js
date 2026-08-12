@@ -156,11 +156,16 @@ async function createTemplate(client, {
   status,
   contentRef,
   checksum,
+  configExtras,
 }) {
   const templateId = crypto.randomUUID();
   const bindingDefId = crypto.randomUUID();
   const bindingVersionId = crypto.randomUUID();
   const accountId = await resolveAccountId(client, environment, applicationId);
+  const extras =
+    configExtras && typeof configExtras === 'object' && !Array.isArray(configExtras)
+      ? configExtras
+      : {};
 
   await client.query(
     `INSERT INTO engagement_reporting.report_template (report_template_id, name)
@@ -196,6 +201,7 @@ async function createTemplate(client, {
         subject: subject || name,
         description: description || '',
         status: status || 'draft',
+        ...extras,
       }),
     ],
   );

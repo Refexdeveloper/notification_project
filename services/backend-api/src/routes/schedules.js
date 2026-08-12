@@ -39,6 +39,7 @@ SELECT
   rdv.config->>'legacy_scheduler_id' AS legacy_scheduler_id,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
+  rdv.config->>'entity_filter' AS entity_filter,
   rdv.report_definition_version_id::text AS report_definition_version_id,
   COALESCE(
     json_agg(
@@ -100,6 +101,7 @@ SELECT
   rdv.config->>'legacy_scheduler_id' AS legacy_scheduler_id,
   rdv.config->>'website_filter' AS website_filter,
   rdv.config->>'user_group_filter' AS user_group_filter,
+  rdv.config->>'entity_filter' AS entity_filter,
   rdv.report_definition_version_id::text AS report_definition_version_id,
   COALESCE(
     json_agg(
@@ -196,6 +198,7 @@ function mapScheduleRow(row) {
     from_email: row.from_email || null,
     website_filter: row.website_filter || null,
     user_group_filter: row.user_group_filter || null,
+    entity_filter: row.entity_filter || null,
     cron_expression: row.cron_expression,
     timezone: row.timezone,
     is_active: row.is_active,
@@ -303,6 +306,7 @@ router.post('/', async (req, res) => {
       subject: body.subject || name,
       websiteFilter: body.website_filter || null,
       userGroupFilter: body.user_group_filter || null,
+      entityFilter: body.entity_filter || null,
       isActive,
     });
     await client.query('COMMIT');
@@ -427,7 +431,7 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       status: 'delivered',
       log_excerpt: (runnerResult.body || '').slice(0, 1200),
       message:
-        'Test email sent using the last cached report (no Kissflow refresh). Check inbox and spam folder.',
+        'Test email sent (latest published template rendered from PostgreSQL snapshot). Check inbox and spam folder.',
     });
   } catch (err) {
     if (err.code === 'SCHEDULE_RUNNER_NOT_CONFIGURED') {
@@ -503,6 +507,7 @@ router.patch('/:scheduleId', async (req, res) => {
   const hasProcessId = Object.prototype.hasOwnProperty.call(body, 'process_id');
   const hasWebsiteFilter = Object.prototype.hasOwnProperty.call(body, 'website_filter');
   const hasUserGroupFilter = Object.prototype.hasOwnProperty.call(body, 'user_group_filter');
+  const hasEntityFilter = Object.prototype.hasOwnProperty.call(body, 'entity_filter');
   const hasSubject = Object.prototype.hasOwnProperty.call(body, 'subject');
 
   if (
@@ -517,6 +522,7 @@ router.patch('/:scheduleId', async (req, res) => {
     !hasProcessId &&
     !hasWebsiteFilter &&
     !hasUserGroupFilter &&
+    !hasEntityFilter &&
     !hasSubject
   ) {
     return fail(
@@ -726,6 +732,11 @@ router.patch('/:scheduleId', async (req, res) => {
         const filter = String(body.user_group_filter || '').trim();
         if (filter) configPatch.user_group_filter = filter;
         else configPatch.user_group_filter = null;
+      }
+      if (hasEntityFilter) {
+        const filter = String(body.entity_filter || '').trim();
+        if (filter) configPatch.entity_filter = filter;
+        else configPatch.entity_filter = null;
       }
       if (hasSubject) {
         const subject = String(body.subject || '').trim();

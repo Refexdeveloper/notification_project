@@ -56,12 +56,35 @@ export function resolveBackendApplicationId(app: KissflowApplication): string {
   return appId || routeId;
 }
 
+function asIdList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map((entry) => String(entry || '').trim()).filter(Boolean);
+      }
+    } catch {
+      return value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
+
 function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
   const environment = mapEnvironment(row.environment);
   const envConfig = REFEX_ENV_CONFIG[environment];
   const lastSync = row.last_seen_at
     ? new Date(row.last_seen_at).toLocaleString()
     : '—';
+  const dataformIds = asIdList(row.dataform_ids);
+  const boardIds = asIdList(row.board_ids);
+  const datasetIds = asIdList(row.dataset_ids);
 
   return {
     id: `${row.environment}-${row.application_id}`,
@@ -75,9 +98,9 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
     environment,
     status: row.is_current ? 'Active' : 'Inactive',
     processIds: [],
-    dataformIds: [],
-    boardIds: [],
-    datasetIds: [],
+    dataformIds,
+    boardIds,
+    datasetIds,
     accessKeyId: '',
     accessKeySecret: '',
     credentialsConfigured: undefined,
@@ -86,9 +109,9 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
     created: lastSync,
     lastSync,
     connected: row.is_current,
-    dataformsCount: 0,
+    dataformsCount: dataformIds.length,
     processesCount: 0,
-    boardsCount: 0,
+    boardsCount: boardIds.length,
     templatesCount: 0,
     schedulersCount: 0,
   };
@@ -444,4 +467,70 @@ export async function updateApplicationOnBackend(
   }
 
   return { ok: true, application: mapRowToApplication(res.data.item) };
+}
+
+export type AttachResourcesPayload = {
+  process_ids?: string[];
+  dataform_ids?: string[];
+  board_ids?: string[];
+  dataset_ids?: string[];
+  sync_fields?: boolean;
+};
+
+export type AttachResourcesResult = {
+  ok: boolean;
+  process_ids?: string[];
+  added_process_ids?: string[];
+  dataform_ids?: string[];
+  board_ids?: string[];
+  dataset_ids?: string[];
+  warnings?: string[];
+  error?: string;
+};
+
+/** Add processes / dataforms / boards / datasets to an already-connected application. */
+export async function attachResourcesOnBackend(
+  app: KissflowApplication,
+  payload: AttachResourcesPayload,
+): Promise<AttachResourcesResult> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+
+  const applicationId = resolveBackendApplicationId(app);
+  const environment = toDbEnvironment(app.environment);
+  const res = await apiV1Fetch<{
+    process_ids: string[];
+    added_process_ids: string[];
+    dataform_ids: string[];
+    board_ids: string[];
+    dataset_ids: string[];
+    warnings?: string[];
+  }>(
+    `/applications/${encodeURIComponent(applicationId)}/resources?environment=${encodeURIComponent(environment)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        process_ids: payload.process_ids,
+        dataform_ids: payload.dataform_ids,
+        board_ids: payload.board_ids,
+        dataset_ids: payload.dataset_ids,
+        sync_fields: payload.sync_fields !== false,
+      }),
+    },
+  );
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Failed to add resources' };
+  }
+
+  return {
+    ok: true,
+    process_ids: res.data.process_ids,
+    added_process_ids: res.data.added_process_ids,
+    dataform_ids: res.data.dataform_ids,
+    board_ids: res.data.board_ids,
+    dataset_ids: res.data.dataset_ids,
+    warnings: res.data.warnings,
+  };
 }

@@ -101,6 +101,9 @@ export type BackendApplicationRow = {
   subdomain?: string | null;
   region?: string | null;
   description?: string | null;
+  dataform_ids?: string[] | unknown;
+  board_ids?: string[] | unknown;
+  dataset_ids?: string[] | unknown;
 };
 
 export type ApplicationsListResponse = {

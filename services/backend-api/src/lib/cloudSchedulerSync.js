@@ -85,6 +85,8 @@ async function syncScheduleCloudJob(row) {
     name: jobResource,
     schedule: cron,
     timeZone: timezone,
+    // Ingest+render can exceed the 180s default; align with schedule-runner timeout.
+    attemptDeadline: '1800s',
     httpTarget: {
       uri,
       httpMethod: 'GET',
@@ -98,14 +100,19 @@ async function syncScheduleCloudJob(row) {
   let action = 'updated';
   try {
     await schedulerFetch(`${jobResource}`, { method: 'GET', token });
-    await schedulerFetch(`${jobResource}?updateMask=schedule,timeZone,httpTarget`, {
-      method: 'PATCH',
-      body: jobBody,
-      token,
-    });
+    await schedulerFetch(
+      `${jobResource}?updateMask=schedule,timeZone,httpTarget,attemptDeadline`,
+      {
+        method: 'PATCH',
+        body: jobBody,
+        token,
+      },
+    );
   } catch (err) {
     if (err.status === 404) {
-      await schedulerFetch(`${parent}/jobs?jobId=${encodeURIComponent(jobName)}`, {
+      // Job id comes from body.name (.../jobs/{jobId}). Do not pass ?jobId= —
+      // Cloud Scheduler v1 rejects that query parameter.
+      await schedulerFetch(`${parent}/jobs`, {
         method: 'POST',
         body: jobBody,
         token,

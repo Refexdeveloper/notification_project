@@ -4,11 +4,13 @@ const { getPool } = require('./db');
 const { syncAllProcessFields } = require('./fieldSyncService');
 const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
 const { normalizeEnvironment } = require('./kissflowClient');
+const { ensureConnectReportArtifacts } = require('./connectReportArtifacts');
 
 /**
  * First-time (or manual) bootstrap after Connect:
  * 1) Sync field catalogs for all processes
  * 2) Live-fetch related users + items once and cache on application (2h TTL reads)
+ * 3) Ensure one draft HTML template + one paused schedule (idempotent)
  */
 async function bootstrapApplication({ environment, applicationId }) {
   const env = normalizeEnvironment(environment);
@@ -36,6 +38,26 @@ async function bootstrapApplication({ environment, applicationId }) {
     };
   }
 
+  let reportArtifacts = null;
+  let reportArtifactsError = null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    reportArtifacts = await ensureConnectReportArtifacts(client, {
+      environment: env,
+      applicationId,
+    });
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    reportArtifactsError = {
+      code: err.code || 'CONNECT_REPORT_ARTIFACTS_FAILED',
+      message: err.message,
+    };
+  } finally {
+    client.release();
+  }
+
   return {
     application_id: applicationId,
     environment: env,
@@ -53,6 +75,8 @@ async function bootstrapApplication({ environment, applicationId }) {
         }
       : null,
     engagement_error: engagementError,
+    report_artifacts: reportArtifacts,
+    report_artifacts_error: reportArtifactsError,
     bootstrapped_at: new Date().toISOString(),
   };
 }

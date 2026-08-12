@@ -112,3 +112,48 @@ export async function syncFieldsOnBackend(
     syncedAt: res.data.synced_at || undefined,
   };
 }
+
+/** Sync field catalogs for every registered process on the application. */
+export async function syncAllFieldsOnBackend(
+  app: KissflowApplication,
+): Promise<FieldSyncResult & { syncedProcesses?: number; failedProcesses?: string[] }> {
+  const processIds = (app.processIds || []).map((id) => id.trim()).filter(Boolean);
+  if (!processIds.length) {
+    return {
+      ok: false,
+      fields: [],
+      itemCount: 0,
+      sampled: 0,
+      error: 'No processes registered on this application yet',
+    };
+  }
+
+  const failed: string[] = [];
+  let lastOk: FieldSyncResult | null = null;
+  for (const processId of processIds) {
+    const result = await syncFieldsOnBackend(app, processId);
+    if (!result.ok) {
+      failed.push(`${processId}: ${result.error || 'failed'}`);
+      continue;
+    }
+    lastOk = result;
+  }
+
+  if (!lastOk) {
+    return {
+      ok: false,
+      fields: [],
+      itemCount: 0,
+      sampled: 0,
+      error: failed.join('; ') || 'Field sync failed',
+      failedProcesses: failed,
+    };
+  }
+
+  return {
+    ...lastOk,
+    ok: true,
+    syncedProcesses: processIds.length - failed.length,
+    failedProcesses: failed,
+  };
+}

@@ -13,6 +13,7 @@ import HistoryPage from "@/pages/history/page";
 import LogsPage from "@/pages/logs/page";
 import AuditLogsPage from "@/pages/audit-logs/page";
 import SettingsPage from "@/pages/settings/page";
+import EmailSettingsPage from "@/pages/email-settings/page";
 import UsersPage from "@/pages/users/page";
 import PlatformUsersPage from "@/pages/platform-users/page";
 import LoginPage from "@/pages/login/page";
@@ -66,6 +67,7 @@ const routes: RouteObject[] = [
       </PrototypeOnlyGate>
     ),
   },
+  { path: "/email-settings", element: <EmailSettingsPage /> },
   { path: "*", element: <NotFound /> },
 ];
 

@@ -102,10 +102,33 @@ const STARTER_CATALOG = [
       'SlaBreachedTotal',
       'OpenedToday',
       'ClosedToday',
+      'SourceBreakdownHtml',
       'UserTableHtml',
       'ReportBody',
     ],
     best_for: ['IT_Service_Management_A00', 'itsm'],
+  },
+  {
+    id: 'itsm-extrovis',
+    name: 'Extrovis ITSM report',
+    description: 'Extrovis ticket report — no user sign-in overview (tickets, source, activity, assignees only).',
+    seed_path: 'db/seeds/itsm-extrovis-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalTickets',
+      'OpenTickets',
+      'ClosedTickets',
+      'SlaBreachedTotal',
+      'SlaBreachedOpen',
+      'SlaBreachedClosed',
+      'OpenedToday',
+      'ClosedToday',
+      'SourceBreakdownHtml',
+      'UserTableHtml',
+      'ReportBody',
+    ],
+    best_for: ['extrovis', 'IT_Service_Management_A00'],
   },
   {
     id: 'pm',
@@ -125,6 +148,26 @@ const STARTER_CATALOG = [
       'ReportBody',
     ],
     best_for: ['Project_Management_Tracker_A00', 'pm', 'project'],
+  },
+  {
+    id: 'solar-reinvestment',
+    name: 'Solar Reinvestment Request report',
+    description:
+      'Solar Expense Hub layout with Total / Sign-in Rate Today / Open / Closed Requests + MIS user table.',
+    seed_path: 'db/seeds/solar-reinvestment-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalRequests',
+      'SignInRateToday',
+      'OpenRequests',
+      'ClosedRequests',
+      'OpenedToday',
+      'ClosedToday',
+      'UserTableHtml',
+      'ReportBody',
+    ],
+    best_for: ['Solar_Site_Expense_Governance_Syst_A00', 'solar', 'reinvestment', 'technician_reimbursement'],
   },
   {
     id: 'lead',
@@ -171,12 +214,58 @@ const STARTER_CATALOG = [
   },
 ];
 
-function suggestStarterId(applicationId = '') {
+/**
+ * Pick a starter layout from application / process / field signals.
+ * Application id wins over attached process names (e.g. ITSM app with Extrovis process).
+ * @param {string} applicationId
+ * @param {{ applicationName?: string, processIds?: string[], processNames?: string[], fieldNames?: string[] }} [context]
+ */
+function suggestStarterId(applicationId = '', context = {}) {
   const id = String(applicationId || '').toLowerCase();
+  if (id.includes('extrovis')) return 'itsm-extrovis';
   if (id.includes('it_service') || id.includes('itsm')) return 'itsm';
   if (id.includes('project_management') || id.includes('project_sub_task')) return 'pm';
+  if (id.includes('solar') || id.includes('technician_reimbursement') || id.includes('reinvestment')) {
+    return 'solar-reinvestment';
+  }
   if (id.includes('lead')) return 'lead';
   if (id.includes('travel') || id.includes('expense')) return 'simple';
+
+  const haystack = [
+    context.applicationName,
+    ...(context.processIds || []),
+    ...(context.processNames || []),
+    ...(context.fieldNames || []),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (haystack.includes('extrovis')) return 'itsm-extrovis';
+  if (
+    haystack.includes('it_service')
+    || haystack.includes('itsm')
+    || haystack.includes('sla_breach')
+    || (haystack.includes('ticket') && haystack.includes('assigned'))
+  ) {
+    return 'itsm';
+  }
+  if (
+    haystack.includes('project_management')
+    || haystack.includes('project_sub_task')
+    || (haystack.includes('project') && haystack.includes('task'))
+  ) {
+    return 'pm';
+  }
+  if (
+    haystack.includes('solar')
+    || haystack.includes('technician_reimbursement')
+    || haystack.includes('reinvestment')
+  ) {
+    return 'solar-reinvestment';
+  }
+  if (haystack.includes('lead')) return 'lead';
+  if (haystack.includes('travel') || haystack.includes('expense')) return 'simple';
   return 'simple';
 }
 

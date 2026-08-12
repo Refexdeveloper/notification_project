@@ -25,10 +25,13 @@ import {
   detectTemplateAppKind,
   type PreviewContext,
 } from '@/lib/templatePreview';
+import { ensureItsmSourcePlaceholders, preferExtrovisStarter } from '@/lib/itsmTemplateLayout';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import {
   deleteTemplateOnBackend,
+  generateTemplateHtmlOnBackend,
+  loadReportStarterHtmlFromBackend,
   loadTemplateFromBackend,
   loadTemplateUsageFromBackend,
   loadTemplateVersionFromBackend,
@@ -40,6 +43,7 @@ import {
 import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
 import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
 import PlaceholderPicker from '@/pages/templates/detail/components/PlaceholderPicker';
+import AiGeneratePanel from '@/pages/templates/detail/components/AiGeneratePanel';
 import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
 import type { TemplateVersion } from '@/mocks/templates';
 import {
@@ -79,6 +83,8 @@ export default function TemplateDetailPage() {
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [testEmailOpen, setTestEmailOpen] = useState(false);
   const [starterOpen, setStarterOpen] = useState(false);
+  const [layoutBusy, setLayoutBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const htmlEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const subjectInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -123,7 +129,12 @@ export default function TemplateDetailPage() {
       setName(result.template.name);
       setSubject(result.template.subject);
       setDescription(result.template.description);
-      setHtml(result.template.html);
+      const kind = detectTemplateAppKind({
+        kissflowAppId: app?.appId || appRouteId,
+        applicationId: app?.id || appRouteId,
+      });
+      const rawHtml = result.template.html || '';
+      setHtml(kind === 'itsm' ? ensureItsmSourcePlaceholders(rawHtml).html : rawHtml);
       setStatus(result.template.status);
       setLoading(false);
     }
@@ -209,6 +220,54 @@ export default function TemplateDetailPage() {
   const placeholderHints = useMemo(() => extractVariables(html, subject), [html, subject]);
 
   const appKind = useMemo(() => detectTemplateAppKind(previewContext), [previewContext]);
+
+  const applyLatestItsmLayout = useCallback(async () => {
+    if (!backendMode || !id) return;
+    const appForSave =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+    if (!appForSave.id && !appRouteId) {
+      setLoadError('Missing application context. Open the template from an application tab.');
+      return;
+    }
+    const starterId = preferExtrovisStarter(name) ? 'itsm-extrovis' : 'itsm';
+    if (
+      !window.confirm(
+        `Replace this template HTML with the latest ${
+          starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'
+        } layout (includes Ticket source panels)?`,
+      )
+    ) {
+      return;
+    }
+    setLayoutBusy(true);
+    setLoadError(null);
+    setSaveMsg('');
+    const starter = await loadReportStarterHtmlFromBackend(appForSave, starterId);
+    if (!starter.ok || !starter.item?.html) {
+      setLoadError(starter.error || 'Could not load starter layout');
+      setLayoutBusy(false);
+      return;
+    }
+    const nextHtml = ensureItsmSourcePlaceholders(starter.item.html).html;
+    setHtml(nextHtml);
+    const updated = await updateTemplateOnBackend(appForSave, id, {
+      html: nextHtml,
+      description:
+        starterId === 'itsm-extrovis'
+          ? 'Extrovis ITSM report — tickets only (no user sign-in overview)'
+          : description || 'ITSM engagement report with ticket source breakdown',
+      status: status === 'published' ? 'published' : undefined,
+    });
+    setLayoutBusy(false);
+    if (!updated.ok) {
+      setLoadError(updated.error || 'Failed to save updated layout');
+      return;
+    }
+    setSaveMsg(
+      `Applied ${starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'} layout with Ticket source. Preview updated — Publish if still draft.`,
+    );
+    setMode('preview');
+  }, [backendMode, id, backendApp, appRouteId, name, description, status]);
 
   const insertPlaceholder = useCallback((token: string, target: 'html' | 'subject') => {
     if (target === 'subject') {
@@ -444,6 +503,45 @@ export default function TemplateDetailPage() {
     };
   };
 
+  const handleAiGenerate = async (prompt: string, includeCurrentHtml: boolean) => {
+    if (!backendMode) {
+      throw new Error('AI generate requires backend API mode');
+    }
+    const appForAi =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+
+    if (
+      html.trim() &&
+      !window.confirm(
+        includeCurrentHtml
+          ? 'AI will revise the current HTML in the editor. Continue? (Save draft still needed to persist.)'
+          : 'AI will replace the current HTML with a new layout. Continue? (Save draft still needed to persist.)',
+      )
+    ) {
+      return;
+    }
+
+    setAiBusy(true);
+    try {
+      const result = await generateTemplateHtmlOnBackend(appForAi, {
+        prompt,
+        currentHtml: html,
+        includeCurrentHtml,
+        templateName: name || appForAi.displayName || appForAi.name,
+      });
+      if (!result.ok || !result.html) {
+        throw new Error(result.error || 'AI HTML generation failed');
+      }
+      setHtml(result.html);
+      setMode('split');
+      const modelHint = result.model ? ` · ${result.model}` : '';
+      setSaveMsg(`AI draft loaded${modelHint} — save draft when ready`);
+      setTimeout(() => setSaveMsg(''), 5000);
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!id) return;
     setDeleteError(null);
@@ -604,6 +702,21 @@ export default function TemplateDetailPage() {
           >
             Test email
           </Button>
+          {backendMode && appKind === 'itsm' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() => void applyLatestItsmLayout()}
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy
+                ? 'Updating…'
+                : preferExtrovisStarter(name)
+                  ? 'Apply Extrovis layout'
+                  : 'Apply Refex ITSM layout'}
+            </Button>
+          )}
           {backendMode && (
             <Button
               variant="secondary"
@@ -712,6 +825,9 @@ export default function TemplateDetailPage() {
             HTML edits (or use <em>Test email</em>, which publishes first). Only the published HTML
             is emailed — draft-only changes are not sent.
           </div>
+          {backendMode && (
+            <AiGeneratePanel busy={aiBusy} onGenerate={handleAiGenerate} />
+          )}
           <PlaceholderPicker
             appKind={appKind}
             usedInTemplate={placeholderHints}

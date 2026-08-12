@@ -22,12 +22,13 @@ const dashboardRoutes = require('./routes/dashboard');
 const fieldsRoutes = require('./routes/fields');
 const platformUsersRoutes = require('./routes/platformUsers');
 const opsRoutes = require('./routes/ops');
+const settingsSmtpRoutes = require('./routes/settingsSmtp');
 
 function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(cors(resolveCorsOptions()));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '2mb' }));
   app.use(correlationMiddleware);
 
   const api = express.Router();
@@ -35,6 +36,7 @@ function createApp() {
   api.use('/auth', authRoutes);
   api.use('/users', usersRoutes);
   api.use('/platform-users', platformUsersRoutes);
+  api.use('/settings', settingsSmtpRoutes);
   api.use('/ops', opsRoutes);
   api.use('/applications', applicationsRoutes);
   api.use('/applications/:applicationId/engagement', engagementRoutes);

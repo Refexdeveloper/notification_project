@@ -3,6 +3,7 @@
 const CACHE_KEY_PATTERNS = {
   IT_Service_Management_A00: ['itsm:%'],
   Project_Management_Tracker_A00: ['pm:%'],
+  Solar_Site_Expense_Governance_Syst_A00: ['solar:%'],
   Lead_Trcaker_A00: ['lead-tracker:%'],
 };
 

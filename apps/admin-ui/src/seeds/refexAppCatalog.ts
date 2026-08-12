@@ -80,7 +80,7 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
     slug: 'solar',
     applicationName: 'Solar Expense Hub',
     kissflowAppId: 'Solar_Site_Expense_Governance_Syst_A00',
-    processName: 'Site Incharge Reimbursement Claim',
+    processName: 'Reinvestment Request',
     processId: 'Technician_Reimbursement__YTLM',
     icon: 'ri-sun-line',
     tint: 'bg-[#FFF7E6] text-[#D97706]',

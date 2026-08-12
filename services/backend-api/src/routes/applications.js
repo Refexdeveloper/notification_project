@@ -10,10 +10,17 @@ const {
   registerApplication,
   deleteApplication,
   updateApplicationMetadata,
+  attachApplicationResources,
 } = require('../lib/applicationRegistration');
-const { validateAndDiscoverRegistrationInput } = require('../lib/kissflowDiscovery');
+const {
+  validateAndDiscoverRegistrationInput,
+  tryDiscoverProcesses,
+  buildBaseUrl,
+  normalizeIdList,
+} = require('../lib/kissflowDiscovery');
 const { bootstrapApplication } = require('../lib/applicationBootstrap');
-const { normalizeEnvironment } = require('../lib/kissflowClient');
+const { normalizeEnvironment, resolveKissflowCredentials } = require('../lib/kissflowClient');
+const { syncProcessFields } = require('../lib/fieldSyncService');
 
 const router = express.Router();
 
@@ -27,7 +34,10 @@ SELECT
   source_payload->>'kissflow_account_id' AS kissflow_account_id,
   source_payload->>'subdomain' AS subdomain,
   source_payload->>'region' AS region,
-  source_payload->>'description' AS description
+  source_payload->>'description' AS description,
+  COALESCE(source_payload->'dataform_ids', '[]'::jsonb) AS dataform_ids,
+  COALESCE(source_payload->'board_ids', '[]'::jsonb) AS board_ids,
+  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids
 FROM engagement_reporting.application
 WHERE is_current = true
 ORDER BY application_name
@@ -368,7 +378,192 @@ router.get('/:applicationId/processes', async (req, res) => {
   }
 });
 
-/** First-time field sync + related-user engagement cache after Connect. */
+/**
+ * Add processes / dataforms / boards / datasets to an already-connected application.
+ * Processes are validated against Kissflow Admin Get-all-items before insert.
+ */
+router.post('/:applicationId/resources', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
+  }
+
+  const session = await resolveSession(req);
+  if (!session) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', 'No session context', 401);
+  }
+
+  const environment = normalizeEnvironment(
+    req.query.environment || req.body?.environment || 'production',
+  );
+  const applicationId = req.params.applicationId;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const processIds = normalizeIdList(body.process_ids ?? body.processIds);
+  const dataformIds = body.dataform_ids !== undefined || body.dataformIds !== undefined
+    ? normalizeIdList(body.dataform_ids ?? body.dataformIds)
+    : undefined;
+  const boardIds = body.board_ids !== undefined || body.boardIds !== undefined
+    ? normalizeIdList(body.board_ids ?? body.boardIds)
+    : undefined;
+  const datasetIds = body.dataset_ids !== undefined || body.datasetIds !== undefined
+    ? normalizeIdList(body.dataset_ids ?? body.datasetIds)
+    : undefined;
+  const syncFields = body.sync_fields !== false;
+
+  if (
+    !processIds.length &&
+    dataformIds === undefined &&
+    boardIds === undefined &&
+    datasetIds === undefined
+  ) {
+    return fail(
+      res,
+      req.correlationId,
+      'RESOURCES_REQUIRED',
+      'Provide process_ids and/or dataform_ids / board_ids / dataset_ids',
+      400,
+    );
+  }
+
+  const pool = getPool();
+  const { rows: appRows } = await pool.query(
+    `SELECT
+       application_id,
+       source_payload->>'subdomain' AS subdomain,
+       source_payload->>'region' AS region,
+       source_payload->>'kissflow_account_id' AS kissflow_account_id
+     FROM engagement_reporting.application
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+  if (!appRows.length) {
+    return fail(res, req.correlationId, 'APPLICATION_NOT_FOUND', 'Application not found', 404);
+  }
+
+  const { rows: existingProcessRows } = await pool.query(
+    `SELECT process_id
+     FROM engagement_reporting.process
+     WHERE environment = $1 AND application_id = $2 AND is_current = true`,
+    [environment, applicationId],
+  );
+  const alreadyLinked = new Set(existingProcessRows.map((r) => r.process_id));
+  const newProcessIds = processIds.filter((id) => !alreadyLinked.has(id));
+
+  let validatedProcessIds = processIds.filter((id) => alreadyLinked.has(id));
+  let warnings = [];
+  if (newProcessIds.length) {
+    try {
+      const credentials = await resolveKissflowCredentials(environment);
+      if (!credentials.keyId || !credentials.secret) {
+        return fail(
+          res,
+          req.correlationId,
+          'KISSFLOW_CREDENTIALS_MISSING',
+          'Kissflow API credentials are not configured',
+          503,
+        );
+      }
+      const baseUrl = buildBaseUrl(
+        appRows[0].subdomain || credentials.subdomain || 'refexgroup',
+        appRows[0].region || 'com',
+      );
+      const accountId = appRows[0].kissflow_account_id || credentials.accountId;
+      const discovery = await tryDiscoverProcesses({
+        baseUrl,
+        accountId,
+        keyId: credentials.keyId,
+        secret: credentials.secret,
+        applicationId,
+        processIds: newProcessIds,
+      });
+      warnings = discovery.warnings || [];
+      validatedProcessIds = [...validatedProcessIds, ...(discovery.process_ids || [])];
+      if (!(discovery.process_ids || []).length) {
+        return fail(
+          res,
+          req.correlationId,
+          'PROCESS_VALIDATION_FAILED',
+          warnings.join(' ') || 'Could not validate any new process IDs against Kissflow',
+          400,
+        );
+      }
+    } catch (err) {
+      return fail(
+        res,
+        req.correlationId,
+        err.code || 'PROCESS_VALIDATION_FAILED',
+        err.message,
+        err.status || 502,
+        true,
+      );
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const attached = await attachApplicationResources(client, {
+      environment,
+      applicationId,
+      processIds: validatedProcessIds,
+      dataformIds,
+      boardIds,
+      datasetIds,
+      actorSubject: session.subject,
+      correlationId: req.correlationId,
+    });
+    await client.query('COMMIT');
+
+    let field_sync = [];
+    if (syncFields && attached.added_process_ids.length) {
+      for (const processId of attached.added_process_ids) {
+        try {
+          const syncResult = await syncProcessFields(pool, {
+            environment,
+            applicationId,
+            processId,
+            incremental: false,
+            inProgressOnly: true,
+            pageSize: 500,
+          });
+          field_sync.push({
+            process_id: processId,
+            ok: true,
+            field_count: Array.isArray(syncResult.fields) ? syncResult.fields.length : 0,
+            item_count: syncResult.item_count,
+            synced_at: syncResult.synced_at,
+          });
+        } catch (err) {
+          field_sync.push({
+            process_id: processId,
+            ok: false,
+            error: err.message,
+          });
+        }
+      }
+    }
+
+    return ok(res, req.correlationId, {
+      ...attached,
+      warnings,
+      field_sync,
+      environment,
+      application_id: applicationId,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err instanceof RegistrationConflictError || err.code === 'PROCESS_ALREADY_REGISTERED') {
+      return fail(res, req.correlationId, err.code || 'PROCESS_ALREADY_REGISTERED', err.message, 409);
+    }
+    if (err.code === 'APPLICATION_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, 404);
+    }
+    return fail(res, req.correlationId, 'ATTACH_RESOURCES_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
+  }
+});
+
+/** First-time field sync, engagement cache, draft template + paused schedule after Connect. */
 router.post('/:applicationId/bootstrap', async (req, res) => {
   if (!isDatabaseConfigured()) {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);

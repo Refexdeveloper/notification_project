@@ -37,6 +37,7 @@ export interface ReportScheduler {
   timezone?: string;
   /** Lead Tracker: filter leads by Website field value before grouping by sales person */
   websiteFilter?: string;
+  entityFilter?: string;
   /** Lead Tracker: filter Kissflow users by Groups membership */
   userGroupFilter?: string;
   lastRunAt: string | null;

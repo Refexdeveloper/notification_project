@@ -23,6 +23,7 @@ const { defaultReportHtml } = require('../lib/defaultReportHtml');
 const { syncPublishedTemplateToPipeline, normalizeReportTemplateHtml } = require('../lib/templatePipelineSync');
 const { invalidateReportHtmlCache, syncTemplateSubjectToSchedules } = require('../lib/templateCacheInvalidation');
 const { listStarters, getStarterHtml } = require('../lib/reportStarters');
+const { generateReportHtmlFromPrompt, isAiConfigured } = require('../lib/reportHtmlAi');
 
 const router = express.Router({ mergeParams: true });
 
@@ -131,6 +132,61 @@ router.get('/starters/:starterId', async (req, res) => {
       return fail(res, req.correlationId, err.code, err.message, 404);
     }
     return fail(res, req.correlationId, 'STARTER_LOAD_FAILED', err.message, 500, true);
+  }
+});
+
+/** AI: generate / revise email HTML from natural-language comments (draft only — does not save). */
+router.post('/generate-html', async (req, res) => {
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  const applicationId = req.params.applicationId || '';
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+  if (!applicationId) {
+    return fail(res, req.correlationId, 'APPLICATION_ID_REQUIRED', 'applicationId is required', 400);
+  }
+  if (!isAiConfigured()) {
+    return fail(
+      res,
+      req.correlationId,
+      'AI_NOT_CONFIGURED',
+      'AI is not configured. Set GEMINI_API_KEY or deploy with GCP_PROJECT + Vertex AI.',
+      503,
+    );
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  try {
+    const result = await generateReportHtmlFromPrompt({
+      environment,
+      applicationId,
+      prompt: body.prompt,
+      currentHtml: body.current_html || body.currentHtml || '',
+      includeCurrentHtml: Boolean(body.include_current_html ?? body.includeCurrentHtml),
+      templateName: String(body.template_name || body.templateName || '').trim(),
+    });
+    return ok(res, req.correlationId, {
+      html: result.html,
+      starter_id: result.starter_id,
+      placeholders: result.placeholders,
+      provider: result.provider,
+      model: result.model,
+      location: result.location,
+      application_name: result.application_name,
+      field_count: result.field_count,
+      saved: false,
+      note: 'HTML generated in memory only — Save draft in the editor to persist.',
+    });
+  } catch (err) {
+    const status = err.status || (err.code === 'PROMPT_REQUIRED' || err.code === 'PROMPT_TOO_LONG' ? 400 : 502);
+    return fail(
+      res,
+      req.correlationId,
+      err.code || 'AI_GENERATE_FAILED',
+      err.message,
+      status,
+      status >= 500,
+    );
   }
 });
 

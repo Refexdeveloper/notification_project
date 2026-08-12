@@ -100,10 +100,25 @@ assignment_counts AS (
     SELECT
       ia.principal_id AS user_id,
       COUNT(*)::int AS assigned,
-      COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
       COUNT(*) FILTER (
-        WHERE i.process_status = 'Completed'
-          AND $2 <> 'Project_Management_Tracker_A00'
+        WHERE i.process_status = 'InProgress'
+          AND NOT (
+            $2 = 'IT_Service_Management_A00'
+            AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+              LIKE '%it tech reopen%'
+          )
+      )::int AS open_count,
+      COUNT(*) FILTER (
+        WHERE $2 <> 'Project_Management_Tracker_A00'
+          AND (
+            i.process_status = 'Completed'
+            OR (
+              $2 = 'IT_Service_Management_A00'
+              AND i.process_status = 'InProgress'
+              AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+                LIKE '%it tech reopen%'
+            )
+          )
       )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
@@ -124,10 +139,25 @@ assignment_counts AS (
     SELECT
       pu.user_id,
       COUNT(*)::int AS assigned,
-      COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
       COUNT(*) FILTER (
-        WHERE i.process_status = 'Completed'
-          AND $2 <> 'Project_Management_Tracker_A00'
+        WHERE i.process_status = 'InProgress'
+          AND NOT (
+            $2 = 'IT_Service_Management_A00'
+            AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+              LIKE '%it tech reopen%'
+          )
+      )::int AS open_count,
+      COUNT(*) FILTER (
+        WHERE $2 <> 'Project_Management_Tracker_A00'
+          AND (
+            i.process_status = 'Completed'
+            OR (
+              $2 = 'IT_Service_Management_A00'
+              AND i.process_status = 'InProgress'
+              AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+                LIKE '%it tech reopen%'
+            )
+          )
       )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
