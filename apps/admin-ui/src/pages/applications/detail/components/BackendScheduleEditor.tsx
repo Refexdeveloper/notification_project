@@ -61,6 +61,7 @@ function scheduleToIdentity(schedule: ReportScheduler, app: KissflowApplication)
     processId: schedule.processId || app.processIds?.[0] || '',
     websiteFilter: schedule.websiteFilter || '',
     userGroupFilter: schedule.userGroupFilter || '',
+    entityFilter: schedule.entityFilter || '',
     subject: schedule.subject || schedule.templateName || schedule.name,
   };
 }
@@ -106,7 +107,7 @@ export default function BackendScheduleEditor({
     setCadence(scheduleToCadenceState(schedule));
     setError('');
     setSuccess('');
-  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.subject, schedule.templateName, schedule.name]);
+  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.entityFilter, schedule.subject, schedule.templateName, schedule.name]);
 
   const toRecipients = useMemo(() => parseEmailList(recipientsText), [recipientsText]);
   const normalizedFrom = normalizeFromEmail(fromEmail);
@@ -132,6 +133,7 @@ export default function BackendScheduleEditor({
       process_id: reportIdentity.processId || undefined,
       website_filter: reportIdentity.websiteFilter || undefined,
       user_group_filter: reportIdentity.userGroupFilter || undefined,
+      entity_filter: reportIdentity.entityFilter || undefined,
       subject: reportIdentity.subject || undefined,
       ...extra,
     };

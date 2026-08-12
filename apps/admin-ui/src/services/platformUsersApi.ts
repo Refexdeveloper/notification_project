@@ -8,22 +8,30 @@ export type PlatformUser = {
   is_active: boolean;
   created_at?: string;
   roles: string[];
+  has_password?: boolean;
 };
 
 export type PlatformUsersListResult = {
   users: PlatformUser[];
+  canManage: boolean;
+  currentUserRole?: string;
   warning?: string;
   error?: string;
 };
 
 export async function loadPlatformUsers(): Promise<PlatformUsersListResult> {
   if (!isBackendApiMode()) {
-    return { users: [], error: 'Backend API mode is not enabled' };
+    return { users: [], canManage: false, error: 'Backend API mode is not enabled' };
   }
 
-  const res = await apiV1Fetch<{ items: PlatformUser[]; warning?: string }>('/platform-users');
+  const res = await apiV1Fetch<{
+    items: PlatformUser[];
+    warning?: string;
+    can_manage?: boolean;
+    current_user_role?: string;
+  }>('/platform-users');
   if (!res.ok || !res.data) {
-    return { users: [], error: res.error || 'Failed to load platform users' };
+    return { users: [], canManage: false, error: res.error || 'Failed to load platform users' };
   }
 
   return {
@@ -31,6 +39,8 @@ export async function loadPlatformUsers(): Promise<PlatformUsersListResult> {
       ...row,
       roles: Array.isArray(row.roles) ? row.roles : [],
     })),
+    canManage: Boolean(res.data.can_manage),
+    currentUserRole: res.data.current_user_role,
     warning: res.data.warning,
   };
 }
@@ -39,6 +49,7 @@ export async function createPlatformUser(payload: {
   email: string;
   display_name: string;
   role?: string;
+  password: string;
   identity_subject?: string;
   is_active?: boolean;
 }): Promise<{ ok: boolean; user?: PlatformUser; error?: string }> {
@@ -60,7 +71,7 @@ export async function createPlatformUser(payload: {
 
 export async function updatePlatformUser(
   userId: string,
-  payload: { display_name?: string; role?: string; is_active?: boolean },
+  payload: { display_name?: string; role?: string; is_active?: boolean; password?: string },
 ): Promise<{ ok: boolean; user?: PlatformUser; error?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
@@ -94,4 +105,4 @@ export async function deactivatePlatformUser(userId: string): Promise<{ ok: bool
   return { ok: true };
 }
 
-export const PLATFORM_ROLES = ['ADMIN', 'OPERATOR', 'VIEWER', 'AUDITOR'] as const;
+export const PLATFORM_ROLES = ['ADMIN', 'VIEWER'] as const;

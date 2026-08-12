@@ -69,15 +69,19 @@ export default function LoginPage() {
             <div className="w-full max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8 shadow-[var(--shadow-soft)]">
               <h2 className="text-xl font-bold text-[#1E293B]">Refex Engagement Studio</h2>
               <p className="mt-2 text-sm text-[#64748B]">
-                Corporate identity mode ({authMode}). Development uses backend-api session stub;
-                production uses IAP headers.
+                Continue to open the workspace. Access is managed in Kissflow for admins
+                ({authMode} session).
               </p>
               {error && (
                 <p className="mt-4 text-sm text-red-600" role="alert">
                   {error}
                 </p>
               )}
-              <Button className="mt-6 w-full" disabled={loading} onClick={() => void handleSubmit({ preventDefault: () => {} } as FormEvent)}>
+              <Button
+                className="mt-6 w-full"
+                disabled={loading}
+                onClick={() => void handleSubmit({ preventDefault: () => {} } as FormEvent)}
+              >
                 {loading ? 'Signing in…' : 'Continue'}
               </Button>
             </div>

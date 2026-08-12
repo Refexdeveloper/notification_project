@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -6,6 +6,7 @@ import {
   Code2,
   Eye,
   History,
+  LayoutTemplate,
   PanelsTopBottom,
   Save,
   Send,
@@ -22,13 +23,15 @@ import {
 } from '@/stores/reportTemplates';
 import {
   detectTemplateAppKind,
-  PLACEHOLDER_HINTS_BY_APP,
   type PreviewContext,
 } from '@/lib/templatePreview';
+import { ensureItsmSourcePlaceholders, preferExtrovisStarter } from '@/lib/itsmTemplateLayout';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import {
   deleteTemplateOnBackend,
+  generateTemplateHtmlOnBackend,
+  loadReportStarterHtmlFromBackend,
   loadTemplateFromBackend,
   loadTemplateUsageFromBackend,
   loadTemplateVersionFromBackend,
@@ -39,6 +42,9 @@ import {
 } from '@/services/reportsApi';
 import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
 import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
+import PlaceholderPicker from '@/pages/templates/detail/components/PlaceholderPicker';
+import AiGeneratePanel from '@/pages/templates/detail/components/AiGeneratePanel';
+import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
 import type { TemplateVersion } from '@/mocks/templates';
 import {
   formatSchedulersInUseMessage,
@@ -76,6 +82,11 @@ export default function TemplateDetailPage() {
   const [versionHistory, setVersionHistory] = useState<TemplateVersion[]>([]);
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [testEmailOpen, setTestEmailOpen] = useState(false);
+  const [starterOpen, setStarterOpen] = useState(false);
+  const [layoutBusy, setLayoutBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const htmlEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const subjectInputRef = useRef<HTMLInputElement | null>(null);
 
   const localExisting = !backendMode && id ? getTemplateById(id) : undefined;
 
@@ -118,7 +129,12 @@ export default function TemplateDetailPage() {
       setName(result.template.name);
       setSubject(result.template.subject);
       setDescription(result.template.description);
-      setHtml(result.template.html);
+      const kind = detectTemplateAppKind({
+        kissflowAppId: app?.appId || appRouteId,
+        applicationId: app?.id || appRouteId,
+      });
+      const rawHtml = result.template.html || '';
+      setHtml(kind === 'itsm' ? ensureItsmSourcePlaceholders(rawHtml).html : rawHtml);
       setStatus(result.template.status);
       setLoading(false);
     }
@@ -201,65 +217,157 @@ export default function TemplateDetailPage() {
     [name, subject, html],
   );
 
-  const placeholderHints = useMemo(() => {
-    const fromTemplate = extractVariables(html, subject);
-    if (fromTemplate.length > 0) {
-      return fromTemplate;
+  const placeholderHints = useMemo(() => extractVariables(html, subject), [html, subject]);
+
+  const appKind = useMemo(() => detectTemplateAppKind(previewContext), [previewContext]);
+
+  const applyLatestItsmLayout = useCallback(async () => {
+    if (!backendMode || !id) return;
+    const appForSave =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+    if (!appForSave.id && !appRouteId) {
+      setLoadError('Missing application context. Open the template from an application tab.');
+      return;
     }
-    const kind = detectTemplateAppKind(previewContext);
-    return PLACEHOLDER_HINTS_BY_APP[kind];
-  }, [html, subject, previewContext]);
+    const starterId = preferExtrovisStarter(name) ? 'itsm-extrovis' : 'itsm';
+    if (
+      !window.confirm(
+        `Replace this template HTML with the latest ${
+          starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'
+        } layout (includes Ticket source panels)?`,
+      )
+    ) {
+      return;
+    }
+    setLayoutBusy(true);
+    setLoadError(null);
+    setSaveMsg('');
+    const starter = await loadReportStarterHtmlFromBackend(appForSave, starterId);
+    if (!starter.ok || !starter.item?.html) {
+      setLoadError(starter.error || 'Could not load starter layout');
+      setLayoutBusy(false);
+      return;
+    }
+    const nextHtml = ensureItsmSourcePlaceholders(starter.item.html).html;
+    setHtml(nextHtml);
+    const updated = await updateTemplateOnBackend(appForSave, id, {
+      html: nextHtml,
+      description:
+        starterId === 'itsm-extrovis'
+          ? 'Extrovis ITSM report — tickets only (no user sign-in overview)'
+          : description || 'ITSM engagement report with ticket source breakdown',
+      status: status === 'published' ? 'published' : undefined,
+    });
+    setLayoutBusy(false);
+    if (!updated.ok) {
+      setLoadError(updated.error || 'Failed to save updated layout');
+      return;
+    }
+    setSaveMsg(
+      `Applied ${starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'} layout with Ticket source. Preview updated — Publish if still draft.`,
+    );
+    setMode('preview');
+  }, [backendMode, id, backendApp, appRouteId, name, description, status]);
+
+  const insertPlaceholder = useCallback((token: string, target: 'html' | 'subject') => {
+    if (target === 'subject') {
+      const el = subjectInputRef.current;
+      if (el) {
+        const start = el.selectionStart ?? subject.length;
+        const end = el.selectionEnd ?? start;
+        const next = `${subject.slice(0, start)}${token}${subject.slice(end)}`;
+        setSubject(next);
+        requestAnimationFrame(() => {
+          el.focus();
+          const pos = start + token.length;
+          el.setSelectionRange(pos, pos);
+        });
+        return;
+      }
+      setSubject((prev) => `${prev}${token}`);
+      return;
+    }
+
+    const el = htmlEditorRef.current;
+    if (el) {
+      const start = el.selectionStart ?? html.length;
+      const end = el.selectionEnd ?? start;
+      const next = `${html.slice(0, start)}${token}${html.slice(end)}`;
+      setHtml(next);
+      if (mode === 'preview') setMode('split');
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + token.length;
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+    setHtml((prev) => `${prev}\n${token}`);
+    if (mode === 'preview') setMode('split');
+  }, [html, subject, mode]);
 
   const formatPipelineSync = (sync?: PipelineSyncResult) => {
     if (!sync) return '';
+    const parts: string[] = [];
     if (sync.synced) {
-      const cacheNote =
-        sync.cache_invalidation?.deleted != null && sync.cache_invalidation.deleted > 0
-          ? ` · cleared ${sync.cache_invalidation.deleted} cached report(s)`
-          : '';
-      return `Pipeline synced to ${sync.path || 'seed file'}${cacheNote}`;
+      parts.push(`pipeline synced${sync.path ? ` → ${sync.path}` : ''}`);
+    } else if (sync.reason) {
+      parts.push(`pipeline: ${sync.reason}`);
     }
-    return `Pipeline sync skipped: ${sync.reason || 'unknown reason'}`;
+    if (sync.cache_invalidation?.deleted != null) {
+      parts.push(`cleared ${sync.cache_invalidation.deleted} cached report(s)`);
+    }
+    if (sync.cache_invalidation?.error) {
+      parts.push(`cache clear error: ${sync.cache_invalidation.error}`);
+    }
+    if (sync.schedule_subject_sync?.updated != null && sync.schedule_subject_sync.updated > 0) {
+      parts.push(`updated ${sync.schedule_subject_sync.updated} schedule subject(s)`);
+    }
+    return parts.join(' · ');
   };
 
   const persist = useCallback(
-    async (publish = false) => {
-      if (!id) return;
+    async (publish = false): Promise<boolean> => {
+      if (!id) return false;
       setSaving(true);
       setSaveMsg('');
       setPipelineMsg('');
+      setLoadError(null);
 
       if (backendMode) {
         if (!backendApp && !appRouteId) {
           setLoadError('Missing application context. Open the template from an application tab.');
           setSaving(false);
-          return;
+          return false;
         }
 
         const appForSave =
           backendApp ||
           ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
 
+        // Always send full editor payload. On publish (or when already published), keep status published
+        // so HTML edits immediately become the live email template.
         const payload: {
           name: string;
           subject: string;
           description: string;
           html: string;
-          status?: 'draft' | 'published';
-        } = { name, subject, description, html };
-
-        if (publish) {
-          payload.status = 'published';
-        } else if (status !== 'published') {
-          payload.status = 'draft';
-        }
+          status: 'draft' | 'published';
+        } = {
+          name,
+          subject,
+          description,
+          html,
+          status: publish || status === 'published' ? 'published' : 'draft',
+        };
+        if (publish) payload.status = 'published';
 
         const result = await updateTemplateOnBackend(appForSave, id, payload);
 
         setSaving(false);
         if (!result.ok) {
           setLoadError(result.error || 'Save failed');
-          return;
+          return false;
         }
 
         if (result.template) {
@@ -272,19 +380,26 @@ export default function TemplateDetailPage() {
           setStatus('published');
         }
 
-        setSaveMsg(publish ? 'Published to backend' : 'Saved to backend');
-        if (publish && result.pipelineSync) {
+        const live = publish || payload.status === 'published';
+        setSaveMsg(
+          publish
+            ? 'Published — next test/scheduled send will use this HTML'
+            : live
+              ? 'Saved (live published template updated)'
+              : 'Saved draft',
+        );
+        if (live && result.pipelineSync) {
           setPipelineMsg(formatPipelineSync(result.pipelineSync));
         }
         void reloadVersionHistory();
         setTimeout(() => {
           setSaveMsg('');
           setPipelineMsg('');
-        }, publish ? 6000 : 2000);
-        return;
+        }, live ? 8000 : 2500);
+        return true;
       }
 
-      if (!localExisting) return;
+      if (!localExisting) return false;
       const patch: Parameters<typeof updateTemplate>[1] = {
         name,
         subject,
@@ -304,6 +419,7 @@ export default function TemplateDetailPage() {
       setSaveMsg(publish ? 'Published' : 'Saved');
       setSaving(false);
       setTimeout(() => setSaveMsg(''), 2000);
+      return true;
     },
     [
       id,
@@ -351,6 +467,15 @@ export default function TemplateDetailPage() {
     const appForTest =
       backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
 
+    // Always publish current editor HTML before test send so the email matches the preview.
+    const publishedOk = await persist(true);
+    if (!publishedOk) {
+      return {
+        ok: false,
+        error: 'Could not publish template before test send. Fix save errors and retry.',
+      };
+    }
+
     const usage = await loadTemplateUsageFromBackend(appForTest, id);
     if (!usage.ok) {
       return { ok: false, error: usage.error || 'Could not find a schedule for this template' };
@@ -374,8 +499,47 @@ export default function TemplateDetailPage() {
 
     return {
       ok: true,
-      message: result.message || 'Delivery confirmed by schedule runner.',
+      message: result.message || 'Delivery confirmed — email uses the HTML you just published.',
     };
+  };
+
+  const handleAiGenerate = async (prompt: string, includeCurrentHtml: boolean) => {
+    if (!backendMode) {
+      throw new Error('AI generate requires backend API mode');
+    }
+    const appForAi =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+
+    if (
+      html.trim() &&
+      !window.confirm(
+        includeCurrentHtml
+          ? 'AI will revise the current HTML in the editor. Continue? (Save draft still needed to persist.)'
+          : 'AI will replace the current HTML with a new layout. Continue? (Save draft still needed to persist.)',
+      )
+    ) {
+      return;
+    }
+
+    setAiBusy(true);
+    try {
+      const result = await generateTemplateHtmlOnBackend(appForAi, {
+        prompt,
+        currentHtml: html,
+        includeCurrentHtml,
+        templateName: name || appForAi.displayName || appForAi.name,
+      });
+      if (!result.ok || !result.html) {
+        throw new Error(result.error || 'AI HTML generation failed');
+      }
+      setHtml(result.html);
+      setMode('split');
+      const modelHint = result.model ? ` · ${result.model}` : '';
+      setSaveMsg(`AI draft loaded${modelHint} — save draft when ready`);
+      setTimeout(() => setSaveMsg(''), 5000);
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -538,6 +702,31 @@ export default function TemplateDetailPage() {
           >
             Test email
           </Button>
+          {backendMode && appKind === 'itsm' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() => void applyLatestItsmLayout()}
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy
+                ? 'Updating…'
+                : preferExtrovisStarter(name)
+                  ? 'Apply Extrovis layout'
+                  : 'Apply Refex ITSM layout'}
+            </Button>
+          )}
+          {backendMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setStarterOpen(true)}
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              Load starter
+            </Button>
+          )}
           {backendMode && (
             <Button
               variant="secondary"
@@ -592,7 +781,13 @@ export default function TemplateDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
         <div className="surface p-4 space-y-3.5 h-fit">
           <Input label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Input label="Email subject" value={subject} onChange={(e) => setSubject(e.target.value)} hint="Use {{ReportTitle}} etc." />
+          <Input
+            ref={subjectInputRef}
+            label="Email subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            hint="Use {{ReportTitle}} etc."
+          />
           <div className="rounded-[14px] bg-background-50 border border-background-200/80 p-3">
             <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-1">
               Subject preview
@@ -625,20 +820,26 @@ export default function TemplateDetailPage() {
               placeholder="When to use this design…"
             />
           </div>
-          <div className="rounded-[14px] bg-background-50 border border-background-200/80 p-3">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400 mb-2">
-              Placeholders
-            </p>
-            <p className="text-xs text-foreground-500 leading-relaxed font-mono">
-              {placeholderHints.map((key) => `{{${key}}}`).join(' ')}
-            </p>
+          <div className="rounded-[14px] border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-[11px] text-emerald-900 leading-relaxed">
+            <strong className="font-semibold">Publish flow:</strong> click <em>Publish</em> after
+            HTML edits (or use <em>Test email</em>, which publishes first). Only the published HTML
+            is emailed — draft-only changes are not sent.
           </div>
+          {backendMode && (
+            <AiGeneratePanel busy={aiBusy} onGenerate={handleAiGenerate} />
+          )}
+          <PlaceholderPicker
+            appKind={appKind}
+            usedInTemplate={placeholderHints}
+            onInsert={insertPlaceholder}
+          />
         </div>
 
         <div className="flex min-h-[560px] gap-0">
           <div className="surface overflow-hidden min-h-[560px] flex flex-col flex-1 min-w-0">
           {(mode === 'edit' || mode === 'split') && (
             <textarea
+              ref={htmlEditorRef}
               value={html}
               onChange={(e) => setHtml(e.target.value)}
               spellCheck={false}
@@ -686,6 +887,30 @@ export default function TemplateDetailPage() {
         subject={previewSubject}
             onSend={async (recipient, _overrides) => handleTestEmailSend(recipient)}
       />
+
+      {backendMode && (backendApp || appRouteId) && (
+        <StarterPickerModal
+          open={starterOpen}
+          onClose={() => setStarterOpen(false)}
+          app={
+            backendApp ||
+            ({ id: appRouteId, environment: 'Production', name: name || 'Application' } as KissflowApplication)
+          }
+          mode="load"
+          onConfirmLoad={(nextHtml) => {
+            if (
+              html.trim() &&
+              !window.confirm('Replace the current HTML with this starter layout? Unsaved edits in the editor will be overwritten (Save draft still needed).')
+            ) {
+              return;
+            }
+            setHtml(nextHtml);
+            setMode('split');
+            setSaveMsg('Starter loaded — save draft when ready');
+            setStarterOpen(false);
+          }}
+        />
+      )}
     </Layout>
   );
 }

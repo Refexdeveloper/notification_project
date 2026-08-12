@@ -15,7 +15,12 @@ APPLICATION_ID="${APPLICATION_ID:-}"
 [[ -n "${REPORT_FILE}" && -f "${REPORT_FILE}" ]] || exit 0
 [[ -n "${CACHE_KEY}" ]] || exit 0
 
-REPO_ROOT="${REPO_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Prefer explicit repo root from Cloud Run (REPO_ROOT=/app). Falling back to
+# dirname/.. of this file yields /app/ops (wrong) and breaks ensure-* sourcing.
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-}}"
+if [[ -z "${REPO_ROOT}" || ! -d "${REPO_ROOT}/ops/runbooks" ]]; then
+  REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/ops/runbooks/ensure-report-html-cache-table.sh"
 

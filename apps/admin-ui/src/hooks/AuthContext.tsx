@@ -3,7 +3,7 @@ import { apiFetch, clearAuthSession, setAuthSession } from '@/services/api';
 import { apiV1Fetch, isBackendApiMode, type SessionContext } from '@/services/backendApi';
 
 interface AuthUser {
-  id?: number;
+  id?: number | string;
   name: string;
   email: string;
   role: string;
@@ -14,9 +14,10 @@ interface AuthContextType {
   isAuthenticated: boolean;
   authMode: 'legacy' | 'backend';
   sessionLoading: boolean;
+  isAdmin: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   loginWithSession: () => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -32,6 +33,7 @@ function getStoredUser(): AuthUser | null {
 
 function applySessionUser(session: SessionContext): AuthUser {
   return {
+    id: session.admin_user_id,
     name: session.display_name,
     email: session.email,
     role: session.role,
@@ -64,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     (async () => {
+      // Auto-restore session (IAP / stub) — no password gate for Admin UI.
       const result = await loginWithSession();
       if (!cancelled && !result.success && !getStoredUser()) {
         setUser(null);
@@ -114,7 +117,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [loginWithSession],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    if (isBackendApiMode()) {
+      try {
+        await apiV1Fetch('/auth/logout', { method: 'POST' });
+      } catch {
+        /* ignore */
+      }
+    }
     setUser(null);
     clearAuthSession();
   }, []);
@@ -126,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         authMode,
         sessionLoading,
+        isAdmin: String(user?.role || '').toUpperCase() === 'ADMIN',
         login,
         loginWithSession,
         logout,

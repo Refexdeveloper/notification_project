@@ -37,47 +37,141 @@ report_template_pg_conn() {
 
 report_template_seed_for_app() {
   case "${1:-}" in
-    IT_Service_Management_A00) printf '%s' 'db/seeds/itsm-engagement-template.html' ;;
+    IT_Service_Management_A00)
+      # Extrovis process uses the Extrovis seed (no User Sign-in Overview).
+      if [[ "${ITSM_PROCESS_ID:-${PROCESS_ID:-}}" == *[Ee]xtrovis* ]]; then
+        printf '%s' 'db/seeds/itsm-extrovis-engagement-template.html'
+      else
+        printf '%s' 'db/seeds/itsm-engagement-template.html'
+      fi
+      ;;
     Project_Management_Tracker_A00) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
+    Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
     *) return 1 ;;
   esac
 }
 
+report_template_file_looks_like_html() {
+  local f="$1"
+  [[ -s "${f}" ]] || return 1
+  local head
+  head="$(head -c 64 "${f}" | tr -d '\r' | sed 's/^[[:space:]]*//')"
+  [[ "${head}" == \<* ]]
+}
+
+# Decode base64 payload from psql (-t -A) into $1. Avoids COPY text-format escaping
+# which turns real newlines into literal "\n" visible in the emailed HTML.
+report_template_decode_b64_to_file() {
+  local out_file="$1"
+  local b64
+  b64="$(tr -d '\r\n[:space:]')"
+  [[ -n "${b64}" ]] || return 1
+  if command -v base64 >/dev/null 2>&1; then
+    if printf '%s' "${b64}" | base64 --decode > "${out_file}" 2>/dev/null; then
+      return 0
+    fi
+    if printf '%s' "${b64}" | base64 -d > "${out_file}" 2>/dev/null; then
+      return 0
+    fi
+    if printf '%s' "${b64}" | base64 -D > "${out_file}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # Fallback when base64 CLI is unavailable (Node is always present in schedule-runner).
+  B64_PAYLOAD="${b64}" OUT_FILE="${out_file}" node -e \
+    "require('fs').writeFileSync(process.env.OUT_FILE, Buffer.from(process.env.B64_PAYLOAD, 'base64'))" \
+    2>/dev/null
+}
+
+# Prefer published inline HTML over stale seed file paths.
 # Writes resolved template HTML to $1 (output file path).
 report_template_load_html() {
   local out_file="$1"
   local repo
   repo="$(report_template_repo_root)"
-  local content_ref=""
   local pg_conn
   pg_conn="$(report_template_pg_conn)"
+  local loaded=0
+  local b64_tmp
+  b64_tmp="$(mktemp)"
 
+  # Stream latest template version as base64 (avoids shell truncation AND COPY \n escaping).
   if [[ -n "${TEMPLATE_ID:-}" ]]; then
-    content_ref="$(psql "${pg_conn}" -t -A -c "
-      SELECT COALESCE(
-        (
-          SELECT rtv.content_ref
-          FROM engagement_reporting.report_template_version rtv
-          WHERE rtv.report_template_id = '${TEMPLATE_ID}'::uuid
-          ORDER BY rtv.version_number DESC
-          LIMIT 1
-        ),
-        ''
-      );
-    " 2>/dev/null | tr -d '\r' || true)"
+    if psql "${pg_conn}" -v ON_ERROR_STOP=1 -t -A -c "
+      SELECT encode(convert_to(content_ref, 'UTF8'), 'base64')
+      FROM engagement_reporting.report_template_version
+      WHERE report_template_id = '${TEMPLATE_ID}'::uuid
+      ORDER BY
+        CASE
+          WHEN ltrim(content_ref) LIKE '<!%' THEN 0
+          WHEN ltrim(content_ref) ILIKE '<html%' THEN 0
+          WHEN ltrim(content_ref) LIKE '<%' THEN 0
+          ELSE 1
+        END,
+        version_number DESC
+      LIMIT 1
+    " > "${b64_tmp}" 2>/dev/null \
+      && report_template_decode_b64_to_file "${out_file}" < "${b64_tmp}" \
+      && report_template_file_looks_like_html "${out_file}"; then
+      loaded=1
+    fi
   fi
 
-  if [[ -z "${content_ref}" && -n "${APPLICATION_ID:-}" ]]; then
-    content_ref="$(report_template_seed_for_app "${APPLICATION_ID}" || true)"
+  # Fallback: latest published template bound to this application (inline preferred).
+  if [[ "${loaded}" -ne 1 && -n "${APPLICATION_ID:-}" ]]; then
+    if psql "${pg_conn}" -v ON_ERROR_STOP=1 -t -A -c "
+      SELECT encode(convert_to(rtv.content_ref, 'UTF8'), 'base64')
+      FROM engagement_reporting.report_template_version rtv
+      JOIN engagement_reporting.report_definition_version rdv
+        ON rdv.config->>'template_id' = rtv.report_template_id::text
+      WHERE rdv.config->>'application_id' = '${APPLICATION_ID}'
+        AND COALESCE(rdv.config->>'status', 'published') = 'published'
+      ORDER BY
+        CASE
+          WHEN ltrim(rtv.content_ref) LIKE '<!%' THEN 0
+          WHEN ltrim(rtv.content_ref) ILIKE '<html%' THEN 0
+          WHEN ltrim(rtv.content_ref) LIKE '<%' THEN 0
+          ELSE 1
+        END,
+        rtv.version_number DESC,
+        rdv.frozen_at DESC NULLS LAST
+      LIMIT 1
+    " > "${b64_tmp}" 2>/dev/null \
+      && report_template_decode_b64_to_file "${out_file}" < "${b64_tmp}" \
+      && report_template_file_looks_like_html "${out_file}"; then
+      loaded=1
+    fi
   fi
 
-  [[ -n "${content_ref}" ]] || return 1
+  rm -f "${b64_tmp}"
 
-  if [[ "${content_ref}" == \<* ]]; then
-    printf '%s' "${content_ref}" > "${out_file}"
+  if [[ "${loaded}" -eq 1 ]]; then
     return 0
   fi
+
+  # Legacy: content_ref is a seed file path — copy from disk (may be stale vs Admin UI publish).
+  local content_ref=""
+  if [[ -n "${TEMPLATE_ID:-}" ]]; then
+    content_ref="$(psql "${pg_conn}" -t -A -c "
+      SELECT COALESCE((
+        SELECT rtv.content_ref
+        FROM engagement_reporting.report_template_version rtv
+        WHERE rtv.report_template_id = '${TEMPLATE_ID}'::uuid
+          AND ltrim(rtv.content_ref) NOT LIKE '<!%'
+          AND ltrim(rtv.content_ref) NOT ILIKE '<html%'
+          AND ltrim(rtv.content_ref) NOT LIKE '<%'
+        ORDER BY rtv.version_number DESC
+        LIMIT 1
+      ), '');
+    " 2>/dev/null | tr -d '\r' | head -c 512 || true)"
+  fi
+
+  if [[ -z "${content_ref}" || "${content_ref}" == \<* ]]; then
+    content_ref="$(report_template_seed_for_app "${APPLICATION_ID:-}" || true)"
+  fi
+
+  [[ -n "${content_ref}" ]] || { rm -f "${out_file}"; return 1; }
 
   local abs="${content_ref}"
   if [[ "${abs}" != /* ]]; then
@@ -89,6 +183,7 @@ report_template_load_html() {
     return 0
   fi
 
+  rm -f "${out_file}"
   return 1
 }
 

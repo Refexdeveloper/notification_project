@@ -5,7 +5,8 @@ import {
 } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
 import { isBackendApiMode } from '@/services/backendApi';
-import { syncFieldsOnBackend } from '@/services/fieldsApi';
+import { syncAllFieldsOnBackend, syncFieldsOnBackend } from '@/services/fieldsApi';
+import { processLabel } from '@/lib/processLabels';
 
 interface DiscoveryTabProps {
   app: KissflowApplication;
@@ -13,6 +14,14 @@ interface DiscoveryTabProps {
 }
 
 export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
+  const backendMode = isBackendApiMode();
+  const processOptions = useMemo(
+    () => (app.processIds || []).map((id) => id.trim()).filter(Boolean),
+    [app.processIds],
+  );
+  const [selectedProcessId, setSelectedProcessId] = useState(
+    () => processOptions[0] || app.appId || '',
+  );
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
@@ -21,13 +30,21 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
   const [itemCount, setItemCount] = useState(app.discoveredItemCount);
   const [lastSyncAt, setLastSyncAt] = useState(app.lastFieldSyncAt);
 
-  const adminProcessId = (app.processIds || [])[0] || app.appId;
-
   useEffect(() => {
     setFields(app.discoveredFields || []);
     setItemCount(app.discoveredItemCount);
     setLastSyncAt(app.lastFieldSyncAt);
   }, [app.discoveredFields, app.discoveredItemCount, app.lastFieldSyncAt]);
+
+  useEffect(() => {
+    if (!processOptions.length) {
+      setSelectedProcessId(app.appId || '');
+      return;
+    }
+    if (!processOptions.includes(selectedProcessId)) {
+      setSelectedProcessId(processOptions[0]);
+    }
+  }, [processOptions, selectedProcessId, app.appId]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -40,51 +57,76 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
     );
   }, [fields, filter]);
 
-  const runFieldSync = useCallback(async () => {
-    setSyncing(true);
-    setError('');
-    setLastMessage('');
+  const runFieldSync = useCallback(
+    async (mode: 'selected' | 'all' = 'selected') => {
+      setSyncing(true);
+      setError('');
+      setLastMessage('');
 
-    if (isBackendApiMode()) {
-      const result = await syncFieldsOnBackend(app, adminProcessId);
+      if (backendMode) {
+        if (mode === 'all') {
+          const result = await syncAllFieldsOnBackend(app);
+          if (!result.ok) {
+            setError(result.error || 'Sync failed');
+            setSyncing(false);
+            return;
+          }
+          setFields(result.fields);
+          setItemCount(result.itemCount);
+          setLastSyncAt(result.syncedAt);
+          setLastMessage(
+            `Synced fields for ${result.syncedProcesses || 0} process(es)` +
+              (result.failedProcesses?.length
+                ? ` · ${result.failedProcesses.length} failed`
+                : '') +
+              (result.fields.length ? ` · showing ${result.fields.length} fields from last process` : ''),
+          );
+          onSynced?.();
+          setSyncing(false);
+          return;
+        }
+
+        const result = await syncFieldsOnBackend(app, selectedProcessId);
+        if (!result.ok) {
+          setError(result.error || 'Sync failed');
+          setSyncing(false);
+          return;
+        }
+        setFields(result.fields);
+        setItemCount(result.itemCount);
+        setLastSyncAt(result.syncedAt);
+        setLastMessage(
+          `Synced ${result.fields.length} fields from ${selectedProcessId}` +
+            (result.itemCount ? ` · ${result.itemCount} total items` : ''),
+        );
+        onSynced?.();
+        setSyncing(false);
+        return;
+      }
+
+      const result = await syncFieldsFromAdminItems(app, { processId: selectedProcessId });
       if (!result.ok) {
         setError(result.error || 'Sync failed');
         setSyncing(false);
         return;
       }
+
+      saveDiscoveredFields(app.id, result.fields, result.itemCount, {
+        resourceId: selectedProcessId,
+        adminProcessId: selectedProcessId,
+      });
       setFields(result.fields);
       setItemCount(result.itemCount);
-      setLastSyncAt(result.syncedAt);
+      setLastSyncAt(new Date().toISOString());
       setLastMessage(
         `Synced ${result.fields.length} fields from ${result.sampled} sampled item(s)` +
           (result.itemCount ? ` · ${result.itemCount} total items` : ''),
       );
       onSynced?.();
       setSyncing(false);
-      return;
-    }
-
-    const result = await syncFieldsFromAdminItems(app, { processId: adminProcessId });
-    if (!result.ok) {
-      setError(result.error || 'Sync failed');
-      setSyncing(false);
-      return;
-    }
-
-    saveDiscoveredFields(app.id, result.fields, result.itemCount, {
-      resourceId: adminProcessId,
-      adminProcessId,
-    });
-    setFields(result.fields);
-    setItemCount(result.itemCount);
-    setLastSyncAt(new Date().toISOString());
-    setLastMessage(
-      `Synced ${result.fields.length} fields from ${result.sampled} sampled item(s)` +
-        (result.itemCount ? ` · ${result.itemCount} total items` : ''),
-    );
-    onSynced?.();
-    setSyncing(false);
-  }, [app, adminProcessId, onSynced]);
+    },
+    [app, backendMode, selectedProcessId, onSynced],
+  );
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -93,31 +135,64 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
           <div>
             <h3 className="text-sm font-semibold text-foreground-900">Field sync</h3>
             <p className="text-xs text-foreground-500 mt-0.5">
-              Calls Admin Get-all-items for App ID and derives fields from the response.
+              Calls Admin Get-all-items for a registered process and derives fields from the response.
+              Add more processes under App settings → Processes & resources.
             </p>
           </div>
-          <button
-            onClick={runFieldSync}
-            disabled={syncing || !adminProcessId}
-            className="h-9 px-3.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
-          >
-            {syncing ? (
-              <>
-                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                Syncing fields...
-              </>
-            ) : (
-              <>
-                <i className="ri-refresh-line"></i>
-                Sync fields
-              </>
+          <div className="flex items-center gap-2 flex-wrap">
+            {backendMode && processOptions.length > 1 && (
+              <button
+                onClick={() => void runFieldSync('all')}
+                disabled={syncing || !processOptions.length}
+                className="h-9 px-3.5 rounded-lg border border-primary-200 text-primary-700 bg-primary-50 text-sm font-medium hover:bg-primary-100 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
+              >
+                Sync all processes
+              </button>
             )}
-          </button>
+            <button
+              onClick={() => void runFieldSync('selected')}
+              disabled={syncing || !selectedProcessId}
+              className="h-9 px-3.5 rounded-lg bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              {syncing ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  Syncing fields...
+                </>
+              ) : (
+                <>
+                  <i className="ri-refresh-line"></i>
+                  Sync fields
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <Stat label="Account ID" value={app.accountId || '—'} mono />
-          <Stat label="App ID" value={adminProcessId || 'Not set'} mono />
+          <label className="rounded-lg border border-background-200 bg-background-50/80 px-3 py-2 block">
+            <span className="block text-[10px] uppercase tracking-wide text-foreground-400 font-semibold mb-1">
+              Process
+            </span>
+            {processOptions.length > 1 ? (
+              <select
+                value={selectedProcessId}
+                onChange={(e) => setSelectedProcessId(e.target.value)}
+                className="w-full bg-transparent font-mono text-xs text-foreground-900 outline-none"
+              >
+                {processOptions.map((pid) => (
+                  <option key={pid} value={pid}>
+                    {processLabel(pid)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="font-mono text-xs text-foreground-900 break-all">
+                {selectedProcessId || 'Not set'}
+              </span>
+            )}
+          </label>
           <Stat
             label="Last field sync"
             value={
@@ -133,9 +208,9 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
           />
         </div>
 
-        {!adminProcessId && (
+        {!selectedProcessId && (
           <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-800">
-            No process linked yet. Register the app with a process ID under Connect, then sync.
+            No process linked yet. Open App settings → Processes & resources, add a Process ID, then sync.
           </div>
         )}
 
@@ -149,80 +224,47 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
             {lastMessage}
           </div>
         )}
-
-        <p className="mt-3 text-[11px] text-foreground-400 font-mono break-all">
-          GET /process/2/{app.accountId || '{account_id}'}/admin/{adminProcessId || '{process_id}'}
-          /item?page_number=1&page_size=1000&apply_preference=1
-        </p>
       </div>
 
       <div className="bg-white border border-background-300/60 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-background-200/70 flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-semibold text-foreground-900">Discovered fields</h3>
-            <p className="text-[11px] text-foreground-400 mt-0.5">
+            <p className="text-xs text-foreground-500">
               {fields.length} field{fields.length === 1 ? '' : 's'}
-              {itemCount != null && itemCount > 0 ? ` · ${itemCount} items reported` : ''}
+              {itemCount ? ` · ${itemCount} items sampled source` : ''}
             </p>
           </div>
-          <div className="relative">
-            <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-foreground-400"></i>
-            <input
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter fields..."
-              className="h-8 w-48 pl-7 pr-2.5 text-xs rounded-lg border border-background-300/60 outline-none focus:border-primary-300"
-            />
-          </div>
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter fields…"
+            className="h-8 w-full sm:w-56 px-2.5 rounded-lg border border-background-300/60 text-xs outline-none focus:border-primary-300"
+          />
         </div>
-
         {filtered.length === 0 ? (
-          <div className="px-4 py-10 text-center">
-            <div className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-2">
-              <i className="ri-input-field text-foreground-300"></i>
-            </div>
-            <p className="text-sm text-foreground-500">
-              {fields.length === 0
-                ? 'No fields yet. Run Sync fields to pull from Kissflow.'
-                : 'No fields match your filter.'}
-            </p>
+          <div className="px-4 py-10 text-center text-sm text-foreground-500">
+            No fields yet. Sync fields for a process to populate this list.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-background-100 bg-background-50/80">
-                  <th className="px-4 py-2 text-[10px] uppercase tracking-wide text-foreground-400 font-medium">
-                    Field
-                  </th>
-                  <th className="px-4 py-2 text-[10px] uppercase tracking-wide text-foreground-400 font-medium">
-                    Type
-                  </th>
-                  <th className="px-4 py-2 text-[10px] uppercase tracking-wide text-foreground-400 font-medium">
-                    Sample
-                  </th>
-                  <th className="px-4 py-2 text-[10px] uppercase tracking-wide text-foreground-400 font-medium text-right">
-                    Seen
-                  </th>
+            <table className="w-full text-left text-sm">
+              <thead className="bg-background-50 text-xs text-foreground-500 uppercase tracking-wide">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Name</th>
+                  <th className="px-4 py-2.5 font-medium">Label</th>
+                  <th className="px-4 py-2.5 font-medium">Type</th>
+                  <th className="px-4 py-2.5 font-medium">Sample</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((field) => (
-                  <tr key={field.id} className="border-b border-background-100/80 last:border-0">
-                    <td className="px-4 py-2.5">
-                      <p className="text-xs font-medium text-foreground-900 font-mono">{field.name}</p>
-                      <p className="text-[10px] text-foreground-400">{field.label}</p>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-background-100 text-foreground-600 font-medium">
-                        {field.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-foreground-600 max-w-[220px] truncate font-mono">
+                  <tr key={field.id || field.name} className="border-t border-background-100">
+                    <td className="px-4 py-2.5 font-mono text-xs">{field.name}</td>
+                    <td className="px-4 py-2.5">{field.label}</td>
+                    <td className="px-4 py-2.5 text-foreground-600">{field.type}</td>
+                    <td className="px-4 py-2.5 text-xs text-foreground-500 max-w-[240px] truncate">
                       {field.sample || '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-foreground-500 text-right tabular-nums">
-                      {field.occurrences}
                     </td>
                   </tr>
                 ))}
@@ -245,16 +287,9 @@ function Stat({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg bg-background-50 border border-background-200/70 p-2.5">
-      <p className="text-[10px] uppercase tracking-wide text-foreground-400 font-medium">{label}</p>
-      <p
-        className={`text-sm font-semibold text-foreground-900 mt-0.5 truncate ${
-          mono ? 'font-mono text-xs' : ''
-        }`}
-        title={value}
-      >
-        {value}
-      </p>
+    <div className="rounded-lg border border-background-200 bg-background-50/80 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wide text-foreground-400 font-semibold">{label}</p>
+      <p className={`text-xs text-foreground-900 mt-0.5 break-all ${mono ? 'font-mono' : ''}`}>{value}</p>
     </div>
   );
 }

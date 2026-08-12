@@ -1,6 +1,12 @@
 import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportTemplate } from '@/stores/reportTemplates';
 import { LEAD_TRACKER_SALES_GROUPS } from '@/services/leadReport';
+import {
+  defaultEntityFilterForProcess,
+  isExtrovisProcess,
+  isItsmApp,
+  processLabel,
+} from '@/lib/processLabels';
 
 export type ScheduleReportIdentityValue = {
   templateId: string;
@@ -8,6 +14,7 @@ export type ScheduleReportIdentityValue = {
   processId: string;
   websiteFilter: string;
   userGroupFilter: string;
+  entityFilter: string;
   subject: string;
 };
 
@@ -34,6 +41,8 @@ export default function ScheduleReportIdentityFields({
 }: ScheduleReportIdentityFieldsProps) {
   const processOptions = (app.processIds || []).filter(Boolean);
   const showLeadTrackerFilters = isLeadTrackerApp(app);
+  const showItsmEntityFilter = isItsmApp(app.appId, app.displayName || app.name);
+  const extrovis = isExtrovisProcess(value.processId);
 
   const selectTemplate = (templateId: string) => {
     const tpl = templates.find((t) => t.id === templateId);
@@ -45,12 +54,23 @@ export default function ScheduleReportIdentityFields({
     });
   };
 
+  const selectProcess = (processId: string) => {
+    onChange({
+      ...value,
+      processId,
+      entityFilter: showItsmEntityFilter
+        ? defaultEntityFilterForProcess(processId) || value.entityFilter
+        : value.entityFilter,
+    });
+  };
+
   return (
     <div className="rounded-lg border border-primary-200/70 bg-primary-50/40 px-4 py-4 space-y-3">
       <div>
         <h4 className="text-xs font-semibold text-foreground-900 uppercase tracking-wide">Report to send</h4>
         <p className="text-[11px] text-foreground-500 mt-0.5">
-          Identifies which HTML template and process this schedule delivers. Required when multiple templates exist.
+          Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
+          excluded.
         </p>
       </div>
 
@@ -79,29 +99,35 @@ export default function ScheduleReportIdentityFields({
         {processOptions.length > 0 ? (
           <select
             value={value.processId}
-            onChange={(e) => onChange({ ...value, processId: e.target.value })}
+            onChange={(e) => selectProcess(e.target.value)}
             disabled={disabled}
             className="field-input w-full disabled:opacity-60 font-mono text-xs"
           >
             <option value="">— Select process —</option>
             {processOptions.map((pid) => (
               <option key={pid} value={pid}>
-                {pid}
+                {processLabel(pid)}
               </option>
             ))}
           </select>
         ) : (
           <input
             value={value.processId}
-            onChange={(e) => onChange({ ...value, processId: e.target.value })}
+            onChange={(e) => selectProcess(e.target.value)}
             disabled={disabled}
-            placeholder="e.g. Lead_tracker_1_A00"
+            placeholder="e.g. Live_IT_Service_Request_Extrovis_A00"
             className="field-input w-full font-mono text-xs disabled:opacity-60"
           />
         )}
-        <p className="text-[11px] text-foreground-400 mt-1">
-          Process used to fetch report data when the schedule runs.
-        </p>
+        {extrovis ? (
+          <p className="text-[11px] text-emerald-700 mt-1">
+            Extrovis process selected — report uses Extrovis tickets/users only (Refex entity filter off).
+          </p>
+        ) : (
+          <p className="text-[11px] text-foreground-400 mt-1">
+            Process used to fetch report data when the schedule runs.
+          </p>
+        )}
       </div>
 
       <div>
@@ -114,6 +140,27 @@ export default function ScheduleReportIdentityFields({
           className="field-input w-full text-sm disabled:opacity-60"
         />
       </div>
+
+      {showItsmEntityFilter && (
+        <div>
+          <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
+            Ticket entity scope
+          </label>
+          <select
+            value={value.entityFilter || (extrovis ? 'all' : 'Refex')}
+            onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
+            disabled={disabled}
+            className="field-input w-full disabled:opacity-60"
+          >
+            <option value="all">All entities on this process (Extrovis)</option>
+            <option value="Extrovis">Entity = Extrovis</option>
+            <option value="Refex">Entity = Refex</option>
+          </select>
+          <p className="text-[11px] text-foreground-400 mt-1">
+            Use <strong>All entities on this process</strong> for Extrovis so Refex-only tickets are not mixed in.
+          </p>
+        </div>
+      )}
 
       {showLeadTrackerFilters && (
         <>

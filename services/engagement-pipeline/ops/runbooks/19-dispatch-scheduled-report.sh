@@ -44,6 +44,7 @@ SCHEDULE_JSON="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${P
       rdv.config->>'from_email' AS from_email,
       rdv.config->>'website_filter' AS website_filter,
       rdv.config->>'user_group_filter' AS user_group_filter,
+      rdv.config->>'entity_filter' AS entity_filter,
       rdv.config->>'group_slug' AS group_slug,
       COALESCE(
         json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'TO'),
@@ -73,9 +74,27 @@ PROCESS_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.process_id // empty')"
 TO_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to | join(",")')"
 CC_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_cc | join(",")')"
 export TEMPLATE_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_id // empty')"
+export TEMPLATE_NAME
 export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
 export SUBJECT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.subject // empty')"
 export TO_LIST RECIPIENT="${TO_LIST}"
+
+# Prefer live template name from PostgreSQL (Admin UI rename) over stale schedule config.
+if [[ "${TEMPLATE_ID}" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  LIVE_TEMPLATE_NAME="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+    SELECT COALESCE(NULLIF(rt.name, ''), '')
+    FROM engagement_reporting.report_template rt
+    WHERE rt.report_template_id = '${TEMPLATE_ID}'::uuid
+    LIMIT 1;
+  " 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "${LIVE_TEMPLATE_NAME}" ]]; then
+    export TEMPLATE_NAME="${LIVE_TEMPLATE_NAME}"
+    log "Report title source: live template name '${TEMPLATE_NAME}'"
+  fi
+fi
+if [[ -z "${TEMPLATE_NAME}" && -n "${SUBJECT}" ]]; then
+  log "Report title source: schedule subject '${SUBJECT}'"
+fi
 
 if [[ -n "${TEMPLATE_APP_ID}" && "${TEMPLATE_APP_ID}" != "${APPLICATION_ID}" ]]; then
   log "Schedule config application_id=${APPLICATION_ID} does not match template binding (${TEMPLATE_APP_ID}). Using template application."
@@ -97,8 +116,14 @@ fi
 report_cache_key() {
   case "${APPLICATION_ID}" in
     Lead_Trcaker_A00) echo "lead-tracker:${GROUP_SLUG:-modepro}" ;;
-    IT_Service_Management_A00) echo "itsm:${ENVIRONMENT:-production}" ;;
+    IT_Service_Management_A00)
+      # v6: Source panels built via Node (raw HTML styles) for Refex + Extrovis
+      echo "itsm:v6:${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}:${ENTITY_FILTER:-all}:${ENVIRONMENT:-production}"
+      ;;
     Project_Management_Tracker_A00) echo "pm:${ENVIRONMENT:-production}" ;;
+    Solar_Site_Expense_Governance_Syst_A00)
+      echo "solar:v1:${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}:${ENVIRONMENT:-production}"
+      ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
 }
@@ -141,18 +166,18 @@ send_test_report() {
   local cache_prefix="${4:-}"
   export REPORT_CACHE_KEY="${cache_key}"
   export REPORT_CACHE_KEY_SCHEDULE="$(schedule_cache_key)"
-  if ! resolve_test_report_file "${report_file}" "${cache_key}" "${cache_prefix}"; then
-    if [[ -n "${render_runbook}" ]]; then
-      log "Test send: no cache yet — rendering from last PostgreSQL snapshot (no Kissflow ingest)"
-      bash "${render_runbook}"
-      [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
-      bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
-        || log "Warning: failed to cache rendered report (non-fatal)"
-      bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${REPORT_CACHE_KEY_SCHEDULE}" \
-        || true
-    else
-      stop "No cached report for ${cache_key}. Run one full scheduled send first, then retry test email."
-    fi
+  # Prefer re-render so a newly published template is used. Cached HTML is only a
+  # fallback when no render runbook is available (avoids sending stale schedule:* cache).
+  if [[ -n "${render_runbook}" ]]; then
+    log "Test send: rendering with latest published template from PostgreSQL snapshot (no Kissflow ingest)"
+    bash "${render_runbook}"
+    [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
+      || log "Warning: failed to cache rendered report (non-fatal)"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${REPORT_CACHE_KEY_SCHEDULE}" \
+      || true
+  elif ! resolve_test_report_file "${report_file}" "${cache_key}" "${cache_prefix}"; then
+    stop "No cached report for ${cache_key}. Run one full scheduled send first, then retry test email."
   fi
   export REPORT_FILE_OVERRIDE="${report_file}"
   export DELIVERY_KIND="test"
@@ -174,7 +199,23 @@ export ENVIRONMENT="${ENVIRONMENT:-production}"
 export ITSM_PROCESS_ID="${PROCESS_ID:-Live_IT_Service_Request_A00}"
 export PM_PROCESS_ID="${PROCESS_ID:-Project_Sub_Task_A01}"
 export PM_APP_ID="${PM_APP_ID:-Project_Management_Tracker_A00}"
+export SOLAR_APP_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}"
+export SOLAR_PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
 export ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
+
+# ITSM entity scope: Extrovis process → no Refex entity filter; classic process → Refex.
+ENTITY_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.entity_filter // empty')"
+if [[ -z "${ENTITY_FILTER}" ]]; then
+  if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+    ENTITY_FILTER=""
+  else
+    ENTITY_FILTER="Refex"
+  fi
+fi
+if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
+  ENTITY_FILTER=""
+fi
+export ENTITY_FILTER
 
 [[ -n "${APPLICATION_ID}" ]] || stop "Schedule ${SCHEDULE_ID} has no application_id in config"
 if [[ "${TEST_SEND}" != "true" ]]; then
@@ -182,7 +223,7 @@ if [[ "${TEST_SEND}" != "true" ]]; then
 fi
 [[ -n "${FROM_EMAIL}" ]] || stop "No from_email on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
 
-log "Dispatching ${APPLICATION_ID} schedule ${SCHEDULE_ID}${TEMPLATE_NAME:+ · template ${TEMPLATE_NAME}}${PROCESS_ID:+ · process ${PROCESS_ID}}"
+log "Dispatching ${APPLICATION_ID} schedule ${SCHEDULE_ID}${TEMPLATE_NAME:+ · template ${TEMPLATE_NAME}}${PROCESS_ID:+ · process ${PROCESS_ID}}${ENTITY_FILTER:+ · entity ${ENTITY_FILTER}}"
 
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/ops/runbooks/load-kissflow-creds.sh"
@@ -207,7 +248,26 @@ case "${APPLICATION_ID}" in
     ;;
   IT_Service_Management_A00)
     export SUBJECT="${SUBJECT:-Kissflow - User Signin Report}"
+    itsm_has_snapshot() {
+      local n
+      n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+        SELECT count(*)::text
+        FROM engagement_reporting.snapshot_run
+        WHERE application_id = '${ITSM_APP_ID}'
+          AND process_id = '${ITSM_PROCESS_ID}'
+          AND environment = '${ENVIRONMENT:-production}'
+          AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+      " 2>/dev/null | tr -d '[:space:]')"
+      [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
+    }
     if [[ "${TEST_SEND}" == "true" ]]; then
+      # Extrovis (and any new process) has no snapshot until the first ingest.
+      # Test send previously skipped Kissflow → empty KPIs / "No users" table.
+      if ! itsm_has_snapshot; then
+        log "No usable snapshot for process ${ITSM_PROCESS_ID} — running full Kissflow ingest before test send"
+        export FULL_INGEST=true
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
+      fi
       send_test_report \
         "${REPO_ROOT}/templates/generated/report-latest.html" \
         "$(report_cache_key)" \
@@ -239,6 +299,43 @@ case "${APPLICATION_ID}" in
       log "Step 3/3: Sending PM report"
       send_cached_report "${REPO_ROOT}/templates/generated/pm-report-latest.html"
       log "PM ingest-render-send completed"
+    fi
+    ;;
+  Solar_Site_Expense_Governance_Syst_A00)
+    export SUBJECT="${SUBJECT:-Kissflow - Solar Reinvestment Request Report}"
+    export SOLAR_APP_ID="${APPLICATION_ID}"
+    export SOLAR_PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
+    solar_has_snapshot() {
+      local n
+      n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+        SELECT count(*)::text
+        FROM engagement_reporting.snapshot_run
+        WHERE application_id = '${SOLAR_APP_ID}'
+          AND process_id = '${SOLAR_PROCESS_ID}'
+          AND environment = '${ENVIRONMENT:-production}'
+          AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+      " 2>/dev/null | tr -d '[:space:]')"
+      [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
+    }
+    if [[ "${TEST_SEND}" == "true" ]]; then
+      if ! solar_has_snapshot; then
+        log "No usable Solar snapshot for ${SOLAR_PROCESS_ID} — running full Kissflow ingest before test send"
+        export FULL_INGEST=true
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/20-ingest-solar-and-load.sh"
+      fi
+      send_test_report \
+        "${REPO_ROOT}/templates/generated/solar-report-latest.html" \
+        "$(report_cache_key)" \
+        "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/21-render-solar-html-report.sh"
+      log "Solar test send completed"
+    else
+      log "Step 1/3: Ingest latest Kissflow Solar Reinvestment Request data"
+      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/20-ingest-solar-and-load.sh"
+      log "Step 2/3: Rendering Solar report"
+      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/21-render-solar-html-report.sh"
+      log "Step 3/3: Sending Solar report"
+      send_cached_report "${REPO_ROOT}/templates/generated/solar-report-latest.html"
+      log "Solar ingest-render-send completed"
     fi
     ;;
   *)

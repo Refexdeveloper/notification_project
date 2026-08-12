@@ -45,8 +45,8 @@ export const APP_DETAIL_TABS: AppDetailTab[] = [
   { id: 'settings', label: 'App settings', icon: Settings },
 ];
 
-/** Sidebar routes hidden in backend-api mode (prototype / localStorage only). */
-const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings']);
+/** Sidebar routes hidden in backend-api mode (prototype / localStorage only, or Kissflow-owned). */
+const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings', 'platform-users', 'users']);
 
 export function applicationDetailTabs(): AppDetailTab[] {
   if (!isBackendApiMode()) return APP_DETAIL_TABS;

@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { GlassCard } from '@/components/ui/GlassCard';
+import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
 
 const statusChip = (s: TemplateStatus) =>
   s === 'published' ? 'chip-success' : s === 'draft' ? 'chip-warn' : 'chip-muted';
@@ -31,6 +32,7 @@ export default function TemplatesPage() {
   const [appFilter, setAppFilter] = useState(appFilterParam);
   const [tick, setTick] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [starterOpen, setStarterOpen] = useState(false);
   const [loading, setLoading] = useState(backendMode);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backendApps, setBackendApps] = useState<KissflowApplication[]>([]);
@@ -104,30 +106,13 @@ export default function TemplatesPage() {
       navigate('/applications');
       return;
     }
-    const applicationId = appFilter || apps[0].id;
-    setCreating(true);
-
     if (backendMode) {
-      const app = apps.find((a) => a.id === applicationId);
-      if (!app) {
-        setCreating(false);
-        return;
-      }
-      const result = await createTemplateOnBackend(app, {
-        name: `Report template ${new Date().toLocaleDateString()}`,
-        description: 'HTML email report for this Kissflow app',
-        subject: `{{ReportTitle}} — ${appName(applicationId)}`,
-      });
-      setCreating(false);
-      if (result.ok && result.template) {
-        setTick((n) => n + 1);
-        navigate(`/templates/${result.template.id}?app=${app.id}`);
-      } else {
-        setLoadError(result.error || 'Failed to create template');
-      }
+      setStarterOpen(true);
       return;
     }
 
+    const applicationId = appFilter || apps[0].id;
+    setCreating(true);
     const tpl = createTemplate({
       applicationId,
       name: `Report template ${new Date().toLocaleDateString()}`,
@@ -137,6 +122,34 @@ export default function TemplatesPage() {
     setCreating(false);
     setTick((n) => n + 1);
     navigate(`/templates/${tpl.id}`);
+  };
+
+  const createApp =
+    apps.find((a) => a.id === (appFilter || apps[0]?.id)) || apps[0] || null;
+
+  const handleConfirmCreate = async (input: {
+    starterId: string;
+    name: string;
+    subject: string;
+    description: string;
+  }) => {
+    if (!createApp) return;
+    setCreating(true);
+    const result = await createTemplateOnBackend(createApp, {
+      name: input.name,
+      description: input.description,
+      subject: input.subject,
+      status: 'draft',
+      starter_id: input.starterId,
+    });
+    setCreating(false);
+    if (result.ok && result.template) {
+      setStarterOpen(false);
+      setTick((n) => n + 1);
+      navigate(`/templates/${result.template.id}?app=${createApp.id}`);
+    } else {
+      setLoadError(result.error || 'Failed to create template');
+    }
   };
 
   const openTemplate = (tpl: ReportTemplate) => {
@@ -262,8 +275,8 @@ export default function TemplatesPage() {
             <p className="text-xs font-bold uppercase tracking-wider text-foreground-400">How it works</p>
           </div>
           <ol className="space-y-3 text-sm text-foreground-600 leading-relaxed list-decimal list-inside">
-            <li>Create several HTML designs for one app</li>
-            <li>Use placeholders like {'{{SignInRate}}'}</li>
+            <li>Pick a starter layout (ITSM / PM / Lead / simple)</li>
+            <li>Click placeholders like {'{{OpenTickets}}'} to insert fields</li>
             <li>Publish the best one</li>
             <li>Attach it to a schedule with recipients</li>
           </ol>
@@ -283,6 +296,17 @@ export default function TemplatesPage() {
           )}
         </GlassCard>
       </div>
+
+      {backendMode && createApp && (
+        <StarterPickerModal
+          open={starterOpen}
+          onClose={() => !creating && setStarterOpen(false)}
+          app={createApp}
+          mode="create"
+          creating={creating}
+          onConfirmCreate={handleConfirmCreate}
+        />
+      )}
     </Layout>
   );
 }

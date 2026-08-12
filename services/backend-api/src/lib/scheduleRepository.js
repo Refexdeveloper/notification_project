@@ -18,12 +18,18 @@ async function createSchedule(client, {
   subject,
   websiteFilter,
   userGroupFilter,
+  entityFilter,
   isActive,
+  configExtras,
 }) {
   const accountId = await resolveAccountId(client, environment, applicationId);
   const scheduleId = crypto.randomUUID();
   const definitionId = crypto.randomUUID();
   const definitionVersionId = crypto.randomUUID();
+  const extras =
+    configExtras && typeof configExtras === 'object' && !Array.isArray(configExtras)
+      ? configExtras
+      : {};
 
   await client.query(
     `INSERT INTO engagement_reporting.report_definition (report_definition_id, account_id, name, is_active)
@@ -47,7 +53,9 @@ async function createSchedule(client, {
         from_email: fromEmail || null,
         website_filter: websiteFilter || null,
         user_group_filter: userGroupFilter || null,
+        entity_filter: entityFilter || null,
         kind: 'schedule',
+        ...extras,
       }),
     ],
   );

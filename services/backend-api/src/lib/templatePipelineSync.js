@@ -7,6 +7,7 @@ const { repoRoot, resolveTemplateHtml } = require('./templateContent');
 const APPLICATION_SEED_FILES = {
   IT_Service_Management_A00: 'db/seeds/itsm-engagement-template.html',
   Project_Management_Tracker_A00: 'db/seeds/pm-engagement-template.html',
+  Solar_Site_Expense_Governance_Syst_A00: 'db/seeds/solar-reinvestment-template.html',
   Lead_Trcaker_A00: 'db/seeds/lead-tracker-report-template.html',
 };
 

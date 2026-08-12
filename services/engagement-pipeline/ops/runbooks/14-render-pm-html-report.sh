@@ -94,6 +94,48 @@ tasks AS (
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${PM_PROCESS_ID}'
+),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+),
+pm_process_roles AS (
+  SELECT DISTINCT ia.principal_id AS role_id
+  FROM engagement_reporting.item_assignment ia, latest l
+  WHERE ia.snapshot_run_id = l.snapshot_run_id
+    AND ia.process_id = '${PM_PROCESS_ID}'
+    AND ia.principal_type = 'APP_ROLE'
+),
+pm_role_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  WHERE pu.application_id = '${PM_APP_ID}'
+    AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+  UNION
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN pm_process_roles pr ON pr.role_id = pu.principal_id
+  WHERE pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+),
+pm_app_users AS (
+  SELECT user_id FROM pm_role_members
+  UNION
+  SELECT DISTINCT ia.principal_id AS user_id
+  FROM engagement_reporting.item_assignment ia, latest l
+  WHERE ia.snapshot_run_id = l.snapshot_run_id
+    AND ia.process_id = '${PM_PROCESS_ID}'
+    AND ia.principal_type = 'USER'
+    AND ia.principal_id IS NOT NULL
+    AND trim(ia.principal_id) <> ''
+    AND NOT EXISTS (SELECT 1 FROM pm_role_members)
 )
 SELECT json_build_object(
   'total_tasks', (SELECT count(*) FROM tasks),
@@ -114,6 +156,16 @@ SELECT json_build_object(
     WHERE process_status = 'Completed'
       AND completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  ),
+  'total_app_users', (SELECT count(*) FROM pm_app_users),
+  'signed_in_today', (
+    SELECT count(*)
+    FROM engagement_reporting.\"user\" u
+    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    JOIN pm_app_users pu ON pu.user_id = u.user_id
+    WHERE u.last_sign_in IS NOT NULL
+      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+        = (now() AT TIME ZONE 'Asia/Kolkata')::date
   )
 );
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
@@ -196,7 +248,7 @@ PM_ROWS_HTML="$(jq -r '
   to_entries | map(
     "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.last_sign_in // "Never") + "</td>" +
+    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
     "</tr>"
@@ -204,11 +256,12 @@ PM_ROWS_HTML="$(jq -r '
 ' <<< "${PM_USERS_JSON}")"
 
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_ASSIGNED="$(jq -r '.assigned_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL_USERS="$(jq -r '.total_app_users // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${PM_SUMMARY_JSON}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
@@ -220,26 +273,33 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
 
+REPORT_TITLE="${TEMPLATE_NAME:-}"
+if [[ -z "${REPORT_TITLE}" ]]; then
+  REPORT_TITLE="${SUBJECT:-Project Management Task Report}"
+fi
+
 jq -n \
-  --arg ReportTitle "Project Management Task Report" \
+  --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
   --arg TotalTasks "${PM_TOTAL}" \
-  --arg AssignedTasks "${PM_ASSIGNED}" \
   --arg PendingTasks "${PM_PENDING}" \
   --arg CompletedTasks "${PM_COMPLETED}" \
   --arg OpenedToday "${PM_OPENED_TODAY}" \
   --arg ClosedToday "${PM_CLOSED_TODAY}" \
+  --arg TotalUsers "${PM_TOTAL_USERS}" \
+  --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${PM_ROWS_HTML}" \
   --arg ReportBody "Project Tracker covers all entities group-wide." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
     TotalTasks: $TotalTasks,
-    AssignedTasks: $AssignedTasks,
     PendingTasks: $PendingTasks,
     CompletedTasks: $CompletedTasks,
     OpenedToday: $OpenedToday,
     ClosedToday: $ClosedToday,
+    TotalUsers: $TotalUsers,
+    SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"

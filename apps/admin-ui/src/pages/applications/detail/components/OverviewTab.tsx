@@ -62,15 +62,18 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
     },
     {
       done: templates.length > 0,
-      title: 'Create HTML templates',
-      hint: 'Design report emails for this app',
+      title: 'Review HTML template',
+      hint: 'Draft created on Connect — edit and publish when ready',
       tab: 'templates',
       icon: 'ri-mail-open-line',
     },
     {
       done: schedules.some((s) => s.status === 'active'),
-      title: 'Schedule & recipients',
-      hint: 'Pick a template and who gets it',
+      title: 'Activate schedule & recipients',
+      hint:
+        schedules.length > 0
+          ? 'Paused draft schedule ready — add To/From and activate'
+          : 'Pick a template and who gets it',
       tab: 'schedulers',
       icon: 'ri-calendar-schedule-line',
     },
@@ -90,7 +93,7 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
         <div className="mb-4">
           <h3 className="text-base font-heading font-semibold text-foreground-950">Get started</h3>
           <p className="text-xs text-foreground-500 mt-0.5">
-            Sync fields → design templates → configure schedules and recipients.
+            Sync fields → review draft template → add recipients and activate schedule.
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">

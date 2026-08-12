@@ -149,6 +149,7 @@ if [[ -f "${REPO_ROOT}/ops/runbooks/record-report-delivery.sh" ]]; then
   if [[ -z "${APPLICATION_ID:-}" ]]; then
     case "${REPORT_FILE}" in
       *pm-report*) export APPLICATION_ID="${PM_APP_ID:-Project_Management_Tracker_A00}" ;;
+      *solar-report*) export APPLICATION_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}" ;;
       *lead-tracker*) export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}" ;;
       *) export APPLICATION_ID="${ITSM_APP_ID:-IT_Service_Management_A00}" ;;
     esac
@@ -156,6 +157,7 @@ if [[ -f "${REPO_ROOT}/ops/runbooks/record-report-delivery.sh" ]]; then
   if [[ -z "${PROCESS_ID:-}" ]]; then
     case "${REPORT_FILE}" in
       *pm-report*) export PROCESS_ID="${PM_PROCESS_ID:-Project_Sub_Task_A01}" ;;
+      *solar-report*) export PROCESS_ID="${SOLAR_PROCESS_ID:-Technician_Reimbursement__YTLM}" ;;
       *lead-tracker*) export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}" ;;
       *) export PROCESS_ID="${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}" ;;
     esac
@@ -172,6 +174,9 @@ if [[ "${STATUS}" == "SENT" && -f "${REPO_ROOT}/ops/runbooks/cache-report-html.s
       Lead_Trcaker_A00) export REPORT_CACHE_KEY="lead-tracker:${GROUP_SLUG:-modepro}" ;;
       IT_Service_Management_A00) export REPORT_CACHE_KEY="itsm:${ENVIRONMENT:-production}" ;;
       Project_Management_Tracker_A00) export REPORT_CACHE_KEY="pm:${ENVIRONMENT:-production}" ;;
+      Solar_Site_Expense_Governance_Syst_A00)
+        export REPORT_CACHE_KEY="solar:v1:${SOLAR_PROCESS_ID:-Technician_Reimbursement__YTLM}:${ENVIRONMENT:-production}"
+        ;;
     esac
   fi
   if [[ -n "${REPORT_CACHE_KEY:-}" ]]; then

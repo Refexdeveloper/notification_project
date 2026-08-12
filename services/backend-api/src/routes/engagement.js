@@ -5,6 +5,11 @@ const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
 const { isLoggedInToday } = require('../lib/reportTimezone');
+const {
+  ENGAGEMENT_CACHE_TTL_MS,
+  isEngagementCacheFresh,
+  loadApplicationEngagementCache,
+} = require('../lib/engagementCache');
 
 const router = express.Router({ mergeParams: true });
 
@@ -95,10 +100,25 @@ assignment_counts AS (
     SELECT
       ia.principal_id AS user_id,
       COUNT(*)::int AS assigned,
-      COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
       COUNT(*) FILTER (
-        WHERE i.process_status = 'Completed'
-          AND $2 <> 'Project_Management_Tracker_A00'
+        WHERE i.process_status = 'InProgress'
+          AND NOT (
+            $2 = 'IT_Service_Management_A00'
+            AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+              LIKE '%it tech reopen%'
+          )
+      )::int AS open_count,
+      COUNT(*) FILTER (
+        WHERE $2 <> 'Project_Management_Tracker_A00'
+          AND (
+            i.process_status = 'Completed'
+            OR (
+              $2 = 'IT_Service_Management_A00'
+              AND i.process_status = 'InProgress'
+              AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+                LIKE '%it tech reopen%'
+            )
+          )
       )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
@@ -119,10 +139,25 @@ assignment_counts AS (
     SELECT
       pu.user_id,
       COUNT(*)::int AS assigned,
-      COUNT(*) FILTER (WHERE i.process_status = 'InProgress')::int AS open_count,
       COUNT(*) FILTER (
-        WHERE i.process_status = 'Completed'
-          AND $2 <> 'Project_Management_Tracker_A00'
+        WHERE i.process_status = 'InProgress'
+          AND NOT (
+            $2 = 'IT_Service_Management_A00'
+            AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+              LIKE '%it tech reopen%'
+          )
+      )::int AS open_count,
+      COUNT(*) FILTER (
+        WHERE $2 <> 'Project_Management_Tracker_A00'
+          AND (
+            i.process_status = 'Completed'
+            OR (
+              $2 = 'IT_Service_Management_A00'
+              AND i.process_status = 'InProgress'
+              AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', '')))
+                LIKE '%it tech reopen%'
+            )
+          )
       )::int AS completed_count,
       COUNT(*) FILTER (WHERE i.process_status = 'Withdrawn')::int AS rejected_count
     FROM engagement_reporting.item_assignment ia
@@ -251,48 +286,55 @@ router.get('/', async (req, res) => {
 
   const liveRefresh = String(req.query.refresh || '').toLowerCase() === 'live';
 
+  const mapLiveUsers = (live) =>
+    (live.users || []).map((row) => ({
+      user_id: row.user_id,
+      user_name: row.user_name,
+      email: row.email,
+      user_type: null,
+      active_status: null,
+      last_sign_in: row.last_sign_in,
+      ever_logged_in: row.ever_logged_in,
+      assigned: row.assigned || 0,
+      open: row.open_count || 0,
+      completed: row.completed_count || 0,
+      rejected: 0,
+      role_names: [],
+      has_assignment: (row.assigned || 0) > 0,
+      has_app_role: row.has_app_role || false,
+      source_payload: {},
+    }));
+
+  const respondLive = (live, dataSource = 'live') => {
+    const items = mapLiveUsers(live);
+    return ok(res, req.correlationId, {
+      items,
+      count: items.length,
+      totals: {
+        total_users: live.metrics.total_users,
+        active_today: live.metrics.sign_in_today,
+        inactive: items.filter((row) => row.last_sign_in && !isLoggedInTodayLegacy(row.last_sign_in)).length,
+        never_logged_in: items.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
+        total_assigned: items.reduce((sum, row) => sum + Number(row.assigned || 0), 0),
+        open_tickets: live.metrics.open_tickets,
+        closed_tickets: live.metrics.closed_tickets,
+        sign_in_rate_overall: live.metrics.sign_in_rate_overall,
+        sign_in_rate_today: live.metrics.sign_in_rate_today,
+      },
+      generated_at: live.fetched_at,
+      snapshot_at: live.snapshot_at,
+      environment,
+      application_id: applicationId,
+      scope: 'application',
+      data_source: dataSource,
+      cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
+    });
+  };
+
   if (liveRefresh) {
     try {
-      const live = await fetchLiveAppMetrics(environment, applicationId);
-      const items = (live.users || []).map((row) => ({
-        user_id: row.user_id,
-        user_name: row.user_name,
-        email: row.email,
-        user_type: null,
-        active_status: null,
-        last_sign_in: row.last_sign_in,
-        ever_logged_in: row.ever_logged_in,
-        assigned: row.assigned || 0,
-        open: row.open_count || 0,
-        completed: row.completed_count || 0,
-        rejected: 0,
-        role_names: [],
-        has_assignment: false,
-        has_app_role: row.has_app_role || false,
-        source_payload: {},
-      }));
-
-      return ok(res, req.correlationId, {
-        items,
-        count: items.length,
-        totals: {
-          total_users: live.metrics.total_users,
-          active_today: live.metrics.sign_in_today,
-          inactive: items.filter((row) => row.last_sign_in && !isLoggedInTodayLegacy(row.last_sign_in)).length,
-          never_logged_in: items.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
-          total_assigned: live.metrics.open_tickets + live.metrics.closed_tickets,
-          open_tickets: live.metrics.open_tickets,
-          closed_tickets: live.metrics.closed_tickets,
-          sign_in_rate_overall: live.metrics.sign_in_rate_overall,
-          sign_in_rate_today: live.metrics.sign_in_rate_today,
-        },
-        generated_at: live.fetched_at,
-        snapshot_at: live.snapshot_at,
-        environment,
-        application_id: applicationId,
-        scope: 'application',
-        data_source: 'live',
-      });
+      const live = await fetchLiveAppMetrics(environment, applicationId, { persistCache: true });
+      return respondLive(live, 'live');
     } catch (liveErr) {
       return fail(
         res,
@@ -307,35 +349,92 @@ router.get('/', async (req, res) => {
 
   try {
     const { rows } = await getPool().query(APP_ENGAGEMENT_QUERY, [environment, applicationId]);
-    const snapshotAt = rows[0]?.snapshot_at || null;
-    const items = rows.map((row) => ({
-      user_id: row.user_id,
-      user_name: row.user_name,
-      email: row.email,
-      user_type: row.user_type,
-      active_status: row.active_status,
-      last_sign_in: row.last_sign_in,
-      ever_logged_in: row.ever_logged_in,
-      assigned: row.assigned,
-      open: row.open_count,
-      completed: row.completed_count,
-      rejected: row.rejected_count,
-      role_names: row.role_names || [],
-      has_assignment: row.has_assignment,
-      has_app_role: row.has_app_role,
-      source_payload: row.source_payload,
-    }));
+    if (rows.length) {
+      const snapshotAt = rows[0]?.snapshot_at || null;
+      const items = rows.map((row) => ({
+        user_id: row.user_id,
+        user_name: row.user_name,
+        email: row.email,
+        user_type: row.user_type,
+        active_status: row.active_status,
+        last_sign_in: row.last_sign_in,
+        ever_logged_in: row.ever_logged_in,
+        assigned: row.assigned,
+        open: row.open_count,
+        completed: row.completed_count,
+        rejected: row.rejected_count,
+        role_names: row.role_names || [],
+        has_assignment: row.has_assignment,
+        has_app_role: row.has_app_role,
+        source_payload: row.source_payload,
+      }));
 
-    return ok(res, req.correlationId, {
-      items,
-      count: items.length,
-      totals: buildTotals(rows),
-      generated_at: new Date().toISOString(),
-      snapshot_at: snapshotAt,
-      environment,
-      application_id: applicationId,
-      scope: 'application',
-    });
+      return ok(res, req.correlationId, {
+        items,
+        count: items.length,
+        totals: buildTotals(rows),
+        generated_at: new Date().toISOString(),
+        snapshot_at: snapshotAt,
+        environment,
+        application_id: applicationId,
+        scope: 'application',
+        data_source: 'snapshot',
+        cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
+      });
+    }
+
+    // No ingest snapshot — use application engagement_cache (2h) before hitting Kissflow.
+    const cached = await loadApplicationEngagementCache(getPool(), environment, applicationId);
+    if (isEngagementCacheFresh(cached)) {
+      return ok(res, req.correlationId, {
+        items: cached.items,
+        count: cached.items.length,
+        totals: cached.totals || buildTotals([]),
+        generated_at: cached.fetched_at,
+        snapshot_at: cached.snapshot_at || cached.fetched_at,
+        environment,
+        application_id: applicationId,
+        scope: 'application',
+        data_source: 'cache',
+        cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
+        hint: 'Serving cached engagement (< 1h). Use Refresh for a live Kissflow pull.',
+      });
+    }
+
+    // Cache missing or older than 2h — one live pull, then persist for next visits.
+    try {
+      const live = await fetchLiveAppMetrics(environment, applicationId, { persistCache: true });
+      return respondLive(live, cached ? 'live_stale_refresh' : 'live_bootstrap');
+    } catch (liveErr) {
+      if (cached?.items?.length) {
+        return ok(res, req.correlationId, {
+          items: cached.items,
+          count: cached.items.length,
+          totals: cached.totals || buildTotals([]),
+          generated_at: cached.fetched_at,
+          snapshot_at: cached.snapshot_at || cached.fetched_at,
+          environment,
+          application_id: applicationId,
+          scope: 'application',
+          data_source: 'cache_stale',
+          warning: `Live refresh failed (${liveErr.message}); showing stale cache.`,
+          cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
+        });
+      }
+      return ok(res, req.correlationId, {
+        items: [],
+        count: 0,
+        totals: buildTotals([]),
+        generated_at: new Date().toISOString(),
+        environment,
+        application_id: applicationId,
+        scope: 'application',
+        data_source: 'empty',
+        hint:
+          liveErr.message ||
+          'No engagement data yet. Connect bootstrap syncs fields + related users once; Refresh retries live pull.',
+      });
+    }
   } catch (err) {
     if (err.code === '42P01') {
       return ok(res, req.correlationId, {

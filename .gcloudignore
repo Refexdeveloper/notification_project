@@ -1,0 +1,20 @@
+# Keep Cloud Build uploads small — Dockerfiles run their own npm ci.
+.git
+.gitignore
+**/node_modules
+**/dist
+**/out
+**/.vite
+**/.cache
+data/audit
+ops/tmp
+*.log
+.DS_Store
+.env
+.env.*
+**/.env
+**/.env.*
+apps/admin-ui/.env.local
+services/backend-api/.env
+NotifictaionEngine
+refex-adoption-user-report-Live_IT_Service_Request_A00

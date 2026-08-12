@@ -21,7 +21,14 @@ LEFT JOIN LATERAL (
   SELECT version_number, content_ref, checksum, created_at
   FROM engagement_reporting.report_template_version rtv
   WHERE rtv.report_template_id = rt.report_template_id
-  ORDER BY version_number DESC
+  ORDER BY
+    CASE
+      WHEN ltrim(content_ref) LIKE '<!%' THEN 0
+      WHEN ltrim(content_ref) ILIKE '<html%' THEN 0
+      WHEN ltrim(content_ref) LIKE '<%' THEN 0
+      ELSE 1
+    END,
+    version_number DESC
   LIMIT 1
 ) rtv ON true
 LEFT JOIN LATERAL (
@@ -149,11 +156,16 @@ async function createTemplate(client, {
   status,
   contentRef,
   checksum,
+  configExtras,
 }) {
   const templateId = crypto.randomUUID();
   const bindingDefId = crypto.randomUUID();
   const bindingVersionId = crypto.randomUUID();
   const accountId = await resolveAccountId(client, environment, applicationId);
+  const extras =
+    configExtras && typeof configExtras === 'object' && !Array.isArray(configExtras)
+      ? configExtras
+      : {};
 
   await client.query(
     `INSERT INTO engagement_reporting.report_template (report_template_id, name)
@@ -189,6 +201,7 @@ async function createTemplate(client, {
         subject: subject || name,
         description: description || '',
         status: status || 'draft',
+        ...extras,
       }),
     ],
   );

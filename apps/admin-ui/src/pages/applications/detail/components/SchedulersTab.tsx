@@ -12,14 +12,18 @@ import { getTemplatesByAppId, type ReportTemplate } from '@/stores/reportTemplat
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   createScheduleOnBackend,
+  createTemplateOnBackend,
   describeBackendSchedule,
+  loadReportStarterHtmlFromBackend,
   loadSchedulesFromBackend,
   loadTemplatesFromBackend,
+  updateTemplateOnBackend,
 } from '@/services/reportsApi';
 import BackendScheduleEditor from './BackendScheduleEditor';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal';
+import { defaultEntityFilterForProcess, isExtrovisProcess, processLabel } from '@/lib/processLabels';
 
 interface SchedulersTabProps {
   app: KissflowApplication;
@@ -39,6 +43,11 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
   const [createTemplates, setCreateTemplates] = useState<ReportTemplate[]>([]);
   const [createTemplateId, setCreateTemplateId] = useState('');
   const [createProcessId, setCreateProcessId] = useState('');
+  const [quickSetupBusy, setQuickSetupBusy] = useState(false);
+  const [quickSetupMsg, setQuickSetupMsg] = useState('');
+
+  const extrovisProcessId =
+    (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || '';
 
   useEffect(() => {
     if (!backendMode) return;
@@ -82,7 +91,9 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
     setCreateTemplates(templatesRes.templates);
     setCreateTemplateId(published?.id || '');
-    setCreateProcessId(app.processIds?.[0] || '');
+    const preferredProcess =
+      (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || app.processIds?.[0] || '';
+    setCreateProcessId(preferredProcess);
     setCreateDialogOpen(true);
   };
 
@@ -117,11 +128,13 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     }
     setCreating(true);
     setLoadError(null);
+    const entityFilter = defaultEntityFilterForProcess(createProcessId);
     const result = await createScheduleOnBackend(app, {
-      name: `${tpl.name} · ${app.displayName || app.name}`,
+      name: `${tpl.name} · ${isExtrovisProcess(createProcessId) ? 'Extrovis' : app.displayName || app.name}`,
       template_id: tpl.id,
       template_name: tpl.name,
       process_id: createProcessId || undefined,
+      entity_filter: entityFilter || undefined,
       subject: tpl.subject || tpl.name,
       cron_expression: '0 9 * * *',
       timezone: 'Asia/Kolkata',
@@ -142,8 +155,102 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
 
   const selected = list.find((sch) => sch.id === selectedId);
 
+  const runExtrovisQuickSetup = async () => {
+    if (!backendMode || !extrovisProcessId) return;
+    setQuickSetupBusy(true);
+    setQuickSetupMsg('');
+    setLoadError(null);
+
+    let templatesRes = await loadTemplatesFromBackend(app);
+    let tpl = templatesRes.templates.find((t) => /extrovis/i.test(t.name));
+    let setupNote = '';
+
+    if (!tpl) {
+      const created = await createTemplateOnBackend(app, {
+        name: 'Extrovis ITSM Report',
+        description: 'Extrovis ITSM report — tickets only (no user sign-in overview)',
+        subject: 'Extrovis / Kissflow ITSM Report',
+        status: 'draft',
+        starter_id: 'itsm-extrovis',
+      });
+      if (!created.ok || !created.template) {
+        setLoadError(created.error || 'Could not create Extrovis template');
+        setQuickSetupBusy(false);
+        return;
+      }
+      tpl = created.template;
+      setupNote = 'Created Extrovis template (no sign-in overview). ';
+    } else {
+      // Refresh layout so older Extrovis templates drop User Sign-in Overview.
+      const starter = await loadReportStarterHtmlFromBackend(app, 'itsm-extrovis');
+      if (starter.ok && starter.item?.html) {
+        const updated = await updateTemplateOnBackend(app, tpl.id, {
+          html: starter.item.html,
+          description: 'Extrovis ITSM report — tickets only (no user sign-in overview)',
+        });
+        if (updated.ok && updated.template) {
+          tpl = updated.template;
+          setupNote = 'Updated Extrovis template (removed sign-in overview). ';
+        }
+      }
+    }
+
+    const existingExtrovis = list.find((s) => isExtrovisProcess(s.processId));
+    if (existingExtrovis) {
+      setSelectedId(existingExtrovis.id);
+      setQuickSetupMsg(
+        `${setupNote}Extrovis schedule already exists — open it below, set recipients, and Activate.`,
+      );
+      setQuickSetupBusy(false);
+      setTick((n) => n + 1);
+      return;
+    }
+
+    const scheduleRes = await createScheduleOnBackend(app, {
+      name: `${tpl.name} · Extrovis`,
+      template_id: tpl.id,
+      template_name: tpl.name,
+      process_id: extrovisProcessId,
+      entity_filter: 'all',
+      subject: tpl.subject || 'Extrovis / Kissflow ITSM Report',
+      cron_expression: '0 9 * * *',
+      timezone: 'Asia/Kolkata',
+      is_active: false,
+    });
+    setQuickSetupBusy(false);
+    if (!scheduleRes.ok || !scheduleRes.schedule) {
+      setLoadError(scheduleRes.error || 'Could not create Extrovis schedule');
+      return;
+    }
+    setTick((n) => n + 1);
+    setSelectedId(scheduleRes.schedule.id);
+    setQuickSetupMsg(
+      `${setupNote}Extrovis template + schedule ready. Set From/To recipients below, publish the template if needed, then Activate.`,
+    );
+  };
+
   return (
     <div>
+      {backendMode && extrovisProcessId && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 space-y-2">
+          <p className="text-sm font-semibold text-emerald-950">Extrovis quick setup</p>
+          <p className="text-xs text-emerald-900/90">
+            Process <span className="font-mono">{processLabel(extrovisProcessId)}</span> is already linked.
+            Create or refresh the Extrovis HTML template (no user sign-in overview) + schedule in one click.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              disabled={quickSetupBusy}
+              onClick={() => void runExtrovisQuickSetup()}
+            >
+              {quickSetupBusy ? 'Setting up…' : 'Setup Extrovis report'}
+            </Button>
+            {quickSetupMsg && <span className="text-xs text-emerald-800">{quickSetupMsg}</span>}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-3 mb-4">
         <p className="text-sm text-foreground-500">
           {backendMode
@@ -219,8 +326,18 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
                     Template: {sch.templateName}
                   </span>
                   {sch.processId && (
-                    <span className="chip-muted text-[10px] font-mono truncate max-w-[10rem]" title={sch.processId}>
-                      {sch.processId}
+                    <span
+                      className={`chip-muted text-[10px] truncate max-w-[14rem] ${
+                        isExtrovisProcess(sch.processId) ? 'text-emerald-800' : 'font-mono'
+                      }`}
+                      title={sch.processId}
+                    >
+                      {processLabel(sch.processId)}
+                    </span>
+                  )}
+                  {backendMode && sch.entityFilter && (
+                    <span className="chip-muted text-[10px]" title="Ticket entity scope">
+                      Entity: {sch.entityFilter === 'all' ? 'All (process)' : sch.entityFilter}
                     </span>
                   )}
                   <span
@@ -290,15 +407,20 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
             <select
               value={createProcessId}
               onChange={(e) => setCreateProcessId(e.target.value)}
-              className="field-input w-full font-mono text-xs"
+              className="field-input w-full text-xs"
             >
               <option value="">— Optional —</option>
               {(app.processIds || []).map((pid) => (
                 <option key={pid} value={pid}>
-                  {pid}
+                  {processLabel(pid)}
                 </option>
               ))}
             </select>
+            {isExtrovisProcess(createProcessId) && (
+              <p className="text-[11px] text-emerald-700 mt-1">
+                Extrovis selected — schedule will use Extrovis tickets/users only (no Refex entity filter).
+              </p>
+            )}
           </div>
         </div>
         <div className="px-6 py-4 flex items-center justify-end gap-2.5 bg-background-50/40">

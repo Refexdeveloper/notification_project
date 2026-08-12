@@ -1,6 +1,7 @@
 /** Template placeholder preview — mirrors pipeline apply-report-template.js behaviour. */
 
 import { sampleLeadReportTableHtml } from '@/services/leadReport';
+import { ensureItsmSourcePlaceholders } from '@/lib/itsmTemplateLayout';
 
 export type PreviewContext = {
   templateName?: string;
@@ -10,14 +11,36 @@ export type PreviewContext = {
   applicationId?: string;
 };
 
-export type TemplateAppKind = 'itsm' | 'pm' | 'lead' | 'generic';
+export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'generic';
 
 function sampleEngagementUserTableHtml(): string {
-  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td></tr>`;
+  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>2</b></td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`;
 }
 
 function samplePmUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 09:40</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>3</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">12</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-28 16:05</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">8</td></tr>`;
+}
+
+function sampleItsmSourceBreakdownHtml(): string {
+  const row = (label: string, count: string, tone: string, bg: string) =>
+    `<tr style="background-color:${bg};" bgcolor="${bg}"><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:12px; color:#334155 !important;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone};margin-right:8px;"></span>${label}</td><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:13px; font-weight:bold; color:#1a1a1a !important;" align="right">${count}</td></tr>`;
+  const panel = (
+    title: string,
+    subtitle: string,
+    total: string,
+    headerBg: string,
+    headerColor: string,
+    counts: string[],
+  ) =>
+    `<td width="48%" valign="top" style="border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; background:#ffffff !important;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:12px 14px; background:${headerBg} !important;" bgcolor="${headerBg}"><div style="font-size:11px; font-weight:bold; color:${headerColor} !important; text-transform:uppercase; letter-spacing:0.4px;">${title}</div><div style="font-size:11px; color:#64748b !important; margin-top:3px;">${subtitle} · <b style="color:#1a1a1a !important;">${total}</b></div></td></tr>${row('Email', counts[0], '#3b82f6', '#ffffff')}${row('WhatsApp', counts[1], '#22c55e', '#f8fafc')}${row('Mobile', counts[2], '#f59e0b', '#ffffff')}${row('Web', counts[3], '#8b5cf6', '#f8fafc')}</table></td>`;
+  return (
+    '<tr><td style="padding:14px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Ticket source</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">How tickets arrived — All tickets vs Today open tickets</div></td></tr>' +
+    '<tr><td style="padding:10px 32px 2px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>' +
+    panel('All tickets', 'By source', '164', '#f1f5f9', '#475569', ['48', '32', '21', '63']) +
+    '<td width="4%"></td>' +
+    panel('Today open tickets', 'Opened today by source', '5', '#fff7ed', '#9a7a3a', ['2', '1', '1', '1']) +
+    '</tr></table></td></tr>'
+  );
 }
 
 export function formatPreviewReportDate(now = new Date()): string {
@@ -36,6 +59,9 @@ export function formatPreviewReportDate(now = new Date()): string {
 export function detectTemplateAppKind(context: PreviewContext = {}): TemplateAppKind {
   const id = `${context.kissflowAppId || ''} ${context.applicationId || ''}`.toLowerCase();
   if (id.includes('project_management') || id.includes('project_sub_task')) return 'pm';
+  if (id.includes('solar') || id.includes('technician_reimbursement') || id.includes('reinvestment')) {
+    return 'solar';
+  }
   if (id.includes('lead')) return 'lead';
   if (id.includes('it_service') || id.includes('itsm')) return 'itsm';
   return 'generic';
@@ -45,6 +71,8 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
   switch (kind) {
     case 'pm':
       return 'Project Management Task Report';
+    case 'solar':
+      return 'Solar Reinvestment Request Report';
     case 'lead':
       return 'Lead Tracker Report';
     case 'itsm':
@@ -81,10 +109,25 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     SlaBreachedClosed: '46',
     OpenedToday: '5',
     ClosedToday: '4',
+    SourceEmailAll: '48',
+    SourceWhatsAppAll: '32',
+    SourceMobileAll: '21',
+    SourceWebAll: '63',
+    SourceEmailOpen: '2',
+    SourceWhatsAppOpen: '1',
+    SourceMobileOpen: '1',
+    SourceWebOpen: '1',
+    SourceBreakdownHtml: sampleItsmSourceBreakdownHtml(),
+    OpenedTodaySourceHtml: '',
     TotalTasks: '240',
     AssignedTasks: '180',
     PendingTasks: '42',
     CompletedTasks: '198',
+    TotalRequests: '48',
+    AssignedRequests: '36',
+    SignInRateToday: '2%',
+    OpenRequests: '12',
+    ClosedRequests: '36',
     TotalLeads: '6',
     OpenLeads: '3',
     ClosedLeads: '4',
@@ -97,7 +140,15 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
 
   if (kind === 'pm') {
     base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '11';
+    base.TotalUsers = '86';
     base.ReportBody = 'Project Tracker covers all entities group-wide.';
+  } else if (kind === 'solar') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '9';
+    base.TotalUsers = '48';
+    base.ReportBody =
+      'Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status.';
   } else if (kind === 'lead') {
     base.ReportBody = 'Users from Kissflow group with leads assigned to them (Open / Closed status from Lead Tracker).';
   }
@@ -142,7 +193,13 @@ export function renderPreviewHtml(
     ? base
     : { ...base, ...contextOrOverrides };
 
-  return applyTemplateVariables(html, merged);
+  const kind = isPreviewContextArg(contextOrOverrides)
+    ? detectTemplateAppKind(contextOrOverrides)
+    : 'generic';
+  const prepared =
+    kind === 'itsm' ? ensureItsmSourcePlaceholders(html).html : html;
+
+  return applyTemplateVariables(prepared, merged);
 }
 
 export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
@@ -159,8 +216,20 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'OpenTickets',
     'ClosedTickets',
     'SlaBreachedTotal',
+    'SlaBreachedOpen',
+    'SlaBreachedClosed',
     'OpenedToday',
     'ClosedToday',
+    'SourceBreakdownHtml',
+    'OpenedTodaySourceHtml',
+    'SourceEmailAll',
+    'SourceWhatsAppAll',
+    'SourceMobileAll',
+    'SourceWebAll',
+    'SourceEmailOpen',
+    'SourceWhatsAppOpen',
+    'SourceMobileOpen',
+    'SourceWebOpen',
     'UserTableHtml',
     'ReportBody',
   ],
@@ -168,9 +237,23 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ReportTitle',
     'ReportDate',
     'TotalTasks',
-    'AssignedTasks',
     'PendingTasks',
     'CompletedTasks',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
+    'ReportBody',
+  ],
+  solar: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalRequests',
+    'OpenRequests',
+    'ClosedRequests',
+    'TotalUsers',
+    'SignedInToday',
     'OpenedToday',
     'ClosedToday',
     'UserTableHtml',
@@ -184,8 +267,32 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalLeads',
     'OpenLeads',
     'ClosedLeads',
+    'SalesPersons',
     'LeadTableHtml',
     'ReportBody',
   ],
-  generic: ['ReportTitle', 'ReportDate', 'ReportBody', 'RecipientName', 'CompanyName'],
+  generic: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalTickets',
+    'OpenTickets',
+    'ClosedTickets',
+    'UserTableHtml',
+    'ReportBody',
+    'RecipientName',
+    'CompanyName',
+  ],
 };
+
+/** Placeholders the engagement-pipeline render runbooks actually fill at send time. */
+export function pipelinePlaceholdersForApp(kind: TemplateAppKind): string[] {
+  return PLACEHOLDER_HINTS_BY_APP[kind] || PLACEHOLDER_HINTS_BY_APP.generic;
+}
+
+export function unknownPlaceholders(
+  usedKeys: string[],
+  kind: TemplateAppKind,
+): string[] {
+  const known = new Set(pipelinePlaceholdersForApp(kind));
+  return usedKeys.filter((key) => !known.has(key));
+}

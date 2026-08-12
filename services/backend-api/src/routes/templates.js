@@ -21,7 +21,9 @@ const {
 } = require('../lib/templateRepository');
 const { defaultReportHtml } = require('../lib/defaultReportHtml');
 const { syncPublishedTemplateToPipeline, normalizeReportTemplateHtml } = require('../lib/templatePipelineSync');
-const { invalidateReportHtmlCache } = require('../lib/templateCacheInvalidation');
+const { invalidateReportHtmlCache, syncTemplateSubjectToSchedules } = require('../lib/templateCacheInvalidation');
+const { listStarters, getStarterHtml } = require('../lib/reportStarters');
+const { generateReportHtmlFromPrompt, isAiConfigured } = require('../lib/reportHtmlAi');
 
 const router = express.Router({ mergeParams: true });
 
@@ -94,6 +96,97 @@ router.get('/', async (req, res) => {
       return dbNotConfigured(res, req.correlationId);
     }
     return fail(res, req.correlationId, 'TEMPLATES_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+/** Ready-made HTML layouts (ITSM / PM / Lead / simple) — must be registered before /:templateId */
+router.get('/starters', async (req, res) => {
+  const applicationId = req.params.applicationId || '';
+  const items = listStarters(applicationId);
+  return ok(res, req.correlationId, {
+    items,
+    count: items.length,
+    application_id: applicationId || null,
+  });
+});
+
+router.get('/starters/:starterId', async (req, res) => {
+  const applicationId = req.params.applicationId || '';
+  const appName = String(req.query.app_name || applicationId || 'Application').trim();
+  try {
+    const html = getStarterHtml(req.params.starterId, appName);
+    const items = listStarters(applicationId);
+    const meta = items.find((row) => row.id === req.params.starterId) || null;
+    return ok(res, req.correlationId, {
+      item: {
+        id: req.params.starterId,
+        name: meta?.name || req.params.starterId,
+        description: meta?.description || '',
+        placeholders: meta?.placeholders || [],
+        recommended: Boolean(meta?.recommended),
+        html,
+      },
+    });
+  } catch (err) {
+    if (err.code === 'STARTER_NOT_FOUND') {
+      return fail(res, req.correlationId, err.code, err.message, 404);
+    }
+    return fail(res, req.correlationId, 'STARTER_LOAD_FAILED', err.message, 500, true);
+  }
+});
+
+/** AI: generate / revise email HTML from natural-language comments (draft only — does not save). */
+router.post('/generate-html', async (req, res) => {
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  const applicationId = req.params.applicationId || '';
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+  if (!applicationId) {
+    return fail(res, req.correlationId, 'APPLICATION_ID_REQUIRED', 'applicationId is required', 400);
+  }
+  if (!isAiConfigured()) {
+    return fail(
+      res,
+      req.correlationId,
+      'AI_NOT_CONFIGURED',
+      'AI is not configured. Set GEMINI_API_KEY or deploy with GCP_PROJECT + Vertex AI.',
+      503,
+    );
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  try {
+    const result = await generateReportHtmlFromPrompt({
+      environment,
+      applicationId,
+      prompt: body.prompt,
+      currentHtml: body.current_html || body.currentHtml || '',
+      includeCurrentHtml: Boolean(body.include_current_html ?? body.includeCurrentHtml),
+      templateName: String(body.template_name || body.templateName || '').trim(),
+    });
+    return ok(res, req.correlationId, {
+      html: result.html,
+      starter_id: result.starter_id,
+      placeholders: result.placeholders,
+      provider: result.provider,
+      model: result.model,
+      location: result.location,
+      application_name: result.application_name,
+      field_count: result.field_count,
+      saved: false,
+      note: 'HTML generated in memory only — Save draft in the editor to persist.',
+    });
+  } catch (err) {
+    const status = err.status || (err.code === 'PROMPT_REQUIRED' || err.code === 'PROMPT_TOO_LONG' ? 400 : 502);
+    return fail(
+      res,
+      req.correlationId,
+      err.code || 'AI_GENERATE_FAILED',
+      err.message,
+      status,
+      status >= 500,
+    );
   }
 });
 
@@ -280,7 +373,22 @@ router.post('/', async (req, res) => {
   const subject = String(body.subject || `{{ReportTitle}} — ${name}`).trim();
   const description = String(body.description || '').trim();
   const status = body.status === 'published' ? 'published' : 'draft';
-  const html = normalizeReportTemplateHtml(String(body.html || defaultReportHtml(name)).trim());
+  const starterId = String(body.starter_id || body.starterId || '').trim();
+  let rawHtml = String(body.html || '').trim();
+  if (!rawHtml && starterId) {
+    try {
+      rawHtml = getStarterHtml(starterId, name);
+    } catch (err) {
+      if (err.code === 'STARTER_NOT_FOUND') {
+        return fail(res, req.correlationId, err.code, err.message, 400);
+      }
+      return fail(res, req.correlationId, 'STARTER_LOAD_FAILED', err.message, 500, true);
+    }
+  }
+  if (!rawHtml) {
+    rawHtml = defaultReportHtml(name);
+  }
+  const html = normalizeReportTemplateHtml(rawHtml);
   const contentRef = html;
   const checksum = checksumForContent(html);
 
@@ -311,7 +419,13 @@ router.post('/', async (req, res) => {
       try {
         const cacheClient = await getPool().connect();
         try {
-          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId, {
+            templateId,
+          });
+          pipelineSync.schedule_subject_sync = await syncTemplateSubjectToSchedules(cacheClient, templateId, {
+            subject: row.subject,
+            templateName: row.name,
+          });
         } finally {
           cacheClient.release();
         }
@@ -423,7 +537,13 @@ router.patch('/:templateId', async (req, res) => {
       try {
         const cacheClient = await getPool().connect();
         try {
-          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId);
+          pipelineSync.cache_invalidation = await invalidateReportHtmlCache(cacheClient, applicationId, {
+            templateId,
+          });
+          pipelineSync.schedule_subject_sync = await syncTemplateSubjectToSchedules(cacheClient, templateId, {
+            subject: row.subject,
+            templateName: row.name,
+          });
         } finally {
           cacheClient.release();
         }

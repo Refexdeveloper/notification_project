@@ -342,6 +342,31 @@ function normalizeProcessStatus(raw) {
   return value || 'other';
 }
 
+/** Current workflow step name from a Kissflow process item. */
+function pickCurrentStep(raw) {
+  if (!raw || typeof raw !== 'object') return '';
+  if (typeof raw.current_step === 'string' && raw.current_step.trim()) return raw.current_step.trim();
+  return pickString(raw, ['_current_step', 'Current_Step', 'current_step', 'Step', 'Step_Name']);
+}
+
+/**
+ * ITSM business-closed: Completed, or InProgress parked on step "IT Tech Reopen".
+ * Those reopen-step tickets must not count as Open.
+ */
+function isItsmBusinessClosed(raw) {
+  const status = normalizeProcessStatus(raw);
+  if (status === 'Completed') return true;
+  if (status === 'InProgress') {
+    const step = pickCurrentStep(raw).toLowerCase();
+    return step === 'it tech reopen' || step.includes('it tech reopen');
+  }
+  return false;
+}
+
+function isItsmBusinessOpen(raw) {
+  return normalizeProcessStatus(raw) === 'InProgress' && !isItsmBusinessClosed(raw);
+}
+
 module.exports = {
   normalizeEnvironment,
   resolveKissflowCredentials,
@@ -355,4 +380,7 @@ module.exports = {
   pickString,
   pickDateTime,
   normalizeProcessStatus,
+  pickCurrentStep,
+  isItsmBusinessClosed,
+  isItsmBusinessOpen,
 };
