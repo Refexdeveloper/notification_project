@@ -5,6 +5,9 @@ REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-11"
 
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/report-template-lib.sh"
+
 PGDATABASE="${PGDATABASE:-engagement_reporting}"
 PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
@@ -155,7 +158,7 @@ latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER
 SELECT json_agg(t) FROM (
   SELECT
     u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(open_t.open_count, 0) AS open_count,
     COALESCE(closed_t.closed_count, 0) AS closed_count
   FROM engagement_reporting.\"user\" u
@@ -217,7 +220,7 @@ latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER
 SELECT json_agg(t) FROM (
   SELECT
     u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(pending_t.pending_count, 0) AS pending_count,
     COALESCE(completed_t.completed_count, 0) AS completed_count
   FROM engagement_reporting.\"user\" u

@@ -162,8 +162,21 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
   user_id: (.__requested_user_id // ._id // null),
   user_name: (.Name // null), email: (.Email // null),
   user_type: (._user_type // null), active_status: (.Status // null),
-  last_sign_in: (.LastLoggedInAt.v // null),
-  ever_logged_in: (if .LastLoggedInAt == null then false else true end),
+  last_sign_in: (
+    (
+      if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.Date // null)
+      elif (.LastLoggedInAt | type) == "string" then .LastLoggedInAt
+      else null end
+    )
+    // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // null) elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
+    // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // null) elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
+  ),
+  ever_logged_in: (
+    .LastLoggedInAt != null
+    or .Last_Signin != null
+    or .LastSignIn != null
+    or .Ever_Logged_In == true
+  ),
   source_payload: .
 }' "${DATA_DIR}/user-details.jsonl" > "${NORM_DIR}/kissflow-users.jsonl"
 

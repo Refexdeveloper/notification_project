@@ -293,6 +293,13 @@ WITH latest AS (
   ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
   LIMIT 1
 ),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+),
 assignee_name AS (
   -- _current_assigned_to is usually a JSON array; never treat the Kissflow user id as a display name.
   SELECT
@@ -422,17 +429,23 @@ sla_by_user AS (
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     resolved.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(u.ever_logged_in, false) AS ever_logged_in,
     a.open_count,
     a.closed_count,
     COALESCE(s.sla_breached_count, 0) AS sla_breached_count
   FROM activity a
   LEFT JOIN sla_by_user s ON s.user_id = a.user_id
-  LEFT JOIN latest l ON true
-  LEFT JOIN engagement_reporting.\"user\" u
-    ON u.snapshot_run_id = l.snapshot_run_id
-   AND u.user_id = a.user_id
+  LEFT JOIN LATERAL (
+    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    FROM engagement_reporting.\"user\" u0
+    WHERE u0.user_id = a.user_id
+      AND u0.environment = 'production'
+    ORDER BY
+      CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
+      u0.snapshot_at DESC
+    LIMIT 1
+  ) u ON true
   CROSS JOIN LATERAL (
     SELECT NULLIF(trim(COALESCE(u.user_name, a.display_name)), '') AS user_name
   ) resolved

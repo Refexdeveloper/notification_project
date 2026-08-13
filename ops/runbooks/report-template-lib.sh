@@ -35,6 +35,23 @@ report_template_pg_conn() {
     "${PGHOST:-localhost}" "${PGPORT:-5432}" "${PGDATABASE:-engagement_reporting}" "${PGUSER:-postgres}"
 }
 
+# Last sign-in from the user row, then Kissflow payload fallbacks.
+# Expects table/alias `u` on engagement_reporting."user".
+REPORT_USER_LAST_SIGN_IN_SQL="COALESCE(
+  u.last_sign_in,
+  CASE
+    WHEN coalesce(u.source_payload #>> '{LastLoggedInAt,v}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{LastLoggedInAt,v}')::timestamptz
+    WHEN jsonb_typeof(u.source_payload->'LastLoggedInAt') = 'string'
+     AND coalesce(u.source_payload->>'LastLoggedInAt','') ~ '^[0-9]{4}-'
+      THEN (u.source_payload->>'LastLoggedInAt')::timestamptz
+    WHEN coalesce(u.source_payload #>> '{Last_Signin,v}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{Last_Signin,v}')::timestamptz
+    ELSE NULL
+  END
+)"
+REPORT_USER_LAST_SIGN_IN_IST_SQL="to_char((${REPORT_USER_LAST_SIGN_IN_SQL}) AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI')"
+
 report_template_seed_for_app() {
   case "${1:-}" in
     IT_Service_Management_A00)

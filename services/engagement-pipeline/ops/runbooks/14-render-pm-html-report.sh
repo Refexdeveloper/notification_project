@@ -194,7 +194,7 @@ latest_users AS (
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(pending_t.pending_count, 0) AS pending_count,
     COALESCE(completed_t.completed_count, 0) AS completed_count
   FROM engagement_reporting.\"user\" u
