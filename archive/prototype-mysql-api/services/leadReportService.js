@@ -424,6 +424,25 @@ function escapeHtml(v) {
     .replace(/>/g, '&gt;');
 }
 
+function renderUserTableRows(rows) {
+  if (!rows.length) {
+    return '<tr><td colspan="4" style="padding:12px 14px; color:#888888 !important;">No users with open or recent leads.</td></tr>';
+  }
+  return rows
+    .map((row, idx) => {
+      const bg = idx % 2 ? '#ffffff' : '#faf9f7';
+      const lastLogin = formatLogin(row.lastSignedIn);
+      const lastCell = !lastLogin || lastLogin === 'Never' ? '-' : lastLogin;
+      return `<tr style="background-color:${bg};" bgcolor="${bg}">
+<td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(row.name)}</td>
+<td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(lastCell)}</td>
+<td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>${row.openLeads}</b></td>
+<td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">${row.closedLeads}</td>
+</tr>`;
+    })
+    .join('');
+}
+
 function renderTable(rows) {
   if (!rows.length) {
     return '<p style="color:#888888;font-size:13px;">No users/leads for this team.</p>';
@@ -453,11 +472,18 @@ function renderTable(rows) {
 }
 
 function renderHtml(groupName, rows, totals) {
-  const table = renderTable(rows);
+  const userRows = renderUserTableRows(rows);
   const open = totals.totalOpen ?? rows.reduce((n, r) => n + r.openLeads, 0);
   const closed = totals.totalClosed ?? rows.reduce((n, r) => n + r.closedLeads, 0);
   const signedInToday = rows.filter((r) => r.loggedInToday).length;
-  const date = new Date().toLocaleDateString('en-IN', { dateStyle: 'medium', timeZone: TZ });
+  const date = new Date().toLocaleString('en-IN', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }) + ' IST';
   const reportBody = `Live data from Kissflow Lead Tracker (${groupName}): leads filtered by Website_and_form, grouped by assigned sales person.`;
   const variables = {
     CompanyName: 'REFEX',
@@ -467,8 +493,12 @@ function renderHtml(groupName, rows, totals) {
     TotalLeads: String(totals.totalLeads),
     OpenLeads: String(open),
     ClosedLeads: String(closed),
+    TotalUsers: String(rows.length),
     SignedInToday: String(signedInToday),
-    LeadTableHtml: table,
+    OpenedToday: '0',
+    ClosedToday: '0',
+    UserTableHtml: userRows,
+    LeadTableHtml: userRows,
     ReportBody: reportBody,
   };
 

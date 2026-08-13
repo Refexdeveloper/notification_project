@@ -65,6 +65,8 @@ report_template_seed_for_app() {
     Project_Management_Tracker_A00) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
     Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
+    EMS_001_A00) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
+    Expense_and_Travel_Management_A00) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
     *) return 1 ;;
   esac
 }

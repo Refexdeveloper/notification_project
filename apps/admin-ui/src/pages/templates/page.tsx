@@ -275,7 +275,7 @@ export default function TemplatesPage() {
             <p className="text-xs font-bold uppercase tracking-wider text-foreground-400">How it works</p>
           </div>
           <ol className="space-y-3 text-sm text-foreground-600 leading-relaxed list-decimal list-inside">
-            <li>Pick a starter layout (ITSM / PM / Lead / simple)</li>
+            <li>Pick a starter layout (ITSM / PM / Lead / Expense / Travel / simple)</li>
             <li>Click placeholders like {'{{OpenTickets}}'} to insert fields</li>
             <li>Publish the best one</li>
             <li>Attach it to a schedule with recipients</li>

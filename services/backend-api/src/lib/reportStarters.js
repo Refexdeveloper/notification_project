@@ -142,6 +142,8 @@ const STARTER_CATALOG = [
       'AssignedTasks',
       'PendingTasks',
       'CompletedTasks',
+      'TotalUsers',
+      'SignedInToday',
       'OpenedToday',
       'ClosedToday',
       'UserTableHtml',
@@ -172,7 +174,7 @@ const STARTER_CATALOG = [
   {
     id: 'lead',
     name: 'Lead Tracker report',
-    description: 'Same layout as the Lead Tracker email (leads + lead table).',
+    description: 'Same layout as the Project Tracker email, labelled for leads (Open / Closed + user table).',
     seed_path: 'db/seeds/lead-tracker-report-template.html',
     placeholders: [
       'ReportTitle',
@@ -182,15 +184,60 @@ const STARTER_CATALOG = [
       'TotalLeads',
       'OpenLeads',
       'ClosedLeads',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'UserTableHtml',
       'LeadTableHtml',
       'ReportBody',
     ],
     best_for: ['Lead_Trcaker_A00', 'lead'],
   },
   {
+    id: 'expense',
+    name: 'Expense Management report',
+    description: 'Same layout as Project Tracker, labelled for claims (Pending / Closed + user table).',
+    seed_path: 'db/seeds/expense-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalClaims',
+      'PendingClaims',
+      'ClosedClaims',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'UserTableHtml',
+      'ReportBody',
+    ],
+    best_for: ['EMS_001_A00', 'expense'],
+  },
+  {
+    id: 'travel',
+    name: 'Travel Management report',
+    description: 'Same layout as Project Tracker, labelled for travel requests (Pending / Completed + user table).',
+    seed_path: 'db/seeds/travel-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalRequests',
+      'PendingRequests',
+      'CompletedRequests',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'UserTableHtml',
+      'ReportBody',
+    ],
+    best_for: ['Expense_and_Travel_Management_A00', 'travel'],
+  },
+  {
     id: 'simple',
     name: 'Simple metrics + table',
-    description: 'Easy starter for any new app (Travel, Expense, etc.). Edit labels and click placeholders.',
+    description: 'Easy starter for any new app. Edit labels and click placeholders.',
     seed_path: null,
     placeholders: [
       'ReportTitle',
@@ -202,7 +249,7 @@ const STARTER_CATALOG = [
       'ReportBody',
       'CompanyName',
     ],
-    best_for: ['generic', 'travel', 'expense'],
+    best_for: ['generic'],
   },
   {
     id: 'blank',
@@ -229,7 +276,10 @@ function suggestStarterId(applicationId = '', context = {}) {
     return 'solar-reinvestment';
   }
   if (id.includes('lead')) return 'lead';
-  if (id.includes('travel') || id.includes('expense')) return 'simple';
+  if (id.includes('ems_001') || (id.includes('expense') && !id.includes('travel') && !id.includes('solar'))) {
+    return 'expense';
+  }
+  if (id.includes('expense_and_travel') || id.includes('venwind') || id.includes('travel')) return 'travel';
 
   const haystack = [
     context.applicationName,
@@ -265,7 +315,15 @@ function suggestStarterId(applicationId = '', context = {}) {
     return 'solar-reinvestment';
   }
   if (haystack.includes('lead')) return 'lead';
-  if (haystack.includes('travel') || haystack.includes('expense')) return 'simple';
+  if (
+    haystack.includes('ems_001')
+    || (haystack.includes('expense') && !haystack.includes('travel') && !haystack.includes('solar'))
+  ) {
+    return 'expense';
+  }
+  if (haystack.includes('expense_and_travel') || haystack.includes('venwind') || haystack.includes('travel')) {
+    return 'travel';
+  }
   return 'simple';
 }
 

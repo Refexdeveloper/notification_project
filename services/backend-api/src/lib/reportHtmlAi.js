@@ -1,7 +1,7 @@
 'use strict';
 
 const { getPool, isDatabaseConfigured } = require('./db');
-const { suggestStarterId, STARTER_CATALOG, getStarterHtml } = require('./reportStarters');
+const { suggestStarterId, STARTER_CATALOG } = require('./reportStarters');
 const { normalizeReportTemplateHtml } = require('./templatePipelineSync');
 
 const LOGO_URL = 'https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png';
@@ -28,7 +28,50 @@ function resolveProjectId() {
 }
 
 function resolveModel() {
-  return process.env.GEMINI_MODEL || process.env.VERTEX_GEMINI_MODEL || 'gemini-2.5-flash';
+  return process.env.GEMINI_MODEL || process.env.VERTEX_GEMINI_MODEL || 'gemini-2.0-flash-001';
+}
+
+function uniqueModels(preferred) {
+  const list = [
+    preferred,
+    process.env.GEMINI_MODEL,
+    process.env.VERTEX_GEMINI_MODEL,
+    process.env.GEMINI_API_MODEL,
+    'gemini-2.0-flash-001',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-002',
+  ].filter(Boolean);
+  return [...new Set(list)];
+}
+
+function extractCandidateText(body) {
+  const block = body?.promptFeedback?.blockReason;
+  if (block) {
+    throw new Error(`AI blocked the prompt (${block})`);
+  }
+  const cand = body?.candidates?.[0];
+  if (!cand) {
+    throw new Error('AI returned no candidates');
+  }
+  const parts = Array.isArray(cand.content?.parts) ? cand.content.parts : [];
+  const text = parts.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('');
+  if (!String(text).trim()) {
+    const finish = cand.finishReason || cand.finish_reason || 'unknown';
+    throw new Error(`AI returned empty HTML (finishReason=${finish})`);
+  }
+  return text;
+}
+
+function generationConfig(includeThinkingOff) {
+  const cfg = {
+    temperature: 0.3,
+    maxOutputTokens: 32768,
+  };
+  if (includeThinkingOff) {
+    cfg.thinkingConfig = { thinkingBudget: 0 };
+  }
+  return cfg;
 }
 
 function resolveVertexLocation() {
@@ -191,18 +234,15 @@ function stripModelHtml(raw) {
   return text.trim();
 }
 
-async function callGeminiApiKey({ apiKey, model, systemPrompt, userPrompt }) {
+async function callGeminiApiKey({ apiKey, model, systemPrompt, userPrompt, thinkingOff = true }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 8192,
-      },
+      contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+      generationConfig: generationConfig(thinkingOff),
     }),
     signal: AbortSignal.timeout(90000),
   });
@@ -211,14 +251,22 @@ async function callGeminiApiKey({ apiKey, model, systemPrompt, userPrompt }) {
     const msg = body?.error?.message || `Gemini API error (${res.status})`;
     const err = new Error(msg);
     err.code = 'GEMINI_API_FAILED';
-    err.status = res.status >= 400 && res.status < 500 ? 502 : 502;
+    err.status = 502;
+    err.retryableModel = res.status === 404 || /not found|not supported/i.test(msg);
     throw err;
   }
-  const text = body?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-  return text;
+  return extractCandidateText(body);
 }
 
-async function callVertexGemini({ projectId, location, model, accessToken, systemPrompt, userPrompt }) {
+async function callVertexGemini({
+  projectId,
+  location,
+  model,
+  accessToken,
+  systemPrompt,
+  userPrompt,
+  thinkingOff = true,
+}) {
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
@@ -228,11 +276,8 @@ async function callVertexGemini({ projectId, location, model, accessToken, syste
     },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 8192,
-      },
+      contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+      generationConfig: generationConfig(thinkingOff),
     }),
     signal: AbortSignal.timeout(90000),
   });
@@ -242,29 +287,39 @@ async function callVertexGemini({ projectId, location, model, accessToken, syste
     const err = new Error(msg);
     err.code = 'VERTEX_AI_FAILED';
     err.status = 502;
+    err.retryableModel = res.status === 404 || /not found|not supported|thinkingConfig/i.test(msg);
     throw err;
   }
-  const text = body?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-  return text;
+  return extractCandidateText(body);
 }
 
 async function generateModelText({ systemPrompt, userPrompt }) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-  const model = resolveModel();
+  const preferred = resolveModel();
+  const models = uniqueModels(preferred);
 
   if (apiKey) {
-    // Google AI Studio keys often use short model ids.
-    const apiModel = process.env.GEMINI_API_MODEL || model.replace(/-001$/, '') || 'gemini-2.5-flash';
-    return {
-      provider: 'gemini_api_key',
-      model: apiModel,
-      text: await callGeminiApiKey({
-        apiKey,
-        model: apiModel,
-        systemPrompt,
-        userPrompt,
-      }),
-    };
+    let lastErr;
+    for (const apiModel of models.map((m) => m.replace(/-001$/, ''))) {
+      try {
+        return {
+          provider: 'gemini_api_key',
+          model: apiModel,
+          text: await callGeminiApiKey({
+            apiKey,
+            model: apiModel,
+            systemPrompt,
+            userPrompt,
+          }),
+        };
+      } catch (err) {
+        lastErr = err;
+        if (!err.retryableModel && !/empty HTML|no candidates/i.test(err.message)) {
+          throw err;
+        }
+      }
+    }
+    throw lastErr;
   }
 
   const projectId = resolveProjectId();
@@ -289,40 +344,38 @@ async function generateModelText({ systemPrompt, userPrompt }) {
     throw err;
   }
 
-  const location = resolveVertexLocation();
-  try {
-    return {
-      provider: 'vertex',
-      model,
-      location,
-      text: await callVertexGemini({
-        projectId,
-        location,
-        model,
-        accessToken,
-        systemPrompt,
-        userPrompt,
-      }),
-    };
-  } catch (err) {
-    // asia-south1 may not host every Gemini model — retry us-central1 once.
-    if (location !== 'us-central1') {
-      return {
-        provider: 'vertex',
-        model,
-        location: 'us-central1',
-        text: await callVertexGemini({
-          projectId,
-          location: 'us-central1',
-          model,
-          accessToken,
-          systemPrompt,
-          userPrompt,
-        }),
-      };
+  const preferredLocation = resolveVertexLocation();
+  const locations = [...new Set([preferredLocation, 'us-central1'])];
+  let lastErr;
+  for (const location of locations) {
+    for (const model of models) {
+      for (const thinkingOff of [true, false]) {
+        try {
+          return {
+            provider: 'vertex',
+            model,
+            location,
+            text: await callVertexGemini({
+              projectId,
+              location,
+              model,
+              accessToken,
+              systemPrompt,
+              userPrompt,
+              thinkingOff,
+            }),
+          };
+        } catch (err) {
+          lastErr = err;
+          const msg = String(err.message || '');
+          if (/thinkingConfig/i.test(msg) && thinkingOff) continue;
+          if (err.retryableModel || /empty HTML|no candidates|not found/i.test(msg)) continue;
+          throw err;
+        }
+      }
     }
-    throw err;
   }
+  throw lastErr;
 }
 
 /**
@@ -374,20 +427,16 @@ async function generateReportHtmlFromPrompt({
     includeCurrentHtml: Boolean(includeCurrentHtml),
   });
 
-  let modelResult;
-  try {
-    modelResult = await generateModelText({ systemPrompt, userPrompt });
-  } catch (err) {
-    // Soft fallback: if AI is unavailable, return the recommended starter so the UI still helps.
-    if (err.code === 'AI_NOT_CONFIGURED') throw err;
-    throw err;
-  }
+  const modelResult = await generateModelText({ systemPrompt, userPrompt });
 
   let html = stripModelHtml(modelResult.text);
   if (!html || !/<html[\s>]/i.test(html)) {
-    // Last resort: starter HTML so the editor is never empty after a partial model response.
-    html = getStarterHtml(starterId, appName);
-    modelResult.fallback = 'starter_html';
+    const err = new Error(
+      'AI returned HTML that could not be parsed. Try a shorter prompt or uncheck “Revise current HTML”.',
+    );
+    err.code = 'AI_EMPTY_HTML';
+    err.status = 502;
+    throw err;
   }
 
   html = normalizeReportTemplateHtml(html);

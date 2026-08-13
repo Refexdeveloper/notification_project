@@ -5,6 +5,8 @@ const CACHE_KEY_PATTERNS = {
   Project_Management_Tracker_A00: ['pm:%'],
   Solar_Site_Expense_Governance_Syst_A00: ['solar:%'],
   Lead_Trcaker_A00: ['lead-tracker:%'],
+  EMS_001_A00: ['expense:%'],
+  Expense_and_Travel_Management_A00: ['travel:%'],
 };
 
 /**

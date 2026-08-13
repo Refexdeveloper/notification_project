@@ -11,7 +11,7 @@ export type PreviewContext = {
   applicationId?: string;
 };
 
-export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'generic';
+export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'expense' | 'travel' | 'generic';
 
 function sampleEngagementUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>2</b></td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`;
@@ -64,6 +64,10 @@ export function detectTemplateAppKind(context: PreviewContext = {}): TemplateApp
   }
   if (id.includes('lead')) return 'lead';
   if (id.includes('it_service') || id.includes('itsm')) return 'itsm';
+  if (id.includes('ems_001') || (id.includes('expense') && !id.includes('travel') && !id.includes('solar'))) {
+    return 'expense';
+  }
+  if (id.includes('expense_and_travel') || id.includes('venwind') || id.includes('travel')) return 'travel';
   return 'generic';
 }
 
@@ -75,6 +79,10 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
       return 'Solar Reinvestment Request Report';
     case 'lead':
       return 'Lead Tracker Report';
+    case 'expense':
+      return 'Expense Management Report';
+    case 'travel':
+      return 'Travel Management Report';
     case 'itsm':
       return 'Kissflow User Engagement Report';
     default:
@@ -130,6 +138,11 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     TotalLeads: '6',
     OpenLeads: '3',
     ClosedLeads: '4',
+    TotalClaims: '86',
+    PendingClaims: '14',
+    ClosedClaims: '72',
+    PendingRequests: '9',
+    CompletedRequests: '39',
     SalesPersons: '3',
     UserTableHtml: sampleEngagementUserTableHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
@@ -149,7 +162,20 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.ReportBody =
       'Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status.';
   } else if (kind === 'lead') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody = 'Users from Kissflow group with leads assigned to them (Open / Closed status from Lead Tracker).';
+  } else if (kind === 'expense') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
+    base.ReportBody = 'Expense Management covers pending and closed claims from Kissflow.';
+  } else if (kind === 'travel') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
+    base.ReportBody = 'Travel Management covers pending and completed travel requests from Kissflow.';
   }
 
   return base;
@@ -266,8 +292,38 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalLeads',
     'OpenLeads',
     'ClosedLeads',
-    'SalesPersons',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
     'LeadTableHtml',
+    'ReportBody',
+  ],
+  expense: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalClaims',
+    'PendingClaims',
+    'ClosedClaims',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
+    'ReportBody',
+  ],
+  travel: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalRequests',
+    'PendingRequests',
+    'CompletedRequests',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
     'ReportBody',
   ],
   generic: [

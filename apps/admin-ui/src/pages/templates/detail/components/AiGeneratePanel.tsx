@@ -21,7 +21,7 @@ const EXAMPLES: { label: string; prompt: string }[] = [
   {
     label: 'Simple metrics',
     prompt:
-      'Simpler travel-style report: title, date, 3 metrics, short body — no source breakdown.',
+      'Keep the Project Tracker card layout: four KPI cards, today activity, then MIS user table. Use this app’s labels (claims, leads, or travel requests). Slight color tint only.',
   },
 ];
 

@@ -131,7 +131,7 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
           title="No templates for this app"
           description={
             backendMode
-              ? 'Pick a starter layout (same as live ITSM/PM/Lead emails), then attach it to a schedule.'
+              ? 'Pick a starter layout (same as live ITSM/PM/Lead/Expense/Travel emails), then attach it to a schedule.'
               : 'Design an HTML email report. You can make multiple versions and choose one in Schedules.'
           }
           primaryLabel="Create template"

@@ -124,8 +124,61 @@ report_cache_key() {
     Solar_Site_Expense_Governance_Syst_A00)
       echo "solar:v1:${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}:${ENVIRONMENT:-production}"
       ;;
+    EMS_001_A00) echo "expense:${ENVIRONMENT:-production}" ;;
+    Expense_and_Travel_Management_A00) echo "travel:${ENVIRONMENT:-production}" ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
+}
+
+process_has_snapshot() {
+  local n
+  n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+    SELECT count(*)::text
+    FROM engagement_reporting.snapshot_run
+    WHERE application_id = '${APPLICATION_ID}'
+      AND process_id = '${PROCESS_ID}'
+      AND environment = '${ENVIRONMENT:-production}'
+      AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  " 2>/dev/null | tr -d '[:space:]')"
+  [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
+}
+
+dispatch_pm_style_process() {
+  local slug="$1"
+  local default_process="$2"
+  local app_name="$3"
+  local process_name="$4"
+  local default_subject="$5"
+  local report_body="$6"
+  export REPORT_SLUG="${slug}"
+  if [[ -z "${PROCESS_ID}" ]]; then
+    export PROCESS_ID="${default_process}"
+  fi
+  export APPLICATION_NAME="${app_name}"
+  export PROCESS_NAME="${process_name}"
+  export SUBJECT="${SUBJECT:-${default_subject}}"
+  export REPORT_BODY="${report_body}"
+  local latest="${REPO_ROOT}/templates/generated/${slug}-report-latest.html"
+  if [[ "${TEST_SEND}" == "true" ]]; then
+    if ! process_has_snapshot; then
+      log "No usable snapshot for ${APPLICATION_ID}/${PROCESS_ID} — running full Kissflow ingest before test send"
+      export FULL_INGEST=true
+      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
+    fi
+    send_test_report \
+      "${latest}" \
+      "$(report_cache_key)" \
+      "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/23-render-process-html-report.sh"
+    log "${app_name} test send completed"
+  else
+    log "Step 1/3: Ingest latest Kissflow data for ${app_name}"
+    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
+    log "Step 2/3: Rendering ${app_name} report"
+    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/23-render-process-html-report.sh"
+    log "Step 3/3: Sending ${app_name} report"
+    send_cached_report "${latest}"
+    log "${app_name} ingest-render-send completed"
+  fi
 }
 
 schedule_cache_key() {
@@ -337,6 +390,24 @@ case "${APPLICATION_ID}" in
       send_cached_report "${REPO_ROOT}/templates/generated/solar-report-latest.html"
       log "Solar ingest-render-send completed"
     fi
+    ;;
+  EMS_001_A00)
+    dispatch_pm_style_process \
+      "expense" \
+      "Travel_Expense_A00" \
+      "Expense Management System" \
+      "Expense Request" \
+      "Kissflow - Expense Management Report" \
+      "Expense Management covers pending and closed claims from Kissflow."
+    ;;
+  Expense_and_Travel_Management_A00)
+    dispatch_pm_style_process \
+      "travel" \
+      "Copy_of_Venwind_Travel_Request_A00" \
+      "Travel Management" \
+      "Travel Request" \
+      "Kissflow - Travel Management Report" \
+      "Travel Management covers pending and completed travel requests from Kissflow."
     ;;
   *)
     stop "Unsupported application_id for scheduled send: ${APPLICATION_ID}"
