@@ -410,6 +410,17 @@ case "${APPLICATION_ID}" in
       "Travel Management covers pending and completed travel requests from Kissflow."
     ;;
   *)
-    stop "Unsupported application_id for scheduled send: ${APPLICATION_ID}"
+    FALLBACK_SLUG="$(printf '%s' "${APPLICATION_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
+    FALLBACK_SLUG="${FALLBACK_SLUG#-}"
+    FALLBACK_SLUG="${FALLBACK_SLUG%-}"
+    [[ -n "${PROCESS_ID}" ]] || stop "Unsupported application_id for scheduled send: ${APPLICATION_ID} (no process_id on the schedule)"
+    log "No dedicated dispatcher for ${APPLICATION_ID} — using generic process ingest/render (${FALLBACK_SLUG})"
+    dispatch_pm_style_process \
+      "${FALLBACK_SLUG:-process}" \
+      "${PROCESS_ID}" \
+      "${APPLICATION_ID}" \
+      "${PROCESS_ID}" \
+      "${SUBJECT:-Kissflow Report}" \
+      "Live Kissflow process data for this application."
     ;;
 esac
