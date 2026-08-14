@@ -106,7 +106,7 @@ if [[ -n "${TEST_RECIPIENT:-}" ]]; then
   export RECIPIENT="${TEST_RECIPIENT}"
   export TO_LIST="${TEST_RECIPIENT}"
   export CC=""
-  log "Test send: delivering only to ${RECIPIENT} (Cc cleared, skipping Kissflow ingest/render)"
+  log "Test send: delivering only to ${RECIPIENT} (Cc cleared)"
 else
   export TEST_SEND=false
   export RECIPIENT="${TO_LIST}"
@@ -160,10 +160,19 @@ dispatch_pm_style_process() {
   export REPORT_BODY="${report_body}"
   local latest="${REPO_ROOT}/templates/generated/${slug}-report-latest.html"
   if [[ "${TEST_SEND}" == "true" ]]; then
-    if ! process_has_snapshot; then
-      log "No usable snapshot for ${APPLICATION_ID}/${PROCESS_ID} — running full Kissflow ingest before test send"
-      export FULL_INGEST=true
-      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
+    log "Test send: live Kissflow ingest for ${APPLICATION_ID}/${PROCESS_ID}"
+    export FULL_INGEST=true
+    if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
+      log "Live ingest failed for ${app_name} — trying last cached HTML"
+      if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
+        || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${latest}" "${slug}:"; then
+        export REPORT_FILE_OVERRIDE="${latest}"
+        export DELIVERY_KIND="test"
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
+        log "${app_name} test send completed from last cache"
+        return 0
+      fi
+      stop "Live ingest failed and no cached ${app_name} report exists. Fix ingest, then retry Test Send."
     fi
     send_test_report \
       "${latest}" \

@@ -214,7 +214,7 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
 | { snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
     application_id: $app_id, process_id: $proc_id, instance_id: $iid,
     principal_id: ._id, principal_name: .Name,
-    principal_kind: (if .Kind=="User" then "USER" elif .Kind=="AppRole" then "APP_ROLE" else (.Kind|ascii_upcase) end),
+    principal_kind: (if .Kind=="User" then "USER" elif .Kind=="AppRole" then "APP_ROLE" else empty end),
     assignment_source_field: "_current_assigned_to" }
 ' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/kissflow-item-assignments.jsonl"
 

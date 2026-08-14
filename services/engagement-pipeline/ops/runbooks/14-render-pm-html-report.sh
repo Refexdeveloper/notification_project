@@ -160,11 +160,19 @@ SELECT json_build_object(
   'total_app_users', (SELECT count(*) FROM pm_app_users),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
-    JOIN pm_app_users pu ON pu.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    FROM pm_app_users pu
+    LEFT JOIN LATERAL (
+      SELECT u0.last_sign_in, u0.source_payload
+      FROM engagement_reporting.\"user\" u0
+      WHERE u0.user_id = pu.user_id
+        AND u0.environment = 'production'
+      ORDER BY
+        CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
+        u0.snapshot_at DESC
+      LIMIT 1
+    ) u ON true
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   )
 );
@@ -188,19 +196,14 @@ WITH latest AS (
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
   ORDER BY snapshot_at DESC
   LIMIT 1
-)
-SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-  SELECT
-    u.user_name,
-    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
-    COALESCE(pending_t.pending_count, 0) AS pending_count,
-    COALESCE(completed_t.completed_count, 0) AS completed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
-  LEFT JOIN (
-    SELECT ia.principal_id AS user_id, count(*) AS pending_count
+),
+activity AS (
+  SELECT user_id, SUM(pending_count)::int AS pending_count, SUM(completed_count)::int AS completed_count
+  FROM (
+    SELECT ia.principal_id AS user_id, count(*)::int AS pending_count, 0 AS completed_count
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i
       ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
@@ -208,10 +211,11 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND ia.principal_id IS NOT NULL
+      AND trim(ia.principal_id) <> ''
     GROUP BY ia.principal_id
-  ) pending_t ON pending_t.user_id = u.user_id
-  LEFT JOIN (
-    SELECT assignee_id AS user_id, count(*) AS completed_count
+    UNION ALL
+    SELECT assignee_id AS user_id, 0 AS pending_count, count(*)::int AS completed_count
     FROM (
       SELECT DISTINCT ON (i.instance_id)
         i.instance_id,
@@ -233,9 +237,28 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     ) completed_items
     WHERE assignee_id IS NOT NULL
     GROUP BY assignee_id
-  ) completed_t ON completed_t.user_id = u.user_id
-  WHERE (COALESCE(pending_t.pending_count,0) > 0 OR COALESCE(completed_t.completed_count,0) > 0)
-  ORDER BY pending_count DESC, completed_count DESC
+  ) counts
+  GROUP BY user_id
+)
+SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+  SELECT
+    COALESCE(NULLIF(trim(u.user_name), ''), a.user_id) AS user_name,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
+    a.pending_count,
+    a.completed_count
+  FROM activity a
+  LEFT JOIN LATERAL (
+    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    FROM engagement_reporting.\"user\" u0
+    WHERE u0.user_id = a.user_id
+      AND u0.environment = 'production'
+    ORDER BY
+      CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
+      u0.snapshot_at DESC
+    LIMIT 1
+  ) u ON true
+  WHERE (a.pending_count > 0 OR a.completed_count > 0)
+  ORDER BY a.pending_count DESC, a.completed_count DESC
 ) t;
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 

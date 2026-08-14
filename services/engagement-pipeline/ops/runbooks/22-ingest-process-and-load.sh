@@ -178,15 +178,60 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
 | map(select(type == "object" and ._id != null))
 | unique_by(._id)
 | .[]
+| (
+    (.Kind // "User") as $kind
+    | ($kind | ascii_downcase) as $k
+    | if ($k == "user") then "USER"
+      elif ($k | test("role")) then "APP_ROLE"
+      else empty
+      end
+  ) as $ptype
+| select($ptype != null and $ptype != "")
 | { snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
     application_id: $app_id, process_id: $proc_id, instance_id: $iid,
     principal_id: ._id, principal_name: .Name,
-    principal_kind: (if .Kind=="User" then "USER" else (.Kind|ascii_upcase) end),
-    assignment_source_field: (if .Kind=="User" then "Assigned_To" else "_current_assigned_to" end) }
+    principal_kind: $ptype,
+    assignment_source_field: (if $ptype == "USER" then "Assigned_To" else "_current_assigned_to" end) }
 ' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/process-assignments.jsonl"
 
 NORM_ITEM_COUNT="$(wc -l < "${NORM_DIR}/process-items.jsonl" | tr -d ' ')"
 ASSIGN_COUNT="$(wc -l < "${NORM_DIR}/process-assignments.jsonl" | tr -d ' ')"
+log "Normalized items=${NORM_ITEM_COUNT} assignments=${ASSIGN_COUNT} (USER/APP_ROLE only)"
+
+log "Refreshing last-sign-in for assigned users"
+mkdir -p "${DATA_DIR}/user-details"
+: > "${NORM_DIR}/process-users.jsonl"
+if [[ "${ASSIGN_COUNT}" -gt 0 ]]; then
+  jq -r 'select(.principal_kind == "USER") | .principal_id' "${NORM_DIR}/process-assignments.jsonl" \
+    | sort -u \
+    | while IFS= read -r uid; do
+        [[ -z "${uid}" ]] && continue
+        safe_id="$(printf '%s' "${uid}" | tr -cs 'A-Za-z0-9._-' '_')"
+        detail_file="${DATA_DIR}/user-details/${safe_id}.json"
+        if [[ -n "${ACCOUNT_ID}" ]] && api_get "${BASE_URL}/user/2/${ACCOUNT_ID}/${uid}" "${detail_file}"; then
+          jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" --arg rid "${uid}" '
+            {
+              snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
+              user_id: (.__requested_user_id // ._id // $rid),
+              user_name: (.Name // null), email: (.Email // null),
+              user_type: (._user_type // null), active_status: (.Status // null),
+              last_sign_in: (
+                (if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.Date // null)
+                 elif (.LastLoggedInAt | type) == "string" then .LastLoggedInAt else null end)
+                // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // null)
+                    elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
+                // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // null)
+                    elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
+              ),
+              ever_logged_in: (.LastLoggedInAt != null or .Last_Signin != null or .LastSignIn != null or .Ever_Logged_In == true),
+              source_payload: .
+            }
+          ' "${detail_file}" >> "${NORM_DIR}/process-users.jsonl"
+        fi
+      done
+fi
+USER_REFRESH_COUNT="$(wc -l < "${NORM_DIR}/process-users.jsonl" | tr -d ' ')"
+log "User last-sign-in rows refreshed: ${USER_REFRESH_COUNT}"
 
 log "Loading into PostgreSQL"
 
@@ -195,12 +240,13 @@ PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
 PG_CONN="host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}"
 
-run_sql() { psql "${PG_CONN}"; }
+run_sql() { psql "${PG_CONN}" -v ON_ERROR_STOP=1; }
 
 echo "
 CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_items (instance_id text, snapshot_at text, process_status text, current_step text, stage text, request_number text, request_id text, criticality text, entity text, requester_email text, source_payload text);
 CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_assignments (instance_id text, snapshot_at text, principal_id text, principal_kind text, assignment_source text);
-TRUNCATE engagement_reporting.stg_process_items, engagement_reporting.stg_process_assignments;
+CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_users (user_id text, snapshot_at text, user_name text, email text, user_type text, active_status text, last_sign_in text, ever_logged_in text, source_payload text);
+TRUNCATE engagement_reporting.stg_process_items, engagement_reporting.stg_process_assignments, engagement_reporting.stg_process_users;
 " | run_sql
 
 if command -v cygpath >/dev/null 2>&1; then
@@ -211,9 +257,17 @@ fi
 
 jq -r '[.instance_id, .snapshot_at, .process_status, (.current_step // "" | tostring), (.stage // "" | tostring), (.request_number // "" | tostring), (.request_id // "" | tostring), (.criticality // "" | tostring), (.entity // "" | tostring), (.requester_email // "" | tostring), (.source_payload | tojson)] | @csv' "${NORM_DIR}/process-items.jsonl" > "${NORM_DIR}/process-items-staging.csv"
 jq -r '[.instance_id, .snapshot_at, .principal_id, .principal_kind, .assignment_source_field] | @csv' "${NORM_DIR}/process-assignments.jsonl" > "${NORM_DIR}/process-assignments-staging.csv"
+if [[ -s "${NORM_DIR}/process-users.jsonl" ]]; then
+  jq -r '[.user_id, .snapshot_at, (.user_name // ""), (.email // ""), (.user_type // ""), (.active_status // ""), (.last_sign_in // ""), (.ever_logged_in | tostring), (.source_payload | tojson)] | @csv' "${NORM_DIR}/process-users.jsonl" > "${NORM_DIR}/process-users-staging.csv"
+else
+  : > "${NORM_DIR}/process-users-staging.csv"
+fi
 
 echo "\copy engagement_reporting.stg_process_items FROM '${COPY_NORM_DIR}/process-items-staging.csv' WITH (FORMAT csv)" | run_sql
 echo "\copy engagement_reporting.stg_process_assignments FROM '${COPY_NORM_DIR}/process-assignments-staging.csv' WITH (FORMAT csv)" | run_sql
+if [[ -s "${NORM_DIR}/process-users-staging.csv" ]]; then
+  echo "\copy engagement_reporting.stg_process_users FROM '${COPY_NORM_DIR}/process-users-staging.csv' WITH (FORMAT csv)" | run_sql
+fi
 
 PREV_SNAPSHOT_RUN_ID=""
 if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
@@ -289,20 +343,28 @@ SELECT '${ENVIRONMENT}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz,
 FROM engagement_reporting.stg_process_items
 ON CONFLICT (environment, process_id, instance_id, snapshot_at) DO NOTHING;
 
+INSERT INTO engagement_reporting.\"user\" (environment, user_id, snapshot_at, snapshot_run_id, user_name, email, user_type, active_status, last_sign_in, ever_logged_in, source_payload, row_hash)
+SELECT '${ENVIRONMENT}', user_id, snapshot_at::timestamptz, '${RUN_ID}', NULLIF(user_name,''), NULLIF(email,''), NULLIF(user_type,''), NULLIF(active_status,''), NULLIF(last_sign_in,'')::timestamptz, NULLIF(ever_logged_in,'')::boolean, source_payload::jsonb, md5(COALESCE(source_payload, '{}'))
+FROM engagement_reporting.stg_process_users
+WHERE NULLIF(user_id,'') IS NOT NULL
+ON CONFLICT (environment, user_id, snapshot_at) DO NOTHING;
+
 INSERT INTO engagement_reporting.principal (environment, application_id, principal_id, principal_type, principal_name, first_seen_at, last_seen_at, is_current, source_payload)
 SELECT DISTINCT '${ENVIRONMENT}', '${APPLICATION_ID}', principal_id, principal_kind, principal_id, now(), now(), true, '{}'::jsonb
 FROM engagement_reporting.stg_process_assignments
+WHERE principal_kind IN ('USER', 'APP_ROLE')
 ON CONFLICT (environment, application_id, principal_id, principal_type) DO UPDATE SET last_seen_at = now();
 
 INSERT INTO engagement_reporting.item_assignment (environment, application_id, process_id, instance_id, snapshot_at, snapshot_run_id, principal_id, principal_type, assignment_source, source_payload)
 SELECT '${ENVIRONMENT}', '${APPLICATION_ID}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', principal_id, principal_kind, assignment_source, '{}'::jsonb
 FROM engagement_reporting.stg_process_assignments
+WHERE principal_kind IN ('USER', 'APP_ROLE')
 ON CONFLICT (environment, process_id, instance_id, snapshot_at, principal_id, principal_type) DO NOTHING;
 
 UPDATE engagement_reporting.snapshot_run SET status = 'COMPLETED', load_completed_at = now(), updated_at = now() WHERE snapshot_run_id = '${RUN_ID}';
 
 COMMIT;
-" | run_sql
+" | run_sql || stop "PostgreSQL load failed for ${APPLICATION_ID}/${PROCESS_ID} — snapshot not committed, watermark not updated."
 
 ingest_set_watermark_now "${ITEMS_RESOURCE_KEY:-$(ingest_resource_key items)}"
 
