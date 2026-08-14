@@ -2,12 +2,13 @@
 
 const { getPool } = require('./db');
 const { buildEngagementTotals, APP_ENGAGEMENT_QUERY } = require('./engagementSummary');
-const { isLoggedInToday } = require('./reportTimezone');
+const { isLoggedInToday, isSameCalendarDay } = require('./reportTimezone');
 const {
   resolveKissflowCredentials,
   fetchKissflowUserDetail,
   fetchAllProcessItems,
   pickString,
+  pickDateTime,
   normalizeProcessStatus,
   isItsmBusinessClosed,
   isItsmBusinessOpen,
@@ -101,6 +102,50 @@ function countTicketStatuses(items, { applicationId } = {}) {
     if (status === 'Completed') closed += 1;
   }
   return { open, closed };
+}
+
+function itemCreatedAt(raw) {
+  return pickDateTime(raw, [
+    '_created_at',
+    'Requested_Date',
+    'Requester_Date__Time',
+    '_submitted_at',
+    'CreatedAt',
+  ]);
+}
+
+function itemCompletedAt(raw, { applicationId } = {}) {
+  const explicit = pickDateTime(raw, ['_completed_at', '_closed_at', 'Completed_On', 'Closed_On']);
+  if (explicit) return explicit;
+  const closed =
+    applicationId === ITSM_APP_ID
+      ? isItsmBusinessClosed(raw)
+      : normalizeProcessStatus(raw) === 'Completed';
+  if (!closed) return null;
+  return pickDateTime(raw, ['_modified_at']);
+}
+
+function countOpenedClosedToday(items, { applicationId } = {}) {
+  let openedToday = 0;
+  let closedToday = 0;
+  const now = new Date();
+  for (const raw of items || []) {
+    const created = itemCreatedAt(raw);
+    if (created) {
+      const createdAt = new Date(created);
+      if (!Number.isNaN(createdAt.getTime()) && isSameCalendarDay(createdAt, now)) {
+        openedToday += 1;
+      }
+    }
+    const completed = itemCompletedAt(raw, { applicationId });
+    if (completed) {
+      const completedAt = new Date(completed);
+      if (!Number.isNaN(completedAt.getTime()) && isSameCalendarDay(completedAt, now)) {
+        closedToday += 1;
+      }
+    }
+  }
+  return { opened_today: openedToday, closed_today: closedToday };
 }
 
 function pushUserId(set, value) {
@@ -260,6 +305,7 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
     openTickets += counts.open;
     closedTickets += counts.closed;
   }
+  const todayCounts = countOpenedClosedToday(allItems, { applicationId });
 
   const itemUserIds = collectRelatedUserIdsFromItems(allItems);
 
@@ -316,6 +362,8 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
       sign_in_rate_today: totals.sign_in_rate_today,
       open_tickets: totals.open_tickets,
       closed_tickets: totals.closed_tickets,
+      opened_today: todayCounts.opened_today,
+      closed_today: todayCounts.closed_today,
     },
     live_user_count: userRows.length,
     related_user_count: relatedIds.size,
@@ -359,6 +407,8 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
           with_app_role: items.filter((r) => r.has_app_role).length,
           open_tickets: openTickets,
           closed_tickets: closedTickets,
+          opened_today: todayCounts.opened_today,
+          closed_today: todayCounts.closed_today,
         },
       },
     });

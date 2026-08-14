@@ -164,12 +164,12 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
   user_type: (._user_type // null), active_status: (.Status // null),
   last_sign_in: (
     (
-      if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.Date // null)
+      if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.dv // .LastLoggedInAt.Date // null)
       elif (.LastLoggedInAt | type) == "string" then .LastLoggedInAt
       else null end
     )
-    // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // null) elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
-    // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // null) elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
+    // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // .Last_Signin.dv // null) elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
+    // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // .LastSignIn.dv // null) elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
   ),
   ever_logged_in: (
     .LastLoggedInAt != null
@@ -302,8 +302,27 @@ VALUES ('${ENVIRONMENT}', '${PROCESS_ID}', '${APPLICATION_ID}', '${PROCESS_NAME}
 ON CONFLICT (environment, process_id) DO UPDATE SET last_seen_at = now();
 
 INSERT INTO engagement_reporting.\"user\" (environment, user_id, snapshot_at, snapshot_run_id, user_name, email, user_type, active_status, last_sign_in, ever_logged_in, source_payload, row_hash)
-SELECT '${ENVIRONMENT}', user_id, snapshot_at::timestamptz, '${RUN_ID}', user_name, email, user_type, active_status, NULLIF(last_sign_in,'')::timestamptz, ever_logged_in::boolean, source_payload::jsonb, md5(source_payload)
-FROM engagement_reporting.stg_users
+SELECT '${ENVIRONMENT}', s.user_id, s.snapshot_at::timestamptz, '${RUN_ID}',
+  COALESCE(NULLIF(s.user_name,''), prev.user_name),
+  COALESCE(NULLIF(s.email,''), prev.email),
+  s.user_type, s.active_status,
+  COALESCE(NULLIF(s.last_sign_in,'')::timestamptz, prev.last_sign_in),
+  COALESCE(s.ever_logged_in::boolean, prev.ever_logged_in, false),
+  CASE
+    WHEN NULLIF(s.last_sign_in,'') IS NOT NULL THEN s.source_payload::jsonb
+    WHEN prev.source_payload ? 'LastLoggedInAt' THEN
+      s.source_payload::jsonb || jsonb_build_object('LastLoggedInAt', prev.source_payload->'LastLoggedInAt')
+    ELSE s.source_payload::jsonb
+  END,
+  md5(s.source_payload)
+FROM engagement_reporting.stg_users s
+LEFT JOIN LATERAL (
+  SELECT u.user_name, u.email, u.last_sign_in, u.ever_logged_in, u.source_payload
+  FROM engagement_reporting.\"user\" u
+  WHERE u.environment = '${ENVIRONMENT}' AND u.user_id = s.user_id
+  ORDER BY u.last_sign_in DESC NULLS LAST, u.snapshot_at DESC
+  LIMIT 1
+) prev ON true
 ON CONFLICT (environment, user_id, snapshot_at) DO NOTHING;
 
 INSERT INTO engagement_reporting.principal (environment, application_id, principal_id, principal_type, principal_name, first_seen_at, last_seen_at, is_current, source_payload)

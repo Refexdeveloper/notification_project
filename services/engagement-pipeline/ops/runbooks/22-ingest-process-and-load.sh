@@ -201,10 +201,39 @@ log "Normalized items=${NORM_ITEM_COUNT} assignments=${ASSIGN_COUNT} (USER/APP_R
 log "Refreshing last-sign-in for assigned users"
 mkdir -p "${DATA_DIR}/user-details"
 : > "${NORM_DIR}/process-users.jsonl"
+: > "${NORM_DIR}/process-user-ids.txt"
 if [[ "${ASSIGN_COUNT}" -gt 0 ]]; then
   jq -r 'select(.principal_kind == "USER") | .principal_id' "${NORM_DIR}/process-assignments.jsonl" \
-    | sort -u \
-    | while IFS= read -r uid; do
+    | sort -u > "${NORM_DIR}/process-user-ids.txt"
+  role_in="$(python3 - "${NORM_DIR}/process-assignments.jsonl" <<'PY'
+import json, sys
+ids = set()
+with open(sys.argv[1], encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        if row.get("principal_kind") == "APP_ROLE" and row.get("principal_id"):
+            ids.add(str(row["principal_id"]).replace("'", "''"))
+print(",".join("'" + i + "'" for i in sorted(ids)))
+PY
+)"
+  if [[ -n "${role_in}" ]]; then
+    echo "
+\pset tuples_only on
+\pset format unaligned
+SELECT DISTINCT user_id
+FROM engagement_reporting.principal_user
+WHERE principal_type = 'APP_ROLE'
+  AND valid_to IS NULL
+  AND user_id IS NOT NULL
+  AND principal_id IN (${role_in});
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE:-engagement_reporting} user=${PGUSER:-postgres}" \
+      | tr -d '\r' | grep -v '^$' >> "${NORM_DIR}/process-user-ids.txt" || true
+  fi
+  sort -u "${NORM_DIR}/process-user-ids.txt" -o "${NORM_DIR}/process-user-ids.txt"
+  while IFS= read -r uid; do
         [[ -z "${uid}" ]] && continue
         safe_id="$(printf '%s' "${uid}" | tr -cs 'A-Za-z0-9._-' '_')"
         detail_file="${DATA_DIR}/user-details/${safe_id}.json"
@@ -216,11 +245,11 @@ if [[ "${ASSIGN_COUNT}" -gt 0 ]]; then
               user_name: (.Name // null), email: (.Email // null),
               user_type: (._user_type // null), active_status: (.Status // null),
               last_sign_in: (
-                (if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.Date // null)
+                (if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.dv // .LastLoggedInAt.Date // null)
                  elif (.LastLoggedInAt | type) == "string" then .LastLoggedInAt else null end)
-                // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // null)
+                // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // .Last_Signin.dv // null)
                     elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
-                // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // null)
+                // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // .LastSignIn.dv // null)
                     elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
               ),
               ever_logged_in: (.LastLoggedInAt != null or .Last_Signin != null or .LastSignIn != null or .Ever_Logged_In == true),
@@ -228,7 +257,7 @@ if [[ "${ASSIGN_COUNT}" -gt 0 ]]; then
             }
           ' "${detail_file}" >> "${NORM_DIR}/process-users.jsonl"
         fi
-      done
+  done < "${NORM_DIR}/process-user-ids.txt"
 fi
 USER_REFRESH_COUNT="$(wc -l < "${NORM_DIR}/process-users.jsonl" | tr -d ' ')"
 log "User last-sign-in rows refreshed: ${USER_REFRESH_COUNT}"
@@ -344,9 +373,28 @@ FROM engagement_reporting.stg_process_items
 ON CONFLICT (environment, process_id, instance_id, snapshot_at) DO NOTHING;
 
 INSERT INTO engagement_reporting.\"user\" (environment, user_id, snapshot_at, snapshot_run_id, user_name, email, user_type, active_status, last_sign_in, ever_logged_in, source_payload, row_hash)
-SELECT '${ENVIRONMENT}', user_id, snapshot_at::timestamptz, '${RUN_ID}', NULLIF(user_name,''), NULLIF(email,''), NULLIF(user_type,''), NULLIF(active_status,''), NULLIF(last_sign_in,'')::timestamptz, NULLIF(ever_logged_in,'')::boolean, source_payload::jsonb, md5(COALESCE(source_payload, '{}'))
-FROM engagement_reporting.stg_process_users
-WHERE NULLIF(user_id,'') IS NOT NULL
+SELECT '${ENVIRONMENT}', s.user_id, s.snapshot_at::timestamptz, '${RUN_ID}',
+  COALESCE(NULLIF(s.user_name,''), prev.user_name),
+  COALESCE(NULLIF(s.email,''), prev.email),
+  NULLIF(s.user_type,''), NULLIF(s.active_status,''),
+  COALESCE(NULLIF(s.last_sign_in,'')::timestamptz, prev.last_sign_in),
+  COALESCE(NULLIF(s.ever_logged_in,'')::boolean, prev.ever_logged_in, false),
+  CASE
+    WHEN NULLIF(s.last_sign_in,'') IS NOT NULL THEN s.source_payload::jsonb
+    WHEN prev.source_payload ? 'LastLoggedInAt' THEN
+      s.source_payload::jsonb || jsonb_build_object('LastLoggedInAt', prev.source_payload->'LastLoggedInAt')
+    ELSE s.source_payload::jsonb
+  END,
+  md5(COALESCE(s.source_payload, '{}'))
+FROM engagement_reporting.stg_process_users s
+LEFT JOIN LATERAL (
+  SELECT u.user_name, u.email, u.last_sign_in, u.ever_logged_in, u.source_payload
+  FROM engagement_reporting.\"user\" u
+  WHERE u.environment = '${ENVIRONMENT}' AND u.user_id = s.user_id
+  ORDER BY u.last_sign_in DESC NULLS LAST, u.snapshot_at DESC
+  LIMIT 1
+) prev ON true
+WHERE NULLIF(s.user_id,'') IS NOT NULL
 ON CONFLICT (environment, user_id, snapshot_at) DO NOTHING;
 
 INSERT INTO engagement_reporting.principal (environment, application_id, principal_id, principal_type, principal_name, first_seen_at, last_seen_at, is_current, source_payload)

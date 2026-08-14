@@ -21,11 +21,22 @@ latest_runs AS (
   ORDER BY sr.process_id, sr.created_at DESC
 ),
 latest_user_snap AS (
-  SELECT snapshot_run_id, snapshot_at
-  FROM engagement_reporting."user"
-  WHERE environment = $1
-  ORDER BY snapshot_at DESC
-  LIMIT 1
+  SELECT DISTINCT ON (u.user_id)
+    u.user_id,
+    u.user_name,
+    u.email,
+    u.user_type,
+    u.active_status,
+    u.last_sign_in,
+    u.ever_logged_in,
+    u.source_payload,
+    u.snapshot_at
+  FROM engagement_reporting."user" u
+  WHERE u.environment = $1
+  ORDER BY
+    u.user_id,
+    u.last_sign_in DESC NULLS LAST,
+    u.snapshot_at DESC
 ),
 app_member AS (
   SELECT DISTINCT pu.user_id
@@ -207,13 +218,11 @@ SELECT
   (ac.user_id IS NOT NULL) AS has_assignment,
   (rn.user_id IS NOT NULL) AS has_app_role,
   u.source_payload,
-  (SELECT snapshot_at FROM latest_user_snap) AS snapshot_at
-FROM engagement_reporting."user" u
+  u.snapshot_at
+FROM latest_user_snap u
 INNER JOIN app_member am ON am.user_id = u.user_id
 LEFT JOIN assignment_counts ac ON ac.user_id = u.user_id
 LEFT JOIN role_names rn ON rn.user_id = u.user_id
-WHERE u.environment = $1
-  AND u.snapshot_at = (SELECT snapshot_at FROM latest_user_snap)
 ORDER BY u.user_name NULLS LAST, u.email NULLS LAST
 `;
 
@@ -222,6 +231,75 @@ const { isLoggedInToday: isLoggedInTodayTz } = require('./reportTimezone');
 function isLoggedInToday(lastSignIn) {
   return isLoggedInTodayTz(lastSignIn);
 }
+
+function kfTsSql(col) {
+  return `CASE
+    WHEN jsonb_typeof(${col}) = 'string' AND (${col} #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+      CASE WHEN (${col} #>> '{}') ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$' THEN (${col} #>> '{}')::timestamptz
+           ELSE (${col} #>> '{}')::timestamp AT TIME ZONE 'Asia/Kolkata' END
+    WHEN jsonb_typeof(${col}) = 'object' AND coalesce(${col}->>'v','') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+      CASE WHEN (${col}->>'v') ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$' THEN (${col}->>'v')::timestamptz
+           ELSE (${col}->>'v')::timestamp AT TIME ZONE 'Asia/Kolkata' END
+    ELSE NULL
+  END`;
+}
+
+const ITEM_CREATED_AT_SQL = `COALESCE(
+  ${kfTsSql("i.source_payload->'_created_at'")},
+  ${kfTsSql("i.source_payload->'Requested_Date'")},
+  ${kfTsSql("i.source_payload->'Requester_Date__Time'")}
+)`;
+
+const ITEM_COMPLETED_AT_SQL = `COALESCE(
+  ${kfTsSql("i.source_payload->'_completed_at'")},
+  ${kfTsSql("i.source_payload->'_closed_at'")},
+  CASE
+    WHEN i.process_status = 'Completed'
+      OR (
+        $2 = 'IT_Service_Management_A00'
+        AND i.process_status = 'InProgress'
+        AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+      )
+    THEN ${kfTsSql("i.source_payload->'_modified_at'")}
+    ELSE NULL
+  END
+)`;
+
+const ITEM_TODAY_COUNTS_QUERY = `
+WITH app_processes AS (
+  SELECT process_id
+  FROM engagement_reporting.process
+  WHERE environment = $1
+    AND application_id = $2
+    AND is_current = true
+),
+latest_runs AS (
+  SELECT DISTINCT ON (sr.process_id)
+    sr.snapshot_run_id
+  FROM engagement_reporting.snapshot_run sr
+  WHERE sr.environment = $1
+    AND (
+      sr.application_id = $2
+      OR sr.process_id IN (SELECT process_id FROM app_processes)
+    )
+    AND sr.status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY sr.process_id, sr.created_at DESC
+)
+SELECT
+  COUNT(*) FILTER (
+    WHERE (${ITEM_CREATED_AT_SQL}) IS NOT NULL
+      AND ((${ITEM_CREATED_AT_SQL}) AT TIME ZONE 'Asia/Kolkata')::date
+        = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  )::int AS opened_today,
+  COUNT(*) FILTER (
+    WHERE (${ITEM_COMPLETED_AT_SQL}) IS NOT NULL
+      AND ((${ITEM_COMPLETED_AT_SQL}) AT TIME ZONE 'Asia/Kolkata')::date
+        = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  )::int AS closed_today
+FROM engagement_reporting.item i
+INNER JOIN latest_runs lr ON i.snapshot_run_id = lr.snapshot_run_id
+WHERE i.environment = $1
+`;
 
 function buildEngagementTotals(rows) {
   const totalUsers = rows.length;
@@ -237,13 +315,29 @@ function buildEngagementTotals(rows) {
     with_app_role: rows.filter((row) => row.has_app_role).length,
     open_tickets: rows.reduce((sum, row) => sum + Number(row.open_count || 0), 0),
     closed_tickets: rows.reduce((sum, row) => sum + Number(row.completed_count || 0), 0),
+    opened_today: 0,
+    closed_today: 0,
     sign_in_rate_overall: totalUsers ? Math.round((everLoggedIn / totalUsers) * 100) : 0,
     sign_in_rate_today: totalUsers ? Math.round((activeToday / totalUsers) * 100) : 0,
   };
 }
 
+async function loadItemTodayCounts(pool, environment, applicationId) {
+  try {
+    const { rows } = await pool.query(ITEM_TODAY_COUNTS_QUERY, [environment, applicationId]);
+    return {
+      opened_today: Number(rows[0]?.opened_today || 0),
+      closed_today: Number(rows[0]?.closed_today || 0),
+    };
+  } catch {
+    return { opened_today: 0, closed_today: 0 };
+  }
+}
+
 module.exports = {
   APP_ENGAGEMENT_QUERY,
+  ITEM_TODAY_COUNTS_QUERY,
   buildEngagementTotals,
+  loadItemTodayCounts,
   isLoggedInToday,
 };

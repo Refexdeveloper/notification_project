@@ -15,6 +15,8 @@ export type DashboardAppMetrics = {
   sign_in_rate_today: number;
   open_tickets: number;
   closed_tickets: number;
+  opened_today?: number;
+  closed_today?: number;
 };
 
 export type DashboardApplication = {

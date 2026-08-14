@@ -106,6 +106,7 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
+refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
 
 if [[ -n "${ENTITY_FILTER}" ]]; then
   log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER})"
@@ -132,8 +133,8 @@ sla AS (
     process_status,
     lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) AS step_lc,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
     -- ITSM: Completed OR InProgress on step "IT Tech Reopen" counts as Closed (not Open).
     (
       process_status = 'Completed'
@@ -221,24 +222,21 @@ SELECT json_build_object(
   'total_users', (SELECT count(*) FROM app_members),
   'signed_in_users', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE COALESCE(u.ever_logged_in, false)
   ),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'never_logged_in', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
@@ -395,7 +393,8 @@ sla_by_user AS (
       AND ia.principal_id IS NOT NULL
       AND trim(ia.principal_id) <> ''
       AND (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric IS NOT NULL
-      AND EXTRACT(EPOCH FROM (now() - (i.source_payload->>'_created_at')::timestamptz)) / 60
+      AND (${REPORT_ITEM_CREATED_AT_I_SQL}) IS NOT NULL
+      AND EXTRACT(EPOCH FROM (now() - (${REPORT_ITEM_CREATED_AT_I_SQL}))) / 60
           > (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric
     GROUP BY ia.principal_id
 
@@ -416,10 +415,10 @@ sla_by_user AS (
       )
       AND NULLIF(trim(i.source_payload->'_created_by'->>'_id'), '') IS NOT NULL
       AND (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric IS NOT NULL
-      AND NULLIF(i.source_payload->>'_completed_at','') IS NOT NULL
+      AND (${REPORT_ITEM_COMPLETED_AT_I_SQL}) IS NOT NULL
       AND EXTRACT(EPOCH FROM (
-            (i.source_payload->>'_completed_at')::timestamptz
-            - (i.source_payload->>'_created_at')::timestamptz
+            (${REPORT_ITEM_COMPLETED_AT_I_SQL})
+            - (${REPORT_ITEM_CREATED_AT_I_SQL})
           )) / 60
           > (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric
     GROUP BY 1
@@ -442,8 +441,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     WHERE u0.user_id = a.user_id
       AND u0.environment = 'production'
     ORDER BY
-      CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
-      u0.snapshot_at DESC
+      ${REPORT_BEST_USER_ORDER_SQL}
     LIMIT 1
   ) u ON true
   CROSS JOIN LATERAL (

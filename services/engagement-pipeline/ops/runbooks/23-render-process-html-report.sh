@@ -71,6 +71,7 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
+refresh_user_last_sign_ins_for_process "${APPLICATION_ID}" "${PROCESS_ID}"
 
 log "Querying process summary for ${APPLICATION_ID} / ${PROCESS_ID}"
 
@@ -91,8 +92,8 @@ tasks AS (
   SELECT
     instance_id,
     process_status,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${PM_PROCESS_ID}'
@@ -170,8 +171,7 @@ SELECT json_build_object(
       WHERE u0.user_id = pu.user_id
         AND u0.environment = 'production'
       ORDER BY
-        CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
-        u0.snapshot_at DESC
+        ${REPORT_BEST_USER_ORDER_SQL}
       LIMIT 1
     ) u ON true
     WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
@@ -257,8 +257,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     WHERE u0.user_id = a.user_id
       AND u0.environment = 'production'
     ORDER BY
-      CASE WHEN u0.snapshot_run_id = (SELECT snapshot_run_id FROM latest_users) THEN 0 ELSE 1 END,
-      u0.snapshot_at DESC
+      ${REPORT_BEST_USER_ORDER_SQL}
     LIMIT 1
   ) u ON true
   WHERE (a.pending_count > 0 OR a.completed_count > 0)

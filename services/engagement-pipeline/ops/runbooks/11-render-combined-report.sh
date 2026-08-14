@@ -32,6 +32,8 @@ command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
+refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
+refresh_user_last_sign_ins_for_process "${PM_APP_ID}" "${PM_PROCESS_ID}"
 
 log "Querying Refex ITSM role-member sign-in overview"
 
@@ -88,24 +90,21 @@ SELECT json_build_object(
   'total_users', (SELECT count(*) FROM app_members),
   'signed_in_users', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE COALESCE(u.ever_logged_in, false)
   ),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'never_logged_in', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   )
@@ -121,8 +120,8 @@ WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WH
 sla AS (
   SELECT instance_id, process_status,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
     (
       process_status = 'Completed'
       OR (
@@ -161,8 +160,7 @@ SELECT json_agg(t) FROM (
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(open_t.open_count, 0) AS open_count,
     COALESCE(closed_t.closed_count, 0) AS closed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+  FROM ${REPORT_BEST_USER_FROM_SQL}
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS open_count
     FROM engagement_reporting.item_assignment ia
@@ -199,7 +197,7 @@ PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
 WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${PM_APP_ID}' AND process_id = '${PM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
-tasks AS (SELECT instance_id, process_status, (source_payload->>'_created_at')::timestamptz AS created_at, NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at FROM engagement_reporting.item i, latest l WHERE i.snapshot_run_id = l.snapshot_run_id AND i.process_id = '${PM_PROCESS_ID}')
+tasks AS (SELECT instance_id, process_status, current_step, (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at, (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at FROM engagement_reporting.item i, latest l WHERE i.snapshot_run_id = l.snapshot_run_id AND i.process_id = '${PM_PROCESS_ID}')
 SELECT json_build_object(
   'total_tasks', (SELECT count(*) FROM tasks),
   'assigned_tasks', (SELECT count(DISTINCT ia.instance_id) FROM engagement_reporting.item_assignment ia, latest l WHERE ia.snapshot_run_id = l.snapshot_run_id AND ia.process_id = '${PM_PROCESS_ID}'),
@@ -223,8 +221,7 @@ SELECT json_agg(t) FROM (
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(pending_t.pending_count, 0) AS pending_count,
     COALESCE(completed_t.completed_count, 0) AS completed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+  FROM ${REPORT_BEST_USER_FROM_SQL}
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS pending_count
     FROM engagement_reporting.item_assignment ia

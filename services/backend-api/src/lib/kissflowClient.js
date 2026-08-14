@@ -318,10 +318,33 @@ function pickString(obj, keys) {
   return '';
 }
 
+function coerceKissflowDate(val) {
+  if (val == null) return null;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    const ms = val > 1e12 ? val : val * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  if (typeof val === 'object') {
+    return coerceKissflowDate(val.v || val.dv || val.Date || val.date || null);
+  }
+  if (typeof val !== 'string') return null;
+  const t = val.trim();
+  if (!t || !/^\d{4}-\d{2}-\d{2}/.test(t)) return null;
+  if (/Z$|[+-]\d{2}(:?\d{2})?$/.test(t)) {
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const withIst = /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00:00+05:30` : `${t}+05:30`;
+  const d = new Date(withIst);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function pickDateTime(obj, keys) {
+  if (!obj || typeof obj !== 'object') return null;
   for (const key of keys) {
-    const val = obj[key];
-    if (typeof val === 'string' && val.trim()) return val.trim();
+    const parsed = coerceKissflowDate(obj[key]);
+    if (parsed) return parsed;
   }
   return null;
 }
@@ -379,6 +402,7 @@ module.exports = {
   extractArray,
   pickString,
   pickDateTime,
+  coerceKissflowDate,
   normalizeProcessStatus,
   pickCurrentStep,
   isItsmBusinessClosed,
