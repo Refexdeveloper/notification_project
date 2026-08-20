@@ -133,22 +133,37 @@ function userTableHtml(users) {
     .join('');
 }
 
+function parseJsonPayload(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return {};
+  try {
+    return JSON.parse(trimmed);
+  } catch (firstErr) {
+    // Shell logs can leak onto stdout before the JSON object; extract the first {...}.
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1));
+      } catch {
+        /* fall through */
+      }
+    }
+    throw firstErr;
+  }
+}
+
 function readInput() {
   const raw = process.env.TRAVEL_USAGE_JSON || '';
-  if (raw.trim()) return JSON.parse(raw);
+  if (raw.trim()) return parseJsonPayload(raw);
   const chunks = [];
   const stdin = process.stdin;
   stdin.setEncoding('utf8');
   return new Promise((resolve, reject) => {
     stdin.on('data', (chunk) => chunks.push(chunk));
     stdin.on('end', () => {
-      const text = chunks.join('').trim();
-      if (!text) {
-        resolve({});
-        return;
-      }
       try {
-        resolve(JSON.parse(text));
+        resolve(parseJsonPayload(chunks.join('')));
       } catch (err) {
         reject(err);
       }

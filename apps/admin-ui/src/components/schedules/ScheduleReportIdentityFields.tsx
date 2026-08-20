@@ -6,6 +6,7 @@ import {
   isExtrovisProcess,
   isItsmApp,
   isTravelApp,
+  preferredTravelProcessId,
   processLabel,
 } from '@/lib/processLabels';
 
@@ -45,6 +46,8 @@ export default function ScheduleReportIdentityFields({
   const showItsmEntityFilter = isItsmApp(app.appId, app.displayName || app.name);
   const showTravelEntityFilter = isTravelApp(app.appId, app.displayName || app.name);
   const extrovis = isExtrovisProcess(value.processId);
+  const travelCombinedProcessId =
+    preferredTravelProcessId(processOptions) || 'Travel_Management_A02';
 
   const selectTemplate = (templateId: string) => {
     const tpl = templates.find((t) => t.id === templateId);
@@ -57,12 +60,13 @@ export default function ScheduleReportIdentityFields({
   };
 
   const selectProcess = (processId: string) => {
+    const nextProcessId = showTravelEntityFilter ? travelCombinedProcessId : processId;
     onChange({
       ...value,
-      processId,
+      processId: nextProcessId,
       entityFilter:
         showItsmEntityFilter || showTravelEntityFilter
-          ? defaultEntityFilterForProcess(processId) || value.entityFilter
+          ? defaultEntityFilterForProcess(nextProcessId) || value.entityFilter
           : value.entityFilter,
     });
   };
@@ -72,9 +76,9 @@ export default function ScheduleReportIdentityFields({
       <div>
         <h4 className="text-xs font-semibold text-foreground-900 uppercase tracking-wide">Report to send</h4>
         <p className="text-[11px] text-foreground-500 mt-0.5">
-          Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
-          excluded. For Travel Management, all three app processes are combined into one report — pick Venwind or Refex
-          as the entity, not both.
+          {showTravelEntityFilter
+            ? 'Travel Management always combines Advance Payment + Expense Management + Travel Management into one email. Choose Venwind or Refex as the entity — never both.'
+            : 'Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are excluded.'}
         </p>
       </div>
 
@@ -99,8 +103,26 @@ export default function ScheduleReportIdentityFields({
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Kissflow process</label>
-        {processOptions.length > 0 ? (
+        <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
+          {showTravelEntityFilter ? 'Travel report dataset' : 'Kissflow process'}
+        </label>
+        {showTravelEntityFilter ? (
+          <>
+            <select
+              value={travelCombinedProcessId}
+              onChange={() => selectProcess(travelCombinedProcessId)}
+              disabled={disabled}
+              className="field-input w-full disabled:opacity-60 text-xs"
+            >
+              <option value={travelCombinedProcessId}>
+                Combined Travel report (Advance + Expense + Travel Management)
+              </option>
+            </select>
+            <p className="text-[11px] text-emerald-700 mt-1">
+              All three Kissflow processes are ingested automatically. You do not need to pick them one by one.
+            </p>
+          </>
+        ) : processOptions.length > 0 ? (
           <select
             value={value.processId}
             onChange={(e) => selectProcess(e.target.value)}
@@ -123,15 +145,16 @@ export default function ScheduleReportIdentityFields({
             className="field-input w-full font-mono text-xs disabled:opacity-60"
           />
         )}
-        {extrovis ? (
-          <p className="text-[11px] text-emerald-700 mt-1">
-            Extrovis process selected — report uses Extrovis tickets/users only (Refex entity filter off).
-          </p>
-        ) : (
-          <p className="text-[11px] text-foreground-400 mt-1">
-            Process used to fetch report data when the schedule runs.
-          </p>
-        )}
+        {!showTravelEntityFilter &&
+          (extrovis ? (
+            <p className="text-[11px] text-emerald-700 mt-1">
+              Extrovis process selected — report uses Extrovis tickets/users only (Refex entity filter off).
+            </p>
+          ) : (
+            <p className="text-[11px] text-foreground-400 mt-1">
+              Process used to fetch report data when the schedule runs.
+            </p>
+          ))}
       </div>
 
       <div>
@@ -185,8 +208,7 @@ export default function ScheduleReportIdentityFields({
             <option value="Refex">Entity = Refex only</option>
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
-            One email per entity. Advance Payment, Expense Management, and Travel Management are combined, then filtered
-            to this entity. Create a second schedule for the other entity.
+            One email per entity. Create a second schedule for the other entity.
           </p>
         </div>
       )}

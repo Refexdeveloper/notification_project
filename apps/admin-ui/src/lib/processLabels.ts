@@ -12,16 +12,13 @@ export function processLabel(processId: string): string {
   if (/extrovis/i.test(pid)) return `${pid} · Extrovis only (no Refex users)`;
   if (pid === 'Live_IT_Service_Request_A00') return `${pid} · Refex ITSM`;
   if (pid === 'Copy_of_Venwind_Travel_Request_A00') {
-    return `${pid} · Travel Request (combined into entity report)`;
+    return 'Combined Travel report (Advance + Expense + Travel)';
   }
   if (pid === 'Travel_Management_A02') {
-    return `${pid} · Travel Management (combined with Advance Payment + Expense)`;
+    return 'Combined Travel report (Advance + Expense + Travel)';
   }
-  if (pid === 'Advance_Payment_Request_Process_A01') {
-    return `${pid} · Advance Payment (combined into Travel entity report)`;
-  }
-  if (pid === 'Expense_Management_A03') {
-    return `${pid} · Expense Management (combined into Travel entity report)`;
+  if (pid === 'Advance_Payment_Request_Process_A01' || pid === 'Expense_Management_A03') {
+    return 'Combined Travel report (Advance + Expense + Travel)';
   }
   if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Management`;
   if (pid === 'Technician_Reimbursement__YTLM') return `${pid} · Reinvestment Request (Solar)`;

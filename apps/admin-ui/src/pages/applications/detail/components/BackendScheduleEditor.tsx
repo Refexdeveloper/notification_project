@@ -16,12 +16,27 @@ import ScheduleFromEmailField from '@/components/schedules/ScheduleFromEmailFiel
 import ScheduleReportIdentityFields, {
   type ScheduleReportIdentityValue,
 } from '@/components/schedules/ScheduleReportIdentityFields';
-import { isTravelApp } from '@/lib/processLabels';
+import { isTravelApp, preferredTravelProcessId } from '@/lib/processLabels';
 import { Button } from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 
 const SUGGESTED_FROM_EMAIL = 'reports@refex.co.in';
+
+function formatTestSendError(error?: string, logExcerpt?: string): string {
+  const combined = `${error || ''}\n${logExcerpt || ''}`.trim();
+  if (!combined) return 'Test send failed';
+  if (/Unexpected number in JSON|Failed to build Travel usage|Travel usage payload was not valid JSON/i.test(combined)) {
+    return 'Travel report render failed while building the email HTML. Redeploy schedule-runner if this persists, then retry Test Send.';
+  }
+  if (/STOP:/i.test(combined)) {
+    const stopLine = combined.split('\n').find((line) => /STOP:/i.test(line));
+    if (stopLine) return stopLine.replace(/^.*?STOP:\s*/i, 'Test send stopped: ').trim();
+  }
+  // Keep the UI readable — full Cloud Run logs are in GCP.
+  const compact = combined.replace(/\s+/g, ' ').trim();
+  return compact.length > 280 ? `${compact.slice(0, 280)}…` : compact;
+}
 
 function formatCloudSchedulerMessage(sync?: { ok?: boolean; state?: string; job_name?: string; skipped?: boolean; reason?: string; error?: string }): string {
   if (!sync) return '';
@@ -60,10 +75,13 @@ function scheduleToIdentity(schedule: ReportScheduler, app: KissflowApplication)
   const travel = isTravelApp(app.appId, app.displayName || app.name);
   const entityFilter =
     travel && (!rawEntity || rawEntity === 'both' || rawEntity === 'all') ? 'Venwind' : rawEntity;
+  const processId = travel
+    ? preferredTravelProcessId(app.processIds) || 'Travel_Management_A02'
+    : schedule.processId || app.processIds?.[0] || '';
   return {
     templateId: schedule.templateId,
     templateName: schedule.templateName,
-    processId: schedule.processId || app.processIds?.[0] || '',
+    processId,
     websiteFilter: schedule.websiteFilter || '',
     userGroupFilter: schedule.userGroupFilter || '',
     entityFilter,
@@ -127,6 +145,17 @@ export default function BackendScheduleEditor({
 
   const buildPayload = (extra?: { is_active?: boolean }) => {
     const normalizedFrom = normalizeFromEmail(fromEmail);
+    const travel = isTravelApp(app.appId, app.displayName || app.name);
+    const processId = travel
+      ? preferredTravelProcessId(app.processIds) || 'Travel_Management_A02'
+      : reportIdentity.processId || undefined;
+    const entityFilter =
+      travel &&
+      (!reportIdentity.entityFilter ||
+        reportIdentity.entityFilter === 'both' ||
+        reportIdentity.entityFilter === 'all')
+        ? 'Venwind'
+        : reportIdentity.entityFilter || undefined;
     return {
       from_email: normalizedFrom,
       recipients_to: parseEmailList(recipientsText),
@@ -135,10 +164,10 @@ export default function BackendScheduleEditor({
       timezone: cadence.timezone || DEFAULT_TIMEZONE,
       template_id: reportIdentity.templateId,
       template_name: reportIdentity.templateName,
-      process_id: reportIdentity.processId || undefined,
+      process_id: processId,
       website_filter: reportIdentity.websiteFilter || undefined,
       user_group_filter: reportIdentity.userGroupFilter || undefined,
-      entity_filter: reportIdentity.entityFilter || undefined,
+      entity_filter: entityFilter,
       subject: reportIdentity.subject || undefined,
       ...extra,
     };
@@ -249,14 +278,18 @@ export default function BackendScheduleEditor({
       return;
     }
 
-    setSuccess('Sending test email (last cached report, no Kissflow refresh)…');
+    setSuccess(
+      isTravelApp(app.appId, app.displayName || app.name)
+        ? 'Sending Venwind/Refex Travel test email (live Kissflow ingest for all 3 processes)…'
+        : 'Sending test email (last cached report, no Kissflow refresh)…',
+    );
     const result = await testSendScheduleOnBackend(app, schedule.id, testRecipient);
     setTesting(false);
     setTestModalOpen(false);
 
     if (!result.ok) {
       setSuccess('');
-      setError(result.error || result.logExcerpt || 'Test send failed');
+      setError(formatTestSendError(result.error, result.logExcerpt));
       return;
     }
 

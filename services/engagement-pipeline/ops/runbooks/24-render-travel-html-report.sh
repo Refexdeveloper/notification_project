@@ -58,7 +58,8 @@ USER_FILTER="${USER_FILTER:-${REQUESTER_FILTER:-}}"
 DATE_FROM="${DATE_FROM:-}"
 DATE_TO="${DATE_TO:-}"
 
-log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+# Logs must go to stderr — stdout is captured for JSON payloads (USAGE_PAYLOAD).
+log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
 sql_escape() {
@@ -548,6 +549,9 @@ for pid in ${TRAVEL_PROCESS_IDS}; do
 done
 
 USAGE_PAYLOAD="$(load_entity_payload "${ENTITY_FILTER}")"
+# Keep only the JSON object if any stray stdout leaked into the capture.
+USAGE_PAYLOAD="$(printf '%s' "${USAGE_PAYLOAD}" | tr -d '\r' | awk 'BEGIN{p=0} /^{/{p=1} p{print}')"
+[[ "${USAGE_PAYLOAD}" == \{* ]] || stop "Travel usage payload was not valid JSON (check renderer logs)."
 HTML_PARTS="$(printf '%s' "${USAGE_PAYLOAD}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-travel-usage-html.js")"
 [[ -n "${HTML_PARTS}" ]] || stop "Failed to build Travel usage HTML sections."
 
