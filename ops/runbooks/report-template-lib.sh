@@ -176,7 +176,8 @@ REPORT_ITEM_CREATED_AT_I_SQL="$(report_item_created_at_sql i.source_payload)"
 REPORT_ITEM_COMPLETED_AT_I_SQL="$(report_item_completed_at_sql i.source_payload 'i.')"
 REPORT_IST_TODAY_SQL="(now() AT TIME ZONE 'Asia/Kolkata')::date"
 
-# Prefer a recent high-volume snapshot over a sparse/newer incremental run.
+# Prefer the newest completed snapshot (scheduled ingest writes this just before render).
+# item_record_count is only a tie-breaker so a sparse same-second run cannot win over a fuller one.
 # Arg1: application_id SQL literal (already quoted). Arg2: process_id SQL literal.
 report_latest_snapshot_cte() {
   local app_lit="${1:?application_id literal required}"
@@ -190,12 +191,8 @@ latest AS (
     AND environment = 'production'
     AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
   ORDER BY
-    CASE
-      WHEN COALESCE(load_completed_at, extraction_completed_at, created_at) > now() - interval '3 days'
-      THEN 0 ELSE 1
-    END,
-    COALESCE(item_record_count, 0) DESC,
-    COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
+    COALESCE(load_completed_at, extraction_completed_at, created_at) DESC,
+    COALESCE(item_record_count, 0) DESC
   LIMIT 1
 )
 EOF
