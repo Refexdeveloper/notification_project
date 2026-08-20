@@ -158,7 +158,7 @@ def as_text:
   current_step: ((.Service_Category // .Expense_Type // .Function_Category // .Travel_Type // null) | as_text | if . == "" then null else . end),
   stage: (._stage // null | if . == null then null else tostring end),
   criticality: ((.Expense_Type // .Task_Priority // .Priority // null) | as_text | if . == "" then null else . end),
-  entity: ((.Entity // .Unit // .Selected_Site_ID // null) | as_text | if . == "" then null else . end),
+  entity: ((.Entity // .Company // .Unit // .Selected_Site_ID // null) | as_text | if . == "" then null else . end),
   requester_email: ((.Requested_Email // .Created_by_flat_field_email // null) | as_text | if . == "" then null else . end),
   source_payload: .
 }' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/process-items.jsonl"

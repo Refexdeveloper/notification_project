@@ -78,4 +78,13 @@ describe('templatePreview', () => {
     expect(samples.TotalUsers).toBe(String(rows));
     expect(samples.SignedInToday).toBe('1');
   });
+
+  it('builds separate Refex and Venwind travel usage sections', () => {
+    const samples = buildPreviewSampleData({ kissflowAppId: 'Expense_and_Travel_Management_A00' });
+    expect(samples.EntityScope).toBe('Refex and Venwind shown separately');
+    expect(samples.EntitySectionsHtml).toContain('Refex travel usage');
+    expect(samples.EntitySectionsHtml).toContain('Venwind travel usage');
+    expect(samples.UserTableHtml).toContain('Priya Sharma');
+    expect(samples.RejectedRequests).toBe('3');
+  });
 });

@@ -125,7 +125,9 @@ report_cache_key() {
       echo "solar:v1:${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}:${ENVIRONMENT:-production}"
       ;;
     EMS_001_A00) echo "expense:${ENVIRONMENT:-production}" ;;
-    Expense_and_Travel_Management_A00) echo "travel:${ENVIRONMENT:-production}" ;;
+    Expense_and_Travel_Management_A00)
+      echo "travel:v2:${ENTITY_FILTER:-both}:${ENVIRONMENT:-production}"
+      ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
 }
@@ -150,6 +152,7 @@ dispatch_pm_style_process() {
   local process_name="$4"
   local default_subject="$5"
   local report_body="$6"
+  local render_script="${7:-${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/23-render-process-html-report.sh}"
   export REPORT_SLUG="${slug}"
   if [[ -z "${PROCESS_ID}" ]]; then
     export PROCESS_ID="${default_process}"
@@ -177,13 +180,13 @@ dispatch_pm_style_process() {
     send_test_report \
       "${latest}" \
       "$(report_cache_key)" \
-      "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/23-render-process-html-report.sh"
+      "${render_script}"
     log "${app_name} test send completed"
   else
     log "Step 1/3: Ingest latest Kissflow data for ${app_name}"
     bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
     log "Step 2/3: Rendering ${app_name} report"
-    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/23-render-process-html-report.sh"
+    bash "${render_script}"
     log "Step 3/3: Sending ${app_name} report"
     send_cached_report "${latest}"
     log "${app_name} ingest-render-send completed"
@@ -265,17 +268,24 @@ export SOLAR_APP_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}"
 export SOLAR_PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
 export ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
 
-# ITSM entity scope: Extrovis process → no Refex entity filter; classic process → Refex.
+# Entity scope comes from the schedule. ITSM still defaults classic process → Refex.
+# Travel defaults to both (separate Refex / Venwind sections). Other apps leave it empty.
 ENTITY_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.entity_filter // empty')"
-if [[ -z "${ENTITY_FILTER}" ]]; then
-  if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
-    ENTITY_FILTER=""
-  else
-    ENTITY_FILTER="Refex"
+if [[ "${APPLICATION_ID}" == "IT_Service_Management_A00" ]]; then
+  if [[ -z "${ENTITY_FILTER}" ]]; then
+    if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+      ENTITY_FILTER=""
+    else
+      ENTITY_FILTER="Refex"
+    fi
   fi
-fi
-if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
-  ENTITY_FILTER=""
+  if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
+    ENTITY_FILTER=""
+  fi
+elif [[ "${APPLICATION_ID}" == "Expense_and_Travel_Management_A00" ]]; then
+  if [[ -z "${ENTITY_FILTER}" || "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
+    ENTITY_FILTER="both"
+  fi
 fi
 export ENTITY_FILTER
 
@@ -415,8 +425,9 @@ case "${APPLICATION_ID}" in
       "Copy_of_Venwind_Travel_Request_A00" \
       "Travel Management" \
       "Travel Request" \
-      "Kissflow - Travel Management Report" \
-      "Travel Management covers pending and completed travel requests from Kissflow."
+      "Kissflow - Travel Management Daily Usage Report" \
+      "Requester-wise Travel Management usage. Refex and Venwind are reported separately." \
+      "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
     ;;
   *)
     FALLBACK_SLUG="$(printf '%s' "${APPLICATION_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"

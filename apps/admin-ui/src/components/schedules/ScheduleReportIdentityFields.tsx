@@ -5,6 +5,7 @@ import {
   defaultEntityFilterForProcess,
   isExtrovisProcess,
   isItsmApp,
+  isTravelApp,
   processLabel,
 } from '@/lib/processLabels';
 
@@ -42,6 +43,7 @@ export default function ScheduleReportIdentityFields({
   const processOptions = (app.processIds || []).filter(Boolean);
   const showLeadTrackerFilters = isLeadTrackerApp(app);
   const showItsmEntityFilter = isItsmApp(app.appId, app.displayName || app.name);
+  const showTravelEntityFilter = isTravelApp(app.appId, app.displayName || app.name);
   const extrovis = isExtrovisProcess(value.processId);
 
   const selectTemplate = (templateId: string) => {
@@ -58,9 +60,10 @@ export default function ScheduleReportIdentityFields({
     onChange({
       ...value,
       processId,
-      entityFilter: showItsmEntityFilter
-        ? defaultEntityFilterForProcess(processId) || value.entityFilter
-        : value.entityFilter,
+      entityFilter:
+        showItsmEntityFilter || showTravelEntityFilter
+          ? defaultEntityFilterForProcess(processId) || value.entityFilter
+          : value.entityFilter,
     });
   };
 
@@ -70,7 +73,7 @@ export default function ScheduleReportIdentityFields({
         <h4 className="text-xs font-semibold text-foreground-900 uppercase tracking-wide">Report to send</h4>
         <p className="text-[11px] text-foreground-500 mt-0.5">
           Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
-          excluded.
+          excluded. For Travel Management, keep Refex and Venwind on separate usage reports.
         </p>
       </div>
 
@@ -158,6 +161,27 @@ export default function ScheduleReportIdentityFields({
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
             Use <strong>All entities on this process</strong> for Extrovis so Refex-only tickets are not mixed in.
+          </p>
+        </div>
+      )}
+
+      {showTravelEntityFilter && (
+        <div>
+          <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
+            Travel entity scope
+          </label>
+          <select
+            value={value.entityFilter || 'both'}
+            onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
+            disabled={disabled}
+            className="field-input w-full disabled:opacity-60"
+          >
+            <option value="both">Refex and Venwind (separate sections)</option>
+            <option value="Refex">Entity = Refex only</option>
+            <option value="Venwind">Entity = Venwind only</option>
+          </select>
+          <p className="text-[11px] text-foreground-400 mt-1">
+            Requester-wise pending and usage is calculated per entity. Do not mix Refex and Venwind users in one table.
           </p>
         </div>
       )}

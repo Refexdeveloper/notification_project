@@ -182,7 +182,9 @@ if [[ "${STATUS}" == "SENT" && -f "${REPO_ROOT}/ops/runbooks/cache-report-html.s
         export REPORT_CACHE_KEY="solar:v1:${SOLAR_PROCESS_ID:-Technician_Reimbursement__YTLM}:${ENVIRONMENT:-production}"
         ;;
       EMS_001_A00) export REPORT_CACHE_KEY="expense:${ENVIRONMENT:-production}" ;;
-      Expense_and_Travel_Management_A00) export REPORT_CACHE_KEY="travel:${ENVIRONMENT:-production}" ;;
+      Expense_and_Travel_Management_A00)
+        export REPORT_CACHE_KEY="travel:v2:${ENTITY_FILTER:-both}:${ENVIRONMENT:-production}"
+        ;;
     esac
   fi
   if [[ -n "${REPORT_CACHE_KEY:-}" ]]; then

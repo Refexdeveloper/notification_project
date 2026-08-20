@@ -21,6 +21,32 @@ function samplePmUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 09:40</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>3</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">12</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-28 16:05</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">8</td></tr>`;
 }
 
+function sampleTravelUserTableHtml(): string {
+  return (
+    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">5</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">3</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center">0</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td></tr>` +
+    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">3</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">1</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center">1</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Travel Desk</td></tr>`
+  );
+}
+
+function sampleTravelEntitySectionHtml(entity: string, counts: string[], usersHtml: string): string {
+  return (
+    `<tr><td style="padding:18px 32px 0 32px;" bgcolor="#ffffff"><div style="font-size:13.5px; font-weight:bold; color:#0369a1 !important; border-left:4px solid #0ea5e9; padding-left:10px;">${entity} travel usage</div><div style="font-size:11px; color:#64748b !important; margin-top:4px; padding-left:14px;">Requester-wise pending, completed, rejected, and pending ageing for this entity only.</div></td></tr>` +
+    `<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">${entity} request summary</div></td></tr>` +
+    `<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
+    `<td width="18%" align="center">${counts[0]} total</td><td width="18%" align="center">${counts[1]} pending</td><td width="18%" align="center">${counts[2]} completed</td><td width="18%" align="center">${counts[3]} rejected</td><td width="20%" align="center">${counts[4]} requesters</td>` +
+    `</tr></table></td></tr>` +
+    `<tr><td style="padding:22px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">${entity} requesters with pending or recent travel requests</td></tr>` +
+    `<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${usersHtml}</table></td></tr>`
+  );
+}
+
+function sampleTravelOverallHtml(): string {
+  return (
+    '<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Overall Travel Management Summary</div></td></tr>' +
+    '<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">48 total · 9 pending · 36 completed · 3 rejected</td></tr>'
+  );
+}
+
 function sampleItsmSourceBreakdownHtml(): string {
   const row = (label: string, count: string, tone: string, bg: string) =>
     `<tr style="background-color:${bg};" bgcolor="${bg}"><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:12px; color:#334155 !important;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone};margin-right:8px;"></span>${label}</td><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:13px; font-weight:bold; color:#1a1a1a !important;" align="right">${count}</td></tr>`;
@@ -82,7 +108,7 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
     case 'expense':
       return 'Expense Management Report';
     case 'travel':
-      return 'Travel Management Report';
+      return 'Travel Management Daily Usage Report';
     case 'itsm':
       return 'Kissflow User Engagement Report';
     default:
@@ -143,6 +169,10 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     ClosedClaims: '72',
     PendingRequests: '9',
     CompletedRequests: '39',
+    RejectedRequests: '3',
+    EntityScope: 'Refex and Venwind shown separately',
+    OverallSummaryHtml: '',
+    EntitySectionsHtml: '',
     SalesPersons: '3',
     UserTableHtml: sampleEngagementUserTableHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
@@ -172,10 +202,18 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.TotalUsers = '2';
     base.ReportBody = 'Expense Management covers pending and closed claims from Kissflow.';
   } else if (kind === 'travel') {
-    base.UserTableHtml = samplePmUserTableHtml();
+    const travelUsers = sampleTravelUserTableHtml();
+    base.UserTableHtml = travelUsers;
     base.SignedInToday = '1';
     base.TotalUsers = '2';
-    base.ReportBody = 'Travel Management covers pending and completed travel requests from Kissflow.';
+    base.RejectedRequests = '3';
+    base.EntityScope = 'Refex and Venwind shown separately';
+    base.OverallSummaryHtml = sampleTravelOverallHtml();
+    base.EntitySectionsHtml =
+      sampleTravelEntitySectionHtml('Refex', ['31', '6', '24', '1', '2'], travelUsers) +
+      sampleTravelEntitySectionHtml('Venwind', ['17', '3', '12', '2', '2'], travelUsers);
+    base.ReportBody =
+      'Requester-wise Travel Management usage from live Kissflow data. Refex and Venwind are shown in separate sections and are not combined.';
   }
 
   return base;
@@ -316,13 +354,17 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
   travel: [
     'ReportTitle',
     'ReportDate',
+    'EntityScope',
     'TotalRequests',
     'PendingRequests',
     'CompletedRequests',
+    'RejectedRequests',
     'TotalUsers',
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
+    'OverallSummaryHtml',
+    'EntitySectionsHtml',
     'UserTableHtml',
     'ReportBody',
   ],

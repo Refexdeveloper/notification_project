@@ -23,7 +23,12 @@ import BackendScheduleEditor from './BackendScheduleEditor';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal';
-import { defaultEntityFilterForProcess, isExtrovisProcess, processLabel } from '@/lib/processLabels';
+import {
+  defaultEntityFilterForProcess,
+  formatEntityFilterLabel,
+  isExtrovisProcess,
+  processLabel,
+} from '@/lib/processLabels';
 
 interface SchedulersTabProps {
   app: KissflowApplication;
@@ -336,8 +341,8 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
                     </span>
                   )}
                   {backendMode && sch.entityFilter && (
-                    <span className="chip-muted text-[10px]" title="Ticket entity scope">
-                      Entity: {sch.entityFilter === 'all' ? 'All (process)' : sch.entityFilter}
+                    <span className="chip-muted text-[10px]" title="Entity scope">
+                      Entity: {formatEntityFilterLabel(sch.entityFilter)}
                     </span>
                   )}
                   <span

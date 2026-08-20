@@ -96,7 +96,8 @@ VALUES (
     'process_id', '${PROCESS_ID}',
     'template_id', (SELECT report_template_id::text FROM engagement_reporting.report_template WHERE name = '${TEMPLATE_NAME}'),
     'template_name', '${TEMPLATE_NAME}',
-    'subject', 'Kissflow - Travel Management Report',
+    'entity_filter', 'both',
+    'subject', 'Kissflow - Travel Management Daily Usage Report',
     'legacy_template_id', 'tpl-refex-travel-engagement',
     'legacy_scheduler_id', 'sch-refex-travel-daily',
     'seed_runbook', '38-seed-travel-report-config'
@@ -169,6 +170,7 @@ cat > "${AUDIT_DIR}/runbook-38-${TIMESTAMP}.json" <<EOF
   "schedule_rows": ${SCHEDULE_COUNT:-0},
   "cron_expression": "${CRON_EXPRESSION}",
   "timezone": "${TIMEZONE}",
+  "entity_filter": "both",
   "schedule_active": false
 }
 EOF

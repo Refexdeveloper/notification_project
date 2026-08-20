@@ -4,6 +4,9 @@ export function processLabel(processId: string): string {
   if (!pid) return '';
   if (/extrovis/i.test(pid)) return `${pid} · Extrovis only (no Refex users)`;
   if (pid === 'Live_IT_Service_Request_A00') return `${pid} · Refex ITSM`;
+  if (pid === 'Copy_of_Venwind_Travel_Request_A00') {
+    return `${pid} · Travel Request (Refex + Venwind)`;
+  }
   if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Management`;
   if (pid === 'Technician_Reimbursement__YTLM') return `${pid} · Reinvestment Request (Solar)`;
   if (/lead_tracker/i.test(pid)) return `${pid} · Lead Tracker`;
@@ -20,9 +23,33 @@ export function isItsmApp(appId: string | undefined | null, appName?: string): b
   return id.includes('it_service') || id.includes('itsm') || name.includes('it service');
 }
 
+export function isTravelApp(appId: string | undefined | null, appName?: string): boolean {
+  const id = String(appId || '').toLowerCase();
+  const name = String(appName || '').toLowerCase();
+  return (
+    id.includes('expense_and_travel') ||
+    id.includes('venwind_travel') ||
+    name.includes('travel management')
+  );
+}
+
+export function isTravelProcess(processId: string | undefined | null): boolean {
+  const pid = String(processId || '');
+  return pid === 'Copy_of_Venwind_Travel_Request_A00' || /travel_request/i.test(pid);
+}
+
+export function formatEntityFilterLabel(filter: string | undefined | null): string {
+  const value = String(filter || '').trim();
+  if (!value) return '';
+  if (value === 'all') return 'All (process)';
+  if (value === 'both') return 'Refex + Venwind (separate)';
+  return value;
+}
+
 /** Default entity filter for a schedule based on process. */
 export function defaultEntityFilterForProcess(processId: string): string {
   if (isExtrovisProcess(processId)) return 'all';
   if (processId === 'Live_IT_Service_Request_A00') return 'Refex';
+  if (isTravelProcess(processId)) return 'both';
   return '';
 }
