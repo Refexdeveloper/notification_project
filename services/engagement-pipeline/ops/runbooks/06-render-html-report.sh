@@ -241,7 +241,7 @@ SELECT json_build_object(
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'total_tickets', (SELECT count(*) FROM sla),
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
@@ -506,8 +506,8 @@ SIGNIN_PCT="$(jq '
 ' <<< "${MIS_COUNTS}")"
 SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
-OPENED_TODAY="$(jq -r '.opened_today' <<< "${SUMMARY_JSON}")"
-CLOSED_TODAY="$(jq -r '.closed_today' <<< "${SUMMARY_JSON}")"
+OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SUMMARY_JSON}")"
+CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SUMMARY_JSON}")"
 
 TOTAL_OPEN="$(jq '[.[].open_count] | add // 0' <<< "${USERS_JSON}")"
 TOTAL_CLOSED="$(jq '[.[].closed_count] | add // 0' <<< "${USERS_JSON}")"

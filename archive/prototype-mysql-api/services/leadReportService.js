@@ -72,7 +72,8 @@ function loadLeadTrackerTemplateFromPg() {
 function replaceTemplateVariables(templateBody, variables = {}) {
   let body = String(templateBody || '');
   for (const key of Object.keys(variables)) {
-    body = body.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(variables[key] ?? ''));
+    const escaped = String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    body = body.replace(new RegExp(`\\{\\{\\s*${escaped}\\s*\\}\\}`, 'g'), String(variables[key] ?? ''));
   }
   return body;
 }
@@ -102,16 +103,58 @@ function pickString(obj, keys) {
   return '';
 }
 
+function coerceKissflowDate(val) {
+  if (val == null) return null;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    const ms = val > 1e12 ? val : val * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  if (typeof val === 'object') {
+    return coerceKissflowDate(val.v || val.dv || val.Date || val.date || null);
+  }
+  if (typeof val !== 'string') return null;
+  const t = val.trim();
+  if (!t || !/^\d{4}-\d{2}-\d{2}/.test(t)) return null;
+  if (/Z$|[+-]\d{2}(:?\d{2})?$/.test(t)) {
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const withIst = /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T00:00:00+05:30` : `${t}+05:30`;
+  const d = new Date(withIst);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function pickDateTime(obj, keys) {
+  if (!obj || typeof obj !== 'object') return null;
   for (const key of keys) {
-    const val = obj[key];
-    if (typeof val === 'string' && val.trim()) return val.trim();
-    if (val && typeof val === 'object') {
-      if (typeof val.v === 'string' && val.v.trim()) return val.v.trim();
-      if (typeof val.dv === 'string' && val.dv.trim()) return val.dv.trim();
-    }
+    const parsed = coerceKissflowDate(obj[key]);
+    if (parsed) return parsed;
   }
   return null;
+}
+
+function leadCreatedAt(lead) {
+  return pickDateTime(lead, ['_created_at', 'Requested_Date', 'CreatedAt', '_submitted_at']);
+}
+
+function leadCompletedAt(lead) {
+  const explicit = pickDateTime(lead, ['_completed_at', '_closed_at', 'Completed_On', 'Closed_On']);
+  if (explicit) return explicit;
+  if (leadStatusBucket(extractStatus(lead)) !== 'closed') return null;
+  return pickDateTime(lead, ['_modified_at']);
+}
+
+function countOpenedClosedToday(leads) {
+  let openedToday = 0;
+  let closedToday = 0;
+  for (const lead of leads || []) {
+    const created = leadCreatedAt(lead);
+    if (created && isLoggedInToday(created)) openedToday += 1;
+    const completed = leadCompletedAt(lead);
+    if (completed && isLoggedInToday(completed)) closedToday += 1;
+  }
+  return { openedToday, closedToday };
 }
 
 function normalizeUser(raw) {
@@ -208,7 +251,7 @@ async function fetchAllLeads(host, accountId, keyId, keySecret, processId = PROC
   const all = [];
   let page = 1;
   while (page <= 100) {
-    const apiPath = `/process/2/${accountId}/admin/${processId}/item?page_number=${page}&page_size=${PAGE_SIZE}&apply_preference=1`;
+    const apiPath = `/process/2/${accountId}/admin/${processId}/item?page_number=${page}&page_size=${PAGE_SIZE}&apply_preference=false`;
     try {
       const data = await kissflowFetch(host, keyId, keySecret, apiPath);
       const batch = asArray(data).filter((r) => r && typeof r === 'object');
@@ -222,6 +265,45 @@ async function fetchAllLeads(host, accountId, keyId, keySecret, processId = PROC
     }
   }
   return all;
+}
+
+/**
+ * List API omits _modified_at / _completed_at. Detail API has them — required for Closed Today.
+ * Only fetch details for closed leads that still lack completion timestamps.
+ */
+async function enrichLeadsWithDetails(host, accountId, keyId, keySecret, leads, processId = PROCESS_ID) {
+  const out = leads.map((lead) => lead);
+  const needDetail = [];
+  for (let i = 0; i < out.length; i += 1) {
+    const lead = out[i];
+    if (leadStatusBucket(extractStatus(lead)) !== 'closed') continue;
+    if (lead._modified_at || lead._completed_at || lead._closed_at) continue;
+    const id = pickString(lead, ['_id', 'Id', 'id', 'Instance_ID']);
+    if (!id) continue;
+    needDetail.push({ index: i, id });
+  }
+  const concurrency = 8;
+  for (let i = 0; i < needDetail.length; i += concurrency) {
+    const chunk = needDetail.slice(i, i + concurrency);
+    await Promise.all(
+      chunk.map(async ({ index, id }) => {
+        try {
+          const detail = await kissflowFetch(
+            host,
+            keyId,
+            keySecret,
+            `/process/2/${accountId}/admin/${processId}/${encodeURIComponent(id)}`,
+          );
+          if (detail && typeof detail === 'object') {
+            out[index] = { ...out[index], ...detail, __requested_instance_id: id };
+          }
+        } catch {
+          /* keep list row */
+        }
+      }),
+    );
+  }
+  return out;
 }
 
 function extractWebsite(obj) {
@@ -409,7 +491,7 @@ async function enrichRowsWithFreshLogin(host, accountId, keyId, keySecret, rows,
     if (!userId) continue;
 
     const detail = await fetchUserDetail(host, accountId, keyId, keySecret, userId);
-    const lastLogin = detail?.lastLogin || null;
+    const lastLogin = detail?.lastLogin || row.lastSignedIn || null;
     row.lastSignedIn = lastLogin;
     row.loggedInToday = isLoggedInToday(lastLogin);
     if (detail?.email && !row.email) row.email = detail.email;
@@ -476,6 +558,8 @@ function renderHtml(groupName, rows, totals) {
   const open = totals.totalOpen ?? rows.reduce((n, r) => n + r.openLeads, 0);
   const closed = totals.totalClosed ?? rows.reduce((n, r) => n + r.closedLeads, 0);
   const signedInToday = rows.filter((r) => r.loggedInToday).length;
+  const openedToday = totals.openedToday ?? 0;
+  const closedToday = totals.closedToday ?? 0;
   const date = new Date().toLocaleString('en-IN', {
     timeZone: TZ,
     year: 'numeric',
@@ -495,8 +579,8 @@ function renderHtml(groupName, rows, totals) {
     ClosedLeads: String(closed),
     TotalUsers: String(rows.length),
     SignedInToday: String(signedInToday),
-    OpenedToday: '0',
-    ClosedToday: '0',
+    OpenedToday: String(openedToday),
+    ClosedToday: String(closedToday),
     UserTableHtml: userRows,
     LeadTableHtml: userRows,
     ReportBody: reportBody,
@@ -522,17 +606,35 @@ function renderHtml(groupName, rows, totals) {
 
 async function buildLeadTrackerReport({ groupName, websiteFilter }) {
   const { host, accountId, keyId, keySecret } = getKissflowConfig();
-  const [users, leads] = await Promise.all([
+  const [users, listLeads] = await Promise.all([
     fetchAllUsers(host, accountId, keyId, keySecret),
     fetchAllLeads(host, accountId, keyId, keySecret),
   ]);
+  // Detail payloads carry _modified_at / _completed_at used for Closed Today KPIs.
+  const leads = await enrichLeadsWithDetails(host, accountId, keyId, keySecret, listLeads);
 
+  const filteredLeads = leads.filter((l) => websiteMatches(extractWebsite(l), websiteFilter));
+  const { openedToday, closedToday } = countOpenedClosedToday(filteredLeads);
   const { rows, totalLeads, totalOpen, totalClosed } = buildRows(users, leads, websiteFilter);
   await enrichRowsWithFreshLogin(host, accountId, keyId, keySecret, rows, users);
 
-  const html = renderHtml(groupName, rows, { totalLeads, totalOpen, totalClosed });
+  const html = renderHtml(groupName, rows, {
+    totalLeads,
+    totalOpen,
+    totalClosed,
+    openedToday,
+    closedToday,
+  });
   const subject = `Lead Tracker — ${groupName} sales report`;
-  return { html, subject, rowCount: rows.length, totalLeads, rows };
+  return {
+    html,
+    subject,
+    rowCount: rows.length,
+    totalLeads,
+    openedToday,
+    closedToday,
+    rows,
+  };
 }
 
 function isLeadTrackerScheduler(meta) {

@@ -126,13 +126,15 @@ COALESCE(
   $(report_kf_ts_sql "${src}->'Requested_Date'"),
   $(report_kf_ts_sql "${src}->'Requester_Date__Time'"),
   $(report_kf_ts_sql "${src}->'_submitted_at'"),
-  $(report_kf_ts_sql "${src}->'CreatedAt'")
+  $(report_kf_ts_sql "${src}->'CreatedAt'"),
+  $(report_kf_ts_sql "${src}->'Created_On'"),
+  $(report_kf_ts_sql "${src}->'Lead_Created_Date'")
 )
 EOF
 }
 
-# Item completed-at. Kissflow process items usually have no _completed_at —
-# use _modified_at when the item is business-closed.
+# Item completed-at. Kissflow process list payloads omit _completed_at —
+# use _modified_at when the item is business-closed (Completed / IT Tech Reopen / Closed).
 # Arg1: source_payload expression. Arg2: table qualifier prefix (e.g. "i." or "").
 report_item_completed_at_sql() {
   local src="${1:-source_payload}"
@@ -143,12 +145,16 @@ COALESCE(
   $(report_kf_ts_sql "${src}->'_closed_at'"),
   $(report_kf_ts_sql "${src}->'Completed_On'"),
   $(report_kf_ts_sql "${src}->'Closed_On'"),
+  $(report_kf_ts_sql "${src}->'Completed_Date'"),
+  $(report_kf_ts_sql "${src}->'Closed_Date'"),
   CASE
-    WHEN ${q}process_status = 'Completed'
+    WHEN ${q}process_status IN ('Completed', 'Closed')
+      OR lower(coalesce(${q}process_status, '')) IN ('completed', 'closed', 'done')
       OR (
         ${q}process_status = 'InProgress'
         AND lower(trim(coalesce(${q}current_step, ${src}->>'_current_step', ''))) LIKE '%it tech reopen%'
       )
+      OR lower(trim(coalesce(${src}->>'Lead_Status', ${src}->>'Status', ''))) IN ('close', 'closed', 'completed', 'done')
     THEN $(report_kf_ts_sql "${src}->'_modified_at'")
     ELSE NULL
   END

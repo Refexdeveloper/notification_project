@@ -90,6 +90,7 @@ tasks AS (
   SELECT
     instance_id,
     process_status,
+    current_step,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
   FROM engagement_reporting.item i, latest l
@@ -154,8 +155,7 @@ SELECT json_build_object(
   ),
   'closed_today', (
     SELECT count(*) FROM tasks
-    WHERE process_status = 'Completed'
-      AND completed_at IS NOT NULL
+    WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'total_app_users', (SELECT count(*) FROM pm_app_users),
@@ -290,8 +290,8 @@ PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
-PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
+PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
 PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 

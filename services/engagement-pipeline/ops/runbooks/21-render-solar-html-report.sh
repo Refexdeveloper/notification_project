@@ -90,6 +90,7 @@ tasks AS (
   SELECT
     instance_id,
     process_status,
+    current_step,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
   FROM engagement_reporting.item i, latest l
@@ -148,8 +149,7 @@ SELECT json_build_object(
   ),
   'closed_today', (
     SELECT count(*) FROM tasks
-    WHERE process_status = 'Completed'
-      AND completed_at IS NOT NULL
+    WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'total_app_users', (SELECT count(*) FROM solar_app_users),
@@ -294,8 +294,8 @@ SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
 SOLAR_TOTAL="$(jq -r '.total_requests' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_OPEN="$(jq -r '.open_requests' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CLOSED="$(jq -r '.closed_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_OPENED_TODAY="$(jq -r '.opened_today' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_TOTAL_USERS="$(jq -r '.total' <<< "${SOLAR_MIS_COUNTS}")"
 SOLAR_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SOLAR_MIS_COUNTS}")"
 SOLAR_SIGNIN_RATE_TODAY="$(jq -r '

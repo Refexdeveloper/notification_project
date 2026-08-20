@@ -244,25 +244,36 @@ function kfTsSql(col) {
   END`;
 }
 
-const ITEM_CREATED_AT_SQL = `COALESCE(
-  ${kfTsSql("i.source_payload->'_created_at'")},
-  ${kfTsSql("i.source_payload->'Requested_Date'")},
-  ${kfTsSql("i.source_payload->'Requester_Date__Time'")}
-)`;
-
 const ITEM_COMPLETED_AT_SQL = `COALESCE(
   ${kfTsSql("i.source_payload->'_completed_at'")},
   ${kfTsSql("i.source_payload->'_closed_at'")},
+  ${kfTsSql("i.source_payload->'Completed_On'")},
+  ${kfTsSql("i.source_payload->'Closed_On'")},
+  ${kfTsSql("i.source_payload->'Completed_Date'")},
+  ${kfTsSql("i.source_payload->'Closed_Date'")},
   CASE
-    WHEN i.process_status = 'Completed'
+    WHEN i.process_status IN ('Completed', 'Closed')
+      OR lower(coalesce(i.process_status, '')) IN ('completed', 'closed', 'done')
       OR (
         $2 = 'IT_Service_Management_A00'
         AND i.process_status = 'InProgress'
         AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
       )
+      OR lower(trim(coalesce(i.source_payload->>'Lead_Status', i.source_payload->>'Status', '')))
+         IN ('close', 'closed', 'completed', 'done')
     THEN ${kfTsSql("i.source_payload->'_modified_at'")}
     ELSE NULL
   END
+)`;
+
+const ITEM_CREATED_AT_SQL = `COALESCE(
+  ${kfTsSql("i.source_payload->'_created_at'")},
+  ${kfTsSql("i.source_payload->'Requested_Date'")},
+  ${kfTsSql("i.source_payload->'Requester_Date__Time'")},
+  ${kfTsSql("i.source_payload->'_submitted_at'")},
+  ${kfTsSql("i.source_payload->'CreatedAt'")},
+  ${kfTsSql("i.source_payload->'Created_On'")},
+  ${kfTsSql("i.source_payload->'Lead_Created_Date'")}
 )`;
 
 const ITEM_TODAY_COUNTS_QUERY = `

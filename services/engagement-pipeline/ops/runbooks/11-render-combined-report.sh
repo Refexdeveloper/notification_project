@@ -143,7 +143,7 @@ SELECT json_build_object(
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
+  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -204,7 +204,7 @@ SELECT json_build_object(
   'pending_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'InProgress'),
   'completed_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'Completed'),
   'opened_today', (SELECT count(*) FROM tasks WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM tasks WHERE process_status = 'Completed' AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
+  'closed_today', (SELECT count(*) FROM tasks WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -288,15 +288,15 @@ ITSM_CLOSED="$(jq -r '.closed_tickets' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_OPEN="$(jq -r '.sla_breached_open' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_CLOSED="$(jq -r '.sla_breached_closed' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_TOTAL="$(( ITSM_SLA_OPEN + ITSM_SLA_CLOSED ))"
-ITSM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${ITSM_SUMMARY_JSON}")"
-ITSM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${ITSM_SUMMARY_JSON}")"
+ITSM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${ITSM_SUMMARY_JSON}")"
+ITSM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${ITSM_SUMMARY_JSON}")"
 
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_ASSIGNED="$(jq -r '.assigned_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
-PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
+PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
 
 ITSM_ROWS_HTML="$(jq -r '
   to_entries | map(

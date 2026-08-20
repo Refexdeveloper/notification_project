@@ -1,7 +1,7 @@
 'use strict';
 
 const { getPool } = require('./db');
-const { buildEngagementTotals, APP_ENGAGEMENT_QUERY } = require('./engagementSummary');
+const { buildEngagementTotals, APP_ENGAGEMENT_QUERY, loadItemTodayCounts } = require('./engagementSummary');
 const { isLoggedInToday, isSameCalendarDay } = require('./reportTimezone');
 const {
   resolveKissflowCredentials,
@@ -115,12 +115,26 @@ function itemCreatedAt(raw) {
 }
 
 function itemCompletedAt(raw, { applicationId } = {}) {
-  const explicit = pickDateTime(raw, ['_completed_at', '_closed_at', 'Completed_On', 'Closed_On']);
+  const explicit = pickDateTime(raw, [
+    '_completed_at',
+    '_closed_at',
+    'Completed_On',
+    'Closed_On',
+    'Completed_Date',
+    'Closed_Date',
+  ]);
   if (explicit) return explicit;
+  const status = normalizeProcessStatus(raw);
+  const leadStatus = String(raw?.Lead_Status || raw?.Status || '').toLowerCase().trim();
   const closed =
     applicationId === ITSM_APP_ID
       ? isItsmBusinessClosed(raw)
-      : normalizeProcessStatus(raw) === 'Completed';
+      : status === 'Completed' ||
+        status === 'Closed' ||
+        leadStatus === 'close' ||
+        leadStatus === 'closed' ||
+        leadStatus === 'completed' ||
+        leadStatus === 'done';
   if (!closed) return null;
   return pickDateTime(raw, ['_modified_at']);
 }
@@ -306,6 +320,20 @@ async function fetchLiveAppMetrics(environment, applicationId, { persistCache = 
     closedTickets += counts.closed;
   }
   const todayCounts = countOpenedClosedToday(allItems, { applicationId });
+  // Kissflow list API omits _modified_at/_completed_at — Closed Today would stay 0.
+  // Prefer PostgreSQL detail payloads (from ingest) when the live list has no completion timestamps.
+  const listHasCompletionTs = allItems.some(
+    (item) => item && (item._modified_at || item._completed_at || item._closed_at),
+  );
+  if (!listHasCompletionTs) {
+    const pgToday = await loadItemTodayCounts(pool, environment, applicationId);
+    if (pgToday.closed_today > todayCounts.closed_today) {
+      todayCounts.closed_today = pgToday.closed_today;
+    }
+    if (!todayCounts.opened_today && pgToday.opened_today) {
+      todayCounts.opened_today = pgToday.opened_today;
+    }
+  }
 
   const itemUserIds = collectRelatedUserIdsFromItems(allItems);
 
