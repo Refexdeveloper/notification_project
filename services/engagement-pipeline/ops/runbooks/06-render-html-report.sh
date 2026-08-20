@@ -106,6 +106,7 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
+refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
 
 if [[ -n "${ENTITY_FILTER}" ]]; then
   log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER})"
@@ -132,8 +133,8 @@ sla AS (
     process_status,
     lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) AS step_lc,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
     -- ITSM: Completed OR InProgress on step "IT Tech Reopen" counts as Closed (not Open).
     (
       process_status = 'Completed'
@@ -221,29 +222,26 @@ SELECT json_build_object(
   'total_users', (SELECT count(*) FROM app_members),
   'signed_in_users', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE COALESCE(u.ever_logged_in, false)
   ),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'never_logged_in', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
   'total_tickets', (SELECT count(*) FROM sla),
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
@@ -291,6 +289,13 @@ WITH latest AS (
     AND environment = 'production'
     AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
   ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
+  LIMIT 1
+),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
+  ORDER BY snapshot_at DESC
   LIMIT 1
 ),
 assignee_name AS (
@@ -388,7 +393,8 @@ sla_by_user AS (
       AND ia.principal_id IS NOT NULL
       AND trim(ia.principal_id) <> ''
       AND (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric IS NOT NULL
-      AND EXTRACT(EPOCH FROM (now() - (i.source_payload->>'_created_at')::timestamptz)) / 60
+      AND (${REPORT_ITEM_CREATED_AT_I_SQL}) IS NOT NULL
+      AND EXTRACT(EPOCH FROM (now() - (${REPORT_ITEM_CREATED_AT_I_SQL}))) / 60
           > (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric
     GROUP BY ia.principal_id
 
@@ -409,10 +415,10 @@ sla_by_user AS (
       )
       AND NULLIF(trim(i.source_payload->'_created_by'->>'_id'), '') IS NOT NULL
       AND (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric IS NOT NULL
-      AND NULLIF(i.source_payload->>'_completed_at','') IS NOT NULL
+      AND (${REPORT_ITEM_COMPLETED_AT_I_SQL}) IS NOT NULL
       AND EXTRACT(EPOCH FROM (
-            (i.source_payload->>'_completed_at')::timestamptz
-            - (i.source_payload->>'_created_at')::timestamptz
+            (${REPORT_ITEM_COMPLETED_AT_I_SQL})
+            - (${REPORT_ITEM_CREATED_AT_I_SQL})
           )) / 60
           > (i.source_payload->'Closure_Time'->>'Closure_Time')::numeric
     GROUP BY 1
@@ -422,17 +428,22 @@ sla_by_user AS (
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     resolved.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(u.ever_logged_in, false) AS ever_logged_in,
     a.open_count,
     a.closed_count,
     COALESCE(s.sla_breached_count, 0) AS sla_breached_count
   FROM activity a
   LEFT JOIN sla_by_user s ON s.user_id = a.user_id
-  LEFT JOIN latest l ON true
-  LEFT JOIN engagement_reporting.\"user\" u
-    ON u.snapshot_run_id = l.snapshot_run_id
-   AND u.user_id = a.user_id
+  LEFT JOIN LATERAL (
+    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    FROM engagement_reporting.\"user\" u0
+    WHERE u0.user_id = a.user_id
+      AND u0.environment = 'production'
+    ORDER BY
+      ${REPORT_BEST_USER_ORDER_SQL}
+    LIMIT 1
+  ) u ON true
   CROSS JOIN LATERAL (
     SELECT NULLIF(trim(COALESCE(u.user_name, a.display_name)), '') AS user_name
   ) resolved
@@ -472,19 +483,31 @@ ROWS_HTML="$(jq -r '
   end
 ' <<< "${USERS_JSON}")"
 
-TOTAL_USERS="$(jq -r '.total_users' <<< "${SUMMARY_JSON}")"
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  def is_kissflow_id:
+    type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
+  [ .[]
+    | select((.user_name // "") | tostring | length > 0)
+    | select((.user_name | is_kissflow_id | not))
+  ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${USERS_JSON}")"
+TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
+SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${SUMMARY_JSON}")"
-# jq's // does not treat 0 as missing — guard divide-by-zero when a process has no users.
-SIGNIN_PCT="$(jq -n --argjson s "${SUMMARY_JSON}" '
-  (($s.total_users // 0) | if . <= 0 then 0 else (($s.signed_in_users // 0) * 100 / .) | floor end)
-')"
-SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SUMMARY_JSON}")"
-SIGNIN_RATE_TODAY="$(jq -n --argjson s "${SUMMARY_JSON}" '
-  (($s.total_users // 0) | if . <= 0 then 0 else (($s.signed_in_today // 0) * 100 / .) | floor end)
-')"
+SIGNIN_PCT="$(jq '
+  if (.total // 0) <= 0 then 0 else ((.signed_in_today // 0) * 100 / .total) | floor end
+' <<< "${MIS_COUNTS}")"
+SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
-OPENED_TODAY="$(jq -r '.opened_today' <<< "${SUMMARY_JSON}")"
-CLOSED_TODAY="$(jq -r '.closed_today' <<< "${SUMMARY_JSON}")"
+OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SUMMARY_JSON}")"
+CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SUMMARY_JSON}")"
 
 TOTAL_OPEN="$(jq '[.[].open_count] | add // 0' <<< "${USERS_JSON}")"
 TOTAL_CLOSED="$(jq '[.[].closed_count] | add // 0' <<< "${USERS_JSON}")"
@@ -541,6 +564,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
+report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 # Extrovis reports omit User Sign-in Overview (even if an older published template still has it).
 if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]] && grep -qF 'User Sign-in Overview' "${TEMPLATE_SRC}"; then

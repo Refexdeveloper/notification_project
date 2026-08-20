@@ -5,6 +5,9 @@ REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-11"
 
+# shellcheck source=/dev/null
+source "${REPO_ROOT}/ops/runbooks/report-template-lib.sh"
+
 PGDATABASE="${PGDATABASE:-engagement_reporting}"
 PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
@@ -29,6 +32,8 @@ command -v jq >/dev/null 2>&1 || stop "jq is not installed."
 command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
+refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
+refresh_user_last_sign_ins_for_process "${PM_APP_ID}" "${PM_PROCESS_ID}"
 
 log "Querying Refex ITSM role-member sign-in overview"
 
@@ -85,24 +90,21 @@ SELECT json_build_object(
   'total_users', (SELECT count(*) FROM app_members),
   'signed_in_users', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE COALESCE(u.ever_logged_in, false)
   ),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'never_logged_in', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+    FROM ${REPORT_BEST_USER_FROM_SQL}
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   )
@@ -118,8 +120,8 @@ WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WH
 sla AS (
   SELECT instance_id, process_status,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
     (
       process_status = 'Completed'
       OR (
@@ -141,7 +143,7 @@ SELECT json_build_object(
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
   'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
+  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -155,11 +157,10 @@ latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER
 SELECT json_agg(t) FROM (
   SELECT
     u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(open_t.open_count, 0) AS open_count,
     COALESCE(closed_t.closed_count, 0) AS closed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+  FROM ${REPORT_BEST_USER_FROM_SQL}
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS open_count
     FROM engagement_reporting.item_assignment ia
@@ -196,14 +197,14 @@ PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
 WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${PM_APP_ID}' AND process_id = '${PM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
-tasks AS (SELECT instance_id, process_status, (source_payload->>'_created_at')::timestamptz AS created_at, NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at FROM engagement_reporting.item i, latest l WHERE i.snapshot_run_id = l.snapshot_run_id AND i.process_id = '${PM_PROCESS_ID}')
+tasks AS (SELECT instance_id, process_status, current_step, (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at, (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at FROM engagement_reporting.item i, latest l WHERE i.snapshot_run_id = l.snapshot_run_id AND i.process_id = '${PM_PROCESS_ID}')
 SELECT json_build_object(
   'total_tasks', (SELECT count(*) FROM tasks),
   'assigned_tasks', (SELECT count(DISTINCT ia.instance_id) FROM engagement_reporting.item_assignment ia, latest l WHERE ia.snapshot_run_id = l.snapshot_run_id AND ia.process_id = '${PM_PROCESS_ID}'),
   'pending_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'InProgress'),
   'completed_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'Completed'),
   'opened_today', (SELECT count(*) FROM tasks WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM tasks WHERE process_status = 'Completed' AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
+  'closed_today', (SELECT count(*) FROM tasks WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date)
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -217,11 +218,10 @@ latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER
 SELECT json_agg(t) FROM (
   SELECT
     u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(pending_t.pending_count, 0) AS pending_count,
     COALESCE(completed_t.completed_count, 0) AS completed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
+  FROM ${REPORT_BEST_USER_FROM_SQL}
   LEFT JOIN (
     SELECT ia.principal_id AS user_id, count(*) AS pending_count
     FROM engagement_reporting.item_assignment ia
@@ -266,10 +266,20 @@ SELECT json_agg(t) FROM (
 
 log "Rendering combined HTML report"
 
-TOTAL_USERS="$(jq -r '.total_users' <<< "${USER_SUMMARY_JSON}")"
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${ITSM_USERS_JSON}")"
+TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${USER_SUMMARY_JSON}")"
-SIGNIN_PCT="$(jq -n --argjson s "${USER_SUMMARY_JSON}" '(($s.signed_in_users // 0) * 100 / (($s.total_users // 1)) ) | floor')"
-SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${USER_SUMMARY_JSON}")"
+SIGNIN_PCT="$(jq 'if (.total // 0) <= 0 then 0 else ((.signed_in_today // 0) * 100 / .total) | floor end' <<< "${MIS_COUNTS}")"
+SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${USER_SUMMARY_JSON}")"
 
 ITSM_TOTAL="$(jq -r '.total_tickets' <<< "${ITSM_SUMMARY_JSON}")"
@@ -278,15 +288,15 @@ ITSM_CLOSED="$(jq -r '.closed_tickets' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_OPEN="$(jq -r '.sla_breached_open' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_CLOSED="$(jq -r '.sla_breached_closed' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_TOTAL="$(( ITSM_SLA_OPEN + ITSM_SLA_CLOSED ))"
-ITSM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${ITSM_SUMMARY_JSON}")"
-ITSM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${ITSM_SUMMARY_JSON}")"
+ITSM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${ITSM_SUMMARY_JSON}")"
+ITSM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${ITSM_SUMMARY_JSON}")"
 
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_ASSIGNED="$(jq -r '.assigned_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
-PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
+PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
 
 ITSM_ROWS_HTML="$(jq -r '
   to_entries | map(
@@ -350,7 +360,8 @@ cat > "${OUTPUT_FILE}" <<HTML
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${TOTAL_USERS}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Users</div></td>
+<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Users</div>
+<div style="font-size:12px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">${SIGNED_IN_TODAY} of ${TOTAL_USERS} today</div></td>
 <td width="2.6%"></td>
 <td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
 <div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">${SIGNED_IN}</div>

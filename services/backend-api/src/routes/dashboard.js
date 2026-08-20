@@ -3,7 +3,7 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
-const { APP_ENGAGEMENT_QUERY, buildEngagementTotals } = require('../lib/engagementSummary');
+const { APP_ENGAGEMENT_QUERY, buildEngagementTotals, loadItemTodayCounts } = require('../lib/engagementSummary');
 const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
 const { snapshotAgeHours, DEFAULT_REPORT_TIMEZONE, isSameCalendarDay } = require('../lib/reportTimezone');
 
@@ -84,6 +84,9 @@ router.get('/', async (req, res) => {
 
         const { rows } = await pool.query(APP_ENGAGEMENT_QUERY, [environment, app.application_id]);
         const totals = buildEngagementTotals(rows);
+        const todayCounts = await loadItemTodayCounts(pool, environment, app.application_id);
+        totals.opened_today = todayCounts.opened_today;
+        totals.closed_today = todayCounts.closed_today;
         const snapshotAt = rows[0]?.snapshot_at || null;
         const ageHours = snapshotAgeHours(snapshotAt);
         const snapshotStale =
@@ -105,6 +108,8 @@ router.get('/', async (req, res) => {
             sign_in_rate_today: totals.sign_in_rate_today,
             open_tickets: totals.open_tickets,
             closed_tickets: totals.closed_tickets,
+            opened_today: totals.opened_today,
+            closed_today: totals.closed_today,
           },
           metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
             ? {

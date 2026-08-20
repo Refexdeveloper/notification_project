@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
-AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-21"
+AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-23"
 
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/ops/runbooks/report-template-lib.sh"
@@ -12,10 +12,11 @@ PGDATABASE="${PGDATABASE:-engagement_reporting}"
 PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
 
+REPORT_SLUG="${REPORT_SLUG:-process}"
 TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
-OUTPUT_FILE="${TEMPLATES_DIR}/solar-report-${TIMESTAMP}.html"
-LATEST_FILE="${TEMPLATES_DIR}/solar-report-latest.html"
-AUDIT_FILE="${AUDIT_DIR}/runbook-21-${TIMESTAMP}.json"
+OUTPUT_FILE="${TEMPLATES_DIR}/${REPORT_SLUG}-report-${TIMESTAMP}.html"
+LATEST_FILE="${TEMPLATES_DIR}/${REPORT_SLUG}-report-latest.html"
+AUDIT_FILE="${AUDIT_DIR}/runbook-23-${TIMESTAMP}.json"
 
 LOGO_URL="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png"
 DIVIDER_GIF_URL="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
@@ -56,9 +57,10 @@ ensure_refexone_logo() {
   fi
 }
 
-SOLAR_APP_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}"
-SOLAR_PROCESS_ID="${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}"
-APPLICATION_ID="${APPLICATION_ID:-${SOLAR_APP_ID}}"
+APPLICATION_ID="${APPLICATION_ID:?APPLICATION_ID is required}"
+PROCESS_ID="${PROCESS_ID:?PROCESS_ID is required}"
+PM_APP_ID="${APPLICATION_ID}"
+PM_PROCESS_ID="${PROCESS_ID}"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -69,18 +71,18 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
-refresh_user_last_sign_ins_for_process "${SOLAR_APP_ID}" "${SOLAR_PROCESS_ID}"
+refresh_user_last_sign_ins_for_process "${APPLICATION_ID}" "${PROCESS_ID}"
 
-log "Querying Solar Reinvestment Request summary"
+log "Querying process summary for ${APPLICATION_ID} / ${PROCESS_ID}"
 
-SOLAR_SUMMARY_JSON="$(echo "
+PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
 WITH latest AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${SOLAR_APP_ID}'
-    AND process_id = '${SOLAR_PROCESS_ID}'
+  WHERE application_id = '${PM_APP_ID}'
+    AND process_id = '${PM_PROCESS_ID}'
     AND environment = 'production'
     AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
   ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
@@ -95,25 +97,26 @@ tasks AS (
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
-    AND i.process_id = '${SOLAR_PROCESS_ID}'
+    AND i.process_id = '${PM_PROCESS_ID}'
 ),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
   ORDER BY snapshot_at DESC
   LIMIT 1
 ),
-solar_process_roles AS (
+pm_process_roles AS (
   SELECT DISTINCT ia.principal_id AS role_id
   FROM engagement_reporting.item_assignment ia, latest l
   WHERE ia.snapshot_run_id = l.snapshot_run_id
-    AND ia.process_id = '${SOLAR_PROCESS_ID}'
+    AND ia.process_id = '${PM_PROCESS_ID}'
     AND ia.principal_type = 'APP_ROLE'
 ),
-solar_role_members AS (
+pm_role_members AS (
   SELECT DISTINCT pu.user_id
   FROM engagement_reporting.principal_user pu
-  WHERE pu.application_id = '${SOLAR_APP_ID}'
+  WHERE pu.application_id = '${PM_APP_ID}'
     AND pu.valid_to IS NULL
     AND pu.principal_type = 'APP_ROLE'
     AND pu.user_id IS NOT NULL
@@ -121,28 +124,34 @@ solar_role_members AS (
   UNION
   SELECT DISTINCT pu.user_id
   FROM engagement_reporting.principal_user pu
-  JOIN solar_process_roles pr ON pr.role_id = pu.principal_id
+  JOIN pm_process_roles pr ON pr.role_id = pu.principal_id
   WHERE pu.valid_to IS NULL
     AND pu.principal_type = 'APP_ROLE'
     AND pu.user_id IS NOT NULL
     AND trim(pu.user_id) <> ''
 ),
-solar_app_users AS (
-  SELECT user_id FROM solar_role_members
+pm_app_users AS (
+  SELECT user_id FROM pm_role_members
   UNION
   SELECT DISTINCT ia.principal_id AS user_id
   FROM engagement_reporting.item_assignment ia, latest l
   WHERE ia.snapshot_run_id = l.snapshot_run_id
-    AND ia.process_id = '${SOLAR_PROCESS_ID}'
+    AND ia.process_id = '${PM_PROCESS_ID}'
     AND ia.principal_type = 'USER'
     AND ia.principal_id IS NOT NULL
     AND trim(ia.principal_id) <> ''
-    AND NOT EXISTS (SELECT 1 FROM solar_role_members)
+    AND NOT EXISTS (SELECT 1 FROM pm_role_members)
 )
 SELECT json_build_object(
-  'total_requests', (SELECT count(*) FROM tasks),
-  'open_requests', (SELECT count(*) FROM tasks WHERE process_status = 'InProgress'),
-  'closed_requests', (SELECT count(*) FROM tasks WHERE process_status = 'Completed'),
+  'total_tasks', (SELECT count(*) FROM tasks),
+  'assigned_tasks', (
+    SELECT count(DISTINCT ia.instance_id)
+    FROM engagement_reporting.item_assignment ia, latest l
+    WHERE ia.snapshot_run_id = l.snapshot_run_id
+      AND ia.process_id = '${PM_PROCESS_ID}'
+  ),
+  'pending_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'InProgress'),
+  'completed_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'Completed'),
   'opened_today', (
     SELECT count(*) FROM tasks
     WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
@@ -152,20 +161,14 @@ SELECT json_build_object(
     WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
-  'total_app_users', (SELECT count(*) FROM solar_app_users),
-  'signed_in_users', (
-    SELECT count(*)
-    FROM ${REPORT_BEST_USER_FROM_SQL}
-    JOIN solar_app_users su ON su.user_id = u.user_id
-    WHERE COALESCE(u.ever_logged_in, false)
-  ),
+  'total_app_users', (SELECT count(*) FROM pm_app_users),
   'signed_in_today', (
     SELECT count(*)
-    FROM solar_app_users su
+    FROM pm_app_users pu
     LEFT JOIN LATERAL (
       SELECT u0.last_sign_in, u0.source_payload
       FROM engagement_reporting.\"user\" u0
-      WHERE u0.user_id = su.user_id
+      WHERE u0.user_id = pu.user_id
         AND u0.environment = 'production'
       ORDER BY
         ${REPORT_BEST_USER_ORDER_SQL}
@@ -178,16 +181,16 @@ SELECT json_build_object(
 );
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
-log "Querying Solar Reinvestment Request per-user breakdown"
+log "Querying per-user breakdown for ${APPLICATION_ID}"
 
-SOLAR_USERS_JSON="$(echo "
+PM_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
 WITH latest AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${SOLAR_APP_ID}'
-    AND process_id = '${SOLAR_PROCESS_ID}'
+  WHERE application_id = '${PM_APP_ID}'
+    AND process_id = '${PM_PROCESS_ID}'
     AND environment = 'production'
     AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
   ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
@@ -201,13 +204,13 @@ latest_users AS (
   LIMIT 1
 ),
 activity AS (
-  SELECT user_id, SUM(open_count)::int AS open_count, SUM(closed_count)::int AS closed_count
+  SELECT user_id, SUM(pending_count)::int AS pending_count, SUM(completed_count)::int AS completed_count
   FROM (
-    SELECT ia.principal_id AS user_id, count(*)::int AS open_count, 0 AS closed_count
+    SELECT ia.principal_id AS user_id, count(*)::int AS pending_count, 0 AS completed_count
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i
       ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
-    WHERE ia.process_id = '${SOLAR_PROCESS_ID}'
+    WHERE ia.process_id = '${PM_PROCESS_ID}'
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
@@ -215,14 +218,15 @@ activity AS (
       AND trim(ia.principal_id) <> ''
     GROUP BY ia.principal_id
     UNION ALL
-    SELECT assignee_id AS user_id, 0 AS open_count, count(*)::int AS closed_count
+    SELECT assignee_id AS user_id, 0 AS pending_count, count(*)::int AS completed_count
     FROM (
       SELECT DISTINCT ON (i.instance_id)
         i.instance_id,
         COALESCE(
-          NULLIF(i.source_payload->'Site_Incharge'->>'_id', ''),
+          NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
           NULLIF(ia.principal_id, ''),
-          NULLIF(i.source_payload->'_modified_by'->>'_id', '')
+          NULLIF(i.source_payload->'_modified_by'->>'_id', ''),
+          NULLIF(i.source_payload->'_created_by'->>'_id', '')
         ) AS assignee_id
       FROM engagement_reporting.item i
       LEFT JOIN engagement_reporting.item_assignment ia
@@ -230,7 +234,7 @@ activity AS (
        AND ia.snapshot_at = i.snapshot_at
        AND ia.principal_type = 'USER'
        AND ia.snapshot_run_id = i.snapshot_run_id
-      WHERE i.process_id = '${SOLAR_PROCESS_ID}'
+      WHERE i.process_id = '${PM_PROCESS_ID}'
         AND i.process_status = 'Completed'
         AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
       ORDER BY i.instance_id, ia.principal_id NULLS LAST
@@ -244,8 +248,8 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     COALESCE(NULLIF(trim(u.user_name), ''), a.user_id) AS user_name,
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
-    a.open_count,
-    a.closed_count
+    a.pending_count,
+    a.completed_count
   FROM activity a
   LEFT JOIN LATERAL (
     SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
@@ -256,33 +260,39 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
       ${REPORT_BEST_USER_ORDER_SQL}
     LIMIT 1
   ) u ON true
-  WHERE (a.open_count > 0 OR a.closed_count > 0)
-  ORDER BY a.open_count DESC, a.closed_count DESC
+  WHERE (a.pending_count > 0 OR a.completed_count > 0)
+  ORDER BY a.pending_count DESC, a.completed_count DESC
 ) t;
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
-[[ -n "${SOLAR_SUMMARY_JSON}" ]] || stop "Failed to retrieve Solar summary."
-[[ -n "${SOLAR_USERS_JSON}" ]] || stop "Failed to retrieve Solar user breakdown."
+[[ -n "${PM_SUMMARY_JSON}" ]] || stop "Failed to retrieve process summary."
+[[ -n "${PM_USERS_JSON}" ]] || stop "Failed to retrieve process user breakdown."
 
-log "Rendering Solar HTML report"
+log "Rendering process HTML report (${REPORT_SLUG})"
 
-SOLAR_ROWS_HTML="$(jq -r '
-  if length == 0 then
-    "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"4\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No users with open or closed requests in this snapshot.</td></tr>"
+PM_ROWS_HTML="$(jq -r '
+  def is_kissflow_id:
+    type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
+  [ .[]
+    | select((.user_name // "") | tostring | length > 0)
+    | select((.user_name | is_kissflow_id | not))
+  ] as $rows
+  | if ($rows | length) == 0 then
+    "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"4\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No users with pending or completed items in this snapshot.</td></tr>"
   else
-    to_entries | map(
+    $rows | to_entries | map(
       "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
-      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
-      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
+      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
       "</tr>"
     ) | join("")
   end
-' <<< "${SOLAR_USERS_JSON}")"
+' <<< "${PM_USERS_JSON}")"
 
 TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
-SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {
       total: ($rows | length),
@@ -290,75 +300,82 @@ SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
         [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
       )
     }
-' <<< "${SOLAR_USERS_JSON}")"
-SOLAR_TOTAL="$(jq -r '.total_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_OPEN="$(jq -r '.open_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_CLOSED="$(jq -r '.closed_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_TOTAL_USERS="$(jq -r '.total' <<< "${SOLAR_MIS_COUNTS}")"
-SOLAR_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SOLAR_MIS_COUNTS}")"
-SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
-  (.total // 0) as $total
-  | (.signed_in_today // 0) as $today
-  | (if $total <= 0 then 0 else (($today * 100 / $total) | floor) end)
-  | tostring + "%"
-' <<< "${SOLAR_MIS_COUNTS}")"
+' <<< "${PM_USERS_JSON}")"
+PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
+PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
+PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
+PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
+PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
-log "Rendering Solar HTML from published template (PostgreSQL or seed fallback)"
+log "Rendering HTML from published template (PostgreSQL or seed fallback)"
 
 TEMPLATE_SRC="$(mktemp)"
 VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
-report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load Solar report template HTML."
+report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load report template HTML."
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
-  REPORT_TITLE="${SUBJECT:-Solar Reinvestment Request Report}"
+  REPORT_TITLE="${SUBJECT:-Scheduled Report}"
 fi
+REPORT_BODY="${REPORT_BODY:-Live Kissflow process data for this application.}"
 
 jq -n \
   --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
-  --arg TotalRequests "${SOLAR_TOTAL}" \
-  --arg OpenRequests "${SOLAR_OPEN}" \
-  --arg ClosedRequests "${SOLAR_CLOSED}" \
-  --arg OpenedToday "${SOLAR_OPENED_TODAY}" \
-  --arg ClosedToday "${SOLAR_CLOSED_TODAY}" \
-  --arg TotalUsers "${SOLAR_TOTAL_USERS}" \
-  --arg SignedInToday "${SOLAR_SIGNED_IN_TODAY}" \
-  --arg UserTableHtml "${SOLAR_ROWS_HTML}" \
-  --arg ReportBody "Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status." \
+  --arg TotalTasks "${PM_TOTAL}" \
+  --arg PendingTasks "${PM_PENDING}" \
+  --arg CompletedTasks "${PM_COMPLETED}" \
+  --arg OpenedToday "${PM_OPENED_TODAY}" \
+  --arg ClosedToday "${PM_CLOSED_TODAY}" \
+  --arg TotalUsers "${PM_TOTAL_USERS}" \
+  --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
+  --arg UserTableHtml "${PM_ROWS_HTML}" \
+  --arg ReportBody "${REPORT_BODY}" \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
-    TotalRequests: $TotalRequests,
-    OpenRequests: $OpenRequests,
-    ClosedRequests: $ClosedRequests,
+    TotalTasks: $TotalTasks,
+    PendingTasks: $PendingTasks,
+    CompletedTasks: $CompletedTasks,
+    TotalClaims: $TotalTasks,
+    PendingClaims: $PendingTasks,
+    ClosedClaims: $CompletedTasks,
+    TotalLeads: $TotalTasks,
+    OpenLeads: $PendingTasks,
+    ClosedLeads: $CompletedTasks,
+    TotalRequests: $TotalTasks,
+    PendingRequests: $PendingTasks,
+    CompletedRequests: $CompletedTasks,
+    OpenRequests: $PendingTasks,
+    ClosedRequests: $CompletedTasks,
     OpenedToday: $OpenedToday,
     ClosedToday: $ClosedToday,
     TotalUsers: $TotalUsers,
     SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
+    LeadTableHtml: $UserTableHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 
 report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
-  || stop "Failed to render Solar report template."
+  || stop "Failed to render process report template."
 
 cp "${OUTPUT_FILE}" "${LATEST_FILE}"
 
 jq -n \
   --arg generated_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
   --arg output_file "${OUTPUT_FILE}" \
-  --argjson summary "${SOLAR_SUMMARY_JSON}" \
-  --argjson user_count "$(jq 'length' <<< "${SOLAR_USERS_JSON}")" '
+  --argjson summary "${PM_SUMMARY_JSON}" \
+  --argjson user_count "$(jq 'length' <<< "${PM_USERS_JSON}")" '
 {
-  action: "RENDER_SOLAR_HTML_REPORT",
+  action: "RENDER_PROCESS_HTML_REPORT",
   generated_at: $generated_at,
   output_file: $output_file,
   mutation_performed: false,
@@ -367,7 +384,7 @@ jq -n \
 }
 ' > "${AUDIT_FILE}"
 
-log "Solar report rendered successfully"
+log "${REPORT_SLUG} report rendered successfully"
 printf '\nOutput file:\n%s\n' "${OUTPUT_FILE}"
 printf '\nLatest (stable path):\n%s\n' "${LATEST_FILE}"
 printf '\nAudit record:\n%s\n' "${AUDIT_FILE}"

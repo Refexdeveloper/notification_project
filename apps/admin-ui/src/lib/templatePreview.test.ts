@@ -61,10 +61,35 @@ describe('templatePreview', () => {
     expect(detectTemplateAppKind({ kissflowAppId: 'Project_Management_Tracker_A00' })).toBe('pm');
     expect(detectTemplateAppKind({ kissflowAppId: 'IT_Service_Management_A00' })).toBe('itsm');
     expect(detectTemplateAppKind({ kissflowAppId: 'Lead_Trcaker_A00' })).toBe('lead');
+    expect(detectTemplateAppKind({ kissflowAppId: 'EMS_001_A00' })).toBe('expense');
+    expect(detectTemplateAppKind({ kissflowAppId: 'Expense_and_Travel_Management_A00' })).toBe('travel');
   });
 
   it('uses PM sample table for PM apps', () => {
     const samples = buildPreviewSampleData({ kissflowAppId: 'Project_Management_Tracker_A00' });
     expect(samples.UserTableHtml).toContain('Priya Sharma');
+    expect(samples.TotalUsers).toBe('2');
+    expect(samples.SignedInToday).toBe('1');
+  });
+
+  it('matches ITSM preview Total Users to the sample MIS table', () => {
+    const samples = buildPreviewSampleData({ kissflowAppId: 'IT_Service_Management_A00' });
+    const rows = (samples.UserTableHtml.match(/<tr\b/g) || []).length;
+    expect(samples.TotalUsers).toBe(String(rows));
+    expect(samples.SignedInToday).toBe('1');
+  });
+
+  it('builds a single-entity Venwind travel preview', () => {
+    const samples = buildPreviewSampleData({ kissflowAppId: 'Expense_and_Travel_Management_A00' });
+    expect(samples.EntityScope).toBe('Venwind travel requests only');
+    expect(samples.EntityName).toBe('Venwind');
+    expect(samples.EntitySectionsHtml).toBe('');
+    expect(samples.UserTableSectionHtml).toContain('Users with pending travel requests');
+    expect(samples.UserTableSectionHtml).toContain('Pending Duration');
+    expect(samples.UserTableSectionHtml).toContain('SLA Breached');
+    expect(samples.UserTableHtml).toContain('Priya Sharma');
+    expect(samples.UserTableHtml).toContain('8 days · Manager Approval');
+    expect(samples.PendingDetailsHtml).toBe('');
+    expect(samples.UsersWithPending).toBe('2');
   });
 });

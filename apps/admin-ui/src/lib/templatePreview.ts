@@ -11,7 +11,7 @@ export type PreviewContext = {
   applicationId?: string;
 };
 
-export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'generic';
+export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'expense' | 'travel' | 'generic';
 
 function sampleEngagementUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>2</b></td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`;
@@ -19,6 +19,29 @@ function sampleEngagementUserTableHtml(): string {
 
 function samplePmUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 09:40</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>3</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">12</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-28 16:05</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">8</td></tr>`;
+}
+
+function sampleTravelUserTableHtml(): string {
+  return (
+    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>1</b></td></tr>` +
+    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Finance Review</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`
+  );
+}
+
+function sampleTravelUserTableSectionHtml(usersHtml: string): string {
+  return (
+    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending travel requests</td></tr>' +
+    '<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:11.5px;">' +
+    '<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">User</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Pending Duration</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">SLA Breached</td>' +
+    '</tr>' +
+    usersHtml +
+    '</table></td></tr>'
+  );
 }
 
 function sampleItsmSourceBreakdownHtml(): string {
@@ -64,6 +87,10 @@ export function detectTemplateAppKind(context: PreviewContext = {}): TemplateApp
   }
   if (id.includes('lead')) return 'lead';
   if (id.includes('it_service') || id.includes('itsm')) return 'itsm';
+  if (id.includes('ems_001') || (id.includes('expense') && !id.includes('travel') && !id.includes('solar'))) {
+    return 'expense';
+  }
+  if (id.includes('expense_and_travel') || id.includes('venwind') || id.includes('travel')) return 'travel';
   return 'generic';
 }
 
@@ -75,6 +102,10 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
       return 'Solar Reinvestment Request Report';
     case 'lead':
       return 'Lead Tracker Report';
+    case 'expense':
+      return 'Expense Management Report';
+    case 'travel':
+      return 'Travel Management Daily Usage Report';
     case 'itsm':
       return 'Kissflow User Engagement Report';
     default:
@@ -95,11 +126,11 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     CompanyName: 'REFEX',
     WebsiteName: 'Modepro',
     GroupName: 'Sales Team Modepro',
-    TotalUsers: '326',
+    TotalUsers: '2',
     SignedInUsers: '153',
     SignInRate: '46%',
-    SignInRateToday: '2%',
-    SignedInToday: '7',
+    SignInRateToday: '50%',
+    SignedInToday: '1',
     OpenTickets: '5',
     ClosedTickets: '159',
     TotalTickets: '164',
@@ -125,12 +156,22 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     CompletedTasks: '198',
     TotalRequests: '48',
     AssignedRequests: '36',
-    SignInRateToday: '2%',
     OpenRequests: '12',
     ClosedRequests: '36',
     TotalLeads: '6',
     OpenLeads: '3',
     ClosedLeads: '4',
+    TotalClaims: '86',
+    PendingClaims: '14',
+    ClosedClaims: '72',
+    PendingRequests: '9',
+    CompletedRequests: '39',
+    RejectedRequests: '3',
+    EntityScope: 'Venwind travel requests only',
+    EntityName: 'Venwind',
+    UsersWithPending: '2',
+    OverallSummaryHtml: '',
+    EntitySectionsHtml: '',
     SalesPersons: '3',
     UserTableHtml: sampleEngagementUserTableHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
@@ -140,17 +181,45 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
 
   if (kind === 'pm') {
     base.UserTableHtml = samplePmUserTableHtml();
-    base.SignedInToday = '11';
-    base.TotalUsers = '86';
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody = 'Project Tracker covers all entities group-wide.';
   } else if (kind === 'solar') {
     base.UserTableHtml = samplePmUserTableHtml();
-    base.SignedInToday = '9';
-    base.TotalUsers = '48';
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody =
       'Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status.';
   } else if (kind === 'lead') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
     base.ReportBody = 'Users from Kissflow group with leads assigned to them (Open / Closed status from Lead Tracker).';
+  } else if (kind === 'expense') {
+    base.UserTableHtml = samplePmUserTableHtml();
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
+    base.ReportBody = 'Expense Management covers pending and closed claims from Kissflow.';
+  } else if (kind === 'travel') {
+    const travelUsers = sampleTravelUserTableHtml();
+    base.UserTableHtml = travelUsers;
+    base.UserTableSectionHtml = sampleTravelUserTableSectionHtml(travelUsers);
+    base.PendingDetailsHtml = '';
+    base.SlaAnalysisHtml = '';
+    base.SlaAnalysisHtml = '';
+    base.SignedInToday = '1';
+    base.TotalUsers = '2';
+    base.UsersWithPending = '2';
+    base.SlaBreachedTotal = '1';
+    base.SlaBreachedOpen = '1';
+    base.SlaBreachedClosed = '0';
+    base.RejectedRequests = '0';
+    base.EntityScope = 'Venwind travel requests only';
+    base.EntityName = 'Venwind';
+    base.OverallSummaryHtml = '';
+    base.EntitySectionsHtml = '';
+    base.ReportBody =
+      'Venwind only. Combines Advance Payment, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.';
   }
 
   return base;
@@ -267,8 +336,47 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalLeads',
     'OpenLeads',
     'ClosedLeads',
-    'SalesPersons',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
     'LeadTableHtml',
+    'ReportBody',
+  ],
+  expense: [
+    'ReportTitle',
+    'ReportDate',
+    'TotalClaims',
+    'PendingClaims',
+    'ClosedClaims',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
+    'ReportBody',
+  ],
+  travel: [
+    'ReportTitle',
+    'ReportDate',
+    'EntityScope',
+    'EntityName',
+    'TotalRequests',
+    'PendingRequests',
+    'CompletedRequests',
+    'UsersWithPending',
+    'SlaBreachedTotal',
+    'SlaBreachedOpen',
+    'SlaBreachedClosed',
+    'TotalUsers',
+    'SignedInToday',
+    'OpenedToday',
+    'ClosedToday',
+    'UserTableHtml',
+    'UserTableSectionHtml',
+    'PendingDetailsHtml',
+    'SlaAnalysisHtml',
     'ReportBody',
   ],
   generic: [

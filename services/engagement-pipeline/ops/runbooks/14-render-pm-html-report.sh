@@ -69,6 +69,7 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
+refresh_user_last_sign_ins_for_process "${PM_APP_ID}" "${PM_PROCESS_ID}"
 
 log "Querying Project Management task summary"
 
@@ -89,8 +90,9 @@ tasks AS (
   SELECT
     instance_id,
     process_status,
-    (source_payload->>'_created_at')::timestamptz AS created_at,
-    NULLIF(source_payload->>'_completed_at','')::timestamptz AS completed_at
+    current_step,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${PM_PROCESS_ID}'
@@ -153,18 +155,24 @@ SELECT json_build_object(
   ),
   'closed_today', (
     SELECT count(*) FROM tasks
-    WHERE process_status = 'Completed'
-      AND completed_at IS NOT NULL
+    WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'total_app_users', (SELECT count(*) FROM pm_app_users),
   'signed_in_today', (
     SELECT count(*)
-    FROM engagement_reporting.\"user\" u
-    JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
-    JOIN pm_app_users pu ON pu.user_id = u.user_id
-    WHERE u.last_sign_in IS NOT NULL
-      AND (u.last_sign_in AT TIME ZONE 'Asia/Kolkata')::date
+    FROM pm_app_users pu
+    LEFT JOIN LATERAL (
+      SELECT u0.last_sign_in, u0.source_payload
+      FROM engagement_reporting.\"user\" u0
+      WHERE u0.user_id = pu.user_id
+        AND u0.environment = 'production'
+      ORDER BY
+        ${REPORT_BEST_USER_ORDER_SQL}
+      LIMIT 1
+    ) u ON true
+    WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
+      AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
   )
 );
@@ -188,19 +196,14 @@ WITH latest AS (
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
   ORDER BY snapshot_at DESC
   LIMIT 1
-)
-SELECT COALESCE(json_agg(t), '[]'::json) FROM (
-  SELECT
-    u.user_name,
-    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
-    COALESCE(pending_t.pending_count, 0) AS pending_count,
-    COALESCE(completed_t.completed_count, 0) AS completed_count
-  FROM engagement_reporting.\"user\" u
-  JOIN latest_users lu ON u.snapshot_run_id = lu.snapshot_run_id
-  LEFT JOIN (
-    SELECT ia.principal_id AS user_id, count(*) AS pending_count
+),
+activity AS (
+  SELECT user_id, SUM(pending_count)::int AS pending_count, SUM(completed_count)::int AS completed_count
+  FROM (
+    SELECT ia.principal_id AS user_id, count(*)::int AS pending_count, 0 AS completed_count
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i
       ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
@@ -208,10 +211,11 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND ia.principal_id IS NOT NULL
+      AND trim(ia.principal_id) <> ''
     GROUP BY ia.principal_id
-  ) pending_t ON pending_t.user_id = u.user_id
-  LEFT JOIN (
-    SELECT assignee_id AS user_id, count(*) AS completed_count
+    UNION ALL
+    SELECT assignee_id AS user_id, 0 AS pending_count, count(*)::int AS completed_count
     FROM (
       SELECT DISTINCT ON (i.instance_id)
         i.instance_id,
@@ -233,9 +237,27 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     ) completed_items
     WHERE assignee_id IS NOT NULL
     GROUP BY assignee_id
-  ) completed_t ON completed_t.user_id = u.user_id
-  WHERE (COALESCE(pending_t.pending_count,0) > 0 OR COALESCE(completed_t.completed_count,0) > 0)
-  ORDER BY pending_count DESC, completed_count DESC
+  ) counts
+  GROUP BY user_id
+)
+SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+  SELECT
+    COALESCE(NULLIF(trim(u.user_name), ''), a.user_id) AS user_name,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
+    a.pending_count,
+    a.completed_count
+  FROM activity a
+  LEFT JOIN LATERAL (
+    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    FROM engagement_reporting.\"user\" u0
+    WHERE u0.user_id = a.user_id
+      AND u0.environment = 'production'
+    ORDER BY
+      ${REPORT_BEST_USER_ORDER_SQL}
+    LIMIT 1
+  ) u ON true
+  WHERE (a.pending_count > 0 OR a.completed_count > 0)
+  ORDER BY a.pending_count DESC, a.completed_count DESC
 ) t;
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -255,13 +277,23 @@ PM_ROWS_HTML="$(jq -r '
   ) | join("")
 ' <<< "${PM_USERS_JSON}")"
 
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+  [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+  | {
+      total: ($rows | length),
+      signed_in_today: (
+        [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+      )
+    }
+' <<< "${PM_USERS_JSON}")"
 PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_OPENED_TODAY="$(jq -r '.opened_today' <<< "${PM_SUMMARY_JSON}")"
-PM_CLOSED_TODAY="$(jq -r '.closed_today' <<< "${PM_SUMMARY_JSON}")"
-PM_TOTAL_USERS="$(jq -r '.total_app_users // 0' <<< "${PM_SUMMARY_JSON}")"
-PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
+PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
@@ -272,6 +304,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
+report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then

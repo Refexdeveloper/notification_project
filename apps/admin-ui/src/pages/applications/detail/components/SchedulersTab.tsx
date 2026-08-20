@@ -23,7 +23,14 @@ import BackendScheduleEditor from './BackendScheduleEditor';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import Modal from '@/components/ui/Modal';
-import { defaultEntityFilterForProcess, isExtrovisProcess, processLabel } from '@/lib/processLabels';
+import {
+  defaultEntityFilterForProcess,
+  formatEntityFilterLabel,
+  isExtrovisProcess,
+  isTravelApp,
+  preferredTravelProcessId,
+  processLabel,
+} from '@/lib/processLabels';
 
 interface SchedulersTabProps {
   app: KissflowApplication;
@@ -91,8 +98,9 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
     setCreateTemplates(templatesRes.templates);
     setCreateTemplateId(published?.id || '');
-    const preferredProcess =
-      (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || app.processIds?.[0] || '';
+    const preferredProcess = isTravelApp(app.appId, app.displayName || app.name)
+      ? preferredTravelProcessId(app.processIds)
+      : (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || app.processIds?.[0] || '';
     setCreateProcessId(preferredProcess);
     setCreateDialogOpen(true);
   };
@@ -336,8 +344,8 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
                     </span>
                   )}
                   {backendMode && sch.entityFilter && (
-                    <span className="chip-muted text-[10px]" title="Ticket entity scope">
-                      Entity: {sch.entityFilter === 'all' ? 'All (process)' : sch.entityFilter}
+                    <span className="chip-muted text-[10px]" title="Entity scope">
+                      Entity: {formatEntityFilterLabel(sch.entityFilter)}
                     </span>
                   )}
                   <span

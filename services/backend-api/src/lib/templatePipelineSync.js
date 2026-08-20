@@ -9,6 +9,8 @@ const APPLICATION_SEED_FILES = {
   Project_Management_Tracker_A00: 'db/seeds/pm-engagement-template.html',
   Solar_Site_Expense_Governance_Syst_A00: 'db/seeds/solar-reinvestment-template.html',
   Lead_Trcaker_A00: 'db/seeds/lead-tracker-report-template.html',
+  EMS_001_A00: 'db/seeds/expense-engagement-template.html',
+  Expense_and_Travel_Management_A00: 'db/seeds/travel-engagement-template.html',
 };
 
 function normalizeReportTemplateHtml(html) {

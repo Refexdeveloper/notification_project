@@ -78,9 +78,16 @@ deploy_service() {
     --service-account="${SERVICE_ACCOUNT}" \
     --memory=1Gi \
     --cpu=1 \
-    --timeout=900 \
+    --timeout=1800 \
     --min-instances=0 \
     --max-instances=3
+
+  log "Routing 100% live traffic to latest ${SERVICE} revision"
+  gcloud run services update-traffic "${SERVICE}" \
+    --project="${GCP_PROJECT}" \
+    --region="${GCP_REGION}" \
+    --to-latest \
+    --quiet
 
   local url
   url="$(gcloud run services describe "${SERVICE}" --project="${GCP_PROJECT}" --region="${GCP_REGION}" --format='value(status.url)')"

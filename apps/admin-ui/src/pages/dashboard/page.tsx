@@ -76,8 +76,10 @@ function aggregateMetrics(apps: DashboardApplication[]) {
       sign_in_today: acc.sign_in_today + app.metrics.sign_in_today,
       open_tickets: acc.open_tickets + app.metrics.open_tickets,
       closed_tickets: acc.closed_tickets + app.metrics.closed_tickets,
+      opened_today: acc.opened_today + (app.metrics.opened_today || 0),
+      closed_today: acc.closed_today + (app.metrics.closed_today || 0),
     }),
-    { total_users: 0, sign_in_today: 0, open_tickets: 0, closed_tickets: 0 },
+    { total_users: 0, sign_in_today: 0, open_tickets: 0, closed_tickets: 0, opened_today: 0, closed_today: 0 },
   );
 }
 
@@ -143,11 +145,13 @@ function KpiCard({
   label,
   value,
   suffix,
+  sub,
   styleIndex = 0,
 }: {
   label: string;
   value: number;
   suffix?: string;
+  sub?: string;
   styleIndex?: number;
 }) {
   const style = KPI_STYLES[styleIndex % KPI_STYLES.length];
@@ -165,6 +169,7 @@ function KpiCard({
             {value.toLocaleString()}
             {suffix}
           </p>
+          {sub ? <p className="mt-2 text-sm font-semibold text-white/95">{sub}</p> : null}
         </div>
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 ring-1 ring-white/30">
           <Icon className="h-5 w-5 text-white" />
@@ -309,7 +314,9 @@ function AppDetailCard({
     { metric: labels.sign_in_rate_overall, value: `${m.sign_in_rate_overall}%` },
     { metric: labels.sign_in_rate_today, value: `${m.sign_in_rate_today}%` },
     { metric: labels.open_tickets, value: m.open_tickets },
+    { metric: 'Opened today', value: m.opened_today ?? 0 },
     { metric: labels.closed_tickets, value: m.closed_tickets },
+    { metric: 'Closed today', value: m.closed_today ?? 0 },
   ];
 
   const subtitle = `${m.total_users} users · ${
@@ -528,10 +535,15 @@ export default function DashboardPage() {
 
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <KpiCard label="Total users" value={totals.total_users} styleIndex={0} />
+                  <KpiCard
+                    label="Total users"
+                    value={totals.total_users}
+                    sub={`${totals.sign_in_today} of ${totals.total_users} today`}
+                    styleIndex={0}
+                  />
                   <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={1} />
-                  <KpiCard label="Open items" value={totals.open_tickets} styleIndex={2} />
-                  <KpiCard label="Closed items" value={totals.closed_tickets} styleIndex={3} />
+                  <KpiCard label="Open items" value={totals.open_tickets} sub={`${totals.opened_today} today`} styleIndex={2} />
+                  <KpiCard label="Closed items" value={totals.closed_tickets} sub={`${totals.closed_today} today`} styleIndex={3} />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

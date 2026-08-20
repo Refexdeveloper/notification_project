@@ -30,10 +30,143 @@ report_template_repo_root() {
   printf '%s' "${override:-${REPO_ROOT:-/app}}"
 }
 
+# shellcheck source=/dev/null
+if [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/refresh-user-last-sign-in.sh" ]]; then
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/refresh-user-last-sign-in.sh"
+fi
+
 report_template_pg_conn() {
   printf 'host=%s port=%s dbname=%s user=%s' \
     "${PGHOST:-localhost}" "${PGPORT:-5432}" "${PGDATABASE:-engagement_reporting}" "${PGUSER:-postgres}"
 }
+
+# Last sign-in from the user row, then Kissflow payload fallbacks.
+# Expects table/alias `u` on engagement_reporting."user".
+REPORT_USER_LAST_SIGN_IN_SQL="COALESCE(
+  u.last_sign_in,
+  CASE
+    WHEN coalesce(u.source_payload #>> '{LastLoggedInAt,v}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{LastLoggedInAt,v}')::timestamptz
+    WHEN coalesce(u.source_payload #>> '{LastLoggedInAt,dv}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{LastLoggedInAt,dv}')::timestamptz
+    WHEN jsonb_typeof(u.source_payload->'LastLoggedInAt') = 'string'
+     AND coalesce(u.source_payload->>'LastLoggedInAt','') ~ '^[0-9]{4}-'
+      THEN (u.source_payload->>'LastLoggedInAt')::timestamptz
+    WHEN coalesce(u.source_payload #>> '{Last_Signin,v}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{Last_Signin,v}')::timestamptz
+    WHEN coalesce(u.source_payload #>> '{_last_access,v}', '') ~ '^[0-9]{4}-'
+      THEN (u.source_payload #>> '{_last_access,v}')::timestamptz
+    ELSE NULL
+  END
+)"
+REPORT_USER_LAST_SIGN_IN_IST_SQL="to_char((${REPORT_USER_LAST_SIGN_IN_SQL}) AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI')"
+# Prefer the user row with the newest last-sign-in across all snapshots (not the latest ingest).
+REPORT_BEST_USER_ORDER_SQL="COALESCE(
+  u0.last_sign_in,
+  CASE
+    WHEN coalesce(u0.source_payload #>> '{LastLoggedInAt,v}', '') ~ '^[0-9]{4}-'
+      THEN (u0.source_payload #>> '{LastLoggedInAt,v}')::timestamptz
+    WHEN coalesce(u0.source_payload #>> '{LastLoggedInAt,dv}', '') ~ '^[0-9]{4}-'
+      THEN (u0.source_payload #>> '{LastLoggedInAt,dv}')::timestamptz
+    WHEN jsonb_typeof(u0.source_payload->'LastLoggedInAt') = 'string'
+     AND coalesce(u0.source_payload->>'LastLoggedInAt','') ~ '^[0-9]{4}-'
+      THEN (u0.source_payload->>'LastLoggedInAt')::timestamptz
+    WHEN coalesce(u0.source_payload #>> '{Last_Signin,v}', '') ~ '^[0-9]{4}-'
+      THEN (u0.source_payload #>> '{Last_Signin,v}')::timestamptz
+    ELSE NULL
+  END
+) DESC NULLS LAST,
+  u0.snapshot_at DESC"
+REPORT_BEST_USER_FROM_SQL="(
+  SELECT DISTINCT ON (u0.user_id)
+    u0.user_id, u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+  FROM engagement_reporting.\"user\" u0
+  WHERE u0.environment = 'production'
+  ORDER BY u0.user_id, ${REPORT_BEST_USER_ORDER_SQL}
+) u"
+
+# Parse a Kissflow datetime jsonb value (ISO string, {v}/{dv}, naive IST).
+# Arg: jsonb expression such as source_payload->'_created_at'
+report_kf_ts_sql() {
+  local col="${1:?jsonb datetime expression required}"
+  cat <<EOF
+CASE
+  WHEN jsonb_typeof(${col}) = 'string'
+   AND (${col} #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+    CASE
+      WHEN (${col} #>> '{}') ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+        THEN (${col} #>> '{}')::timestamptz
+      ELSE (${col} #>> '{}')::timestamp AT TIME ZONE 'Asia/Kolkata'
+    END
+  WHEN jsonb_typeof(${col}) = 'object'
+   AND coalesce(${col}->>'v', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+    CASE
+      WHEN (${col}->>'v') ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+        THEN (${col}->>'v')::timestamptz
+      ELSE (${col}->>'v')::timestamp AT TIME ZONE 'Asia/Kolkata'
+    END
+  WHEN jsonb_typeof(${col}) = 'object'
+   AND coalesce(${col}->>'dv', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
+    CASE
+      WHEN (${col}->>'dv') ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$'
+        THEN (${col}->>'dv')::timestamptz
+      ELSE (${col}->>'dv')::timestamp AT TIME ZONE 'Asia/Kolkata'
+    END
+  ELSE NULL
+END
+EOF
+}
+
+# Item created-at. Kissflow system field is _created_at; some apps only set Requested_Date.
+report_item_created_at_sql() {
+  local src="${1:-source_payload}"
+  cat <<EOF
+COALESCE(
+  $(report_kf_ts_sql "${src}->'_created_at'"),
+  $(report_kf_ts_sql "${src}->'Requested_Date'"),
+  $(report_kf_ts_sql "${src}->'Requester_Date__Time'"),
+  $(report_kf_ts_sql "${src}->'_submitted_at'"),
+  $(report_kf_ts_sql "${src}->'CreatedAt'"),
+  $(report_kf_ts_sql "${src}->'Created_On'"),
+  $(report_kf_ts_sql "${src}->'Lead_Created_Date'")
+)
+EOF
+}
+
+# Item completed-at. Kissflow process list payloads omit _completed_at —
+# use _modified_at when the item is business-closed (Completed / IT Tech Reopen / Closed).
+# Arg1: source_payload expression. Arg2: table qualifier prefix (e.g. "i." or "").
+report_item_completed_at_sql() {
+  local src="${1:-source_payload}"
+  local q="${2:-}"
+  cat <<EOF
+COALESCE(
+  $(report_kf_ts_sql "${src}->'_completed_at'"),
+  $(report_kf_ts_sql "${src}->'_closed_at'"),
+  $(report_kf_ts_sql "${src}->'Completed_On'"),
+  $(report_kf_ts_sql "${src}->'Closed_On'"),
+  $(report_kf_ts_sql "${src}->'Completed_Date'"),
+  $(report_kf_ts_sql "${src}->'Closed_Date'"),
+  CASE
+    WHEN ${q}process_status IN ('Completed', 'Closed')
+      OR lower(coalesce(${q}process_status, '')) IN ('completed', 'closed', 'done')
+      OR (
+        ${q}process_status = 'InProgress'
+        AND lower(trim(coalesce(${q}current_step, ${src}->>'_current_step', ''))) LIKE '%it tech reopen%'
+      )
+      OR lower(trim(coalesce(${src}->>'Lead_Status', ${src}->>'Status', ''))) IN ('close', 'closed', 'completed', 'done')
+    THEN $(report_kf_ts_sql "${src}->'_modified_at'")
+    ELSE NULL
+  END
+)
+EOF
+}
+
+REPORT_ITEM_CREATED_AT_SQL="$(report_item_created_at_sql source_payload)"
+REPORT_ITEM_COMPLETED_AT_SQL="$(report_item_completed_at_sql source_payload '')"
+REPORT_ITEM_CREATED_AT_I_SQL="$(report_item_created_at_sql i.source_payload)"
+REPORT_ITEM_COMPLETED_AT_I_SQL="$(report_item_completed_at_sql i.source_payload 'i.')"
+REPORT_IST_TODAY_SQL="(now() AT TIME ZONE 'Asia/Kolkata')::date"
 
 report_template_seed_for_app() {
   case "${1:-}" in
@@ -48,6 +181,8 @@ report_template_seed_for_app() {
     Project_Management_Tracker_A00) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
     Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
+    EMS_001_A00) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
+    Expense_and_Travel_Management_A00) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
     *) return 1 ;;
   esac
 }
@@ -205,4 +340,30 @@ report_template_render() {
   TEMPLATE_VARS_JSON="${vars_file}" \
   TEMPLATE_HTML_OUT="${output_file}" \
   node "${script}"
+}
+
+# Make the Total Users KPI subtitle readable in email: "3 of 32 today".
+report_template_emphasize_users_kpi() {
+  local html_file="$1"
+  [[ -f "${html_file}" ]] || return 0
+  python3 - "${html_file}" <<'PY'
+import re
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+html = path.read_text(encoding="utf-8")
+html = re.sub(
+    r"\{\{\s*SignedInToday\s*\}\}\s+signed in today",
+    "{{SignedInToday}} of {{TotalUsers}} today",
+    html,
+    flags=re.IGNORECASE,
+)
+html = re.sub(
+    r'font-size:9(?:\.5)?px;\s*color:#3f8f63\s*!important;\s*margin-top:2px;">(\{\{\s*SignedInToday\s*\}\})',
+    r'font-size:11px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">\1',
+    html,
+    flags=re.IGNORECASE,
+)
+path.write_text(html, encoding="utf-8")
+PY
 }

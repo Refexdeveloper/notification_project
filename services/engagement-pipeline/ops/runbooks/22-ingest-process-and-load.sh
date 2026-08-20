@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
+# Generic Kissflow process ingest (Expense, Travel, and similar PM-style apps).
+# Required: APPLICATION_ID, PROCESS_ID
+# Optional: APPLICATION_NAME, PROCESS_NAME
 set -Eeuo pipefail
 
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
-DATA_DIR="${REPO_ROOT}/data/discovery"
+APPLICATION_ID="${APPLICATION_ID:?APPLICATION_ID is required}"
+PROCESS_ID="${PROCESS_ID:?PROCESS_ID is required}"
+APPLICATION_NAME="${APPLICATION_NAME:-Process Application}"
+PROCESS_NAME="${PROCESS_NAME:-Process}"
+DATA_DIR="${REPO_ROOT}/data/discovery/${APPLICATION_ID}"
 NORM_DIR="${DATA_DIR}/normalized"
 
 BASE_URL="https://refexgroup.kissflow.com"
-PROCESS_ID="${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}"
-APPLICATION_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}"
-APPLICATION_NAME="Solar Expense Hub"
-PROCESS_NAME="Reinvestment Request"
-ENVIRONMENT="production"
+ENVIRONMENT="${ENVIRONMENT:-production}"
 PAGE_SIZE=100
 MAX_PAGES=1000
 
@@ -31,7 +34,6 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
 
-ENVIRONMENT="${ENVIRONMENT:-production}"
 ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
 
 HEADERS=(
@@ -72,9 +74,9 @@ if [[ "${SKIP_FETCH:-false}" != "true" ]]; then
 
   WATERMARK_ISO="$(ingest_get_watermark_iso "${ITEMS_RESOURCE_KEY}")"
   if [[ -n "${WATERMARK_ISO}" && "${FULL_INGEST:-false}" != "true" ]]; then
-    log "Incremental mode: fetching Solar items modified since ${WATERMARK_ISO}"
+    log "Incremental mode: fetching ${APPLICATION_NAME} items modified since ${WATERMARK_ISO}"
   else
-    log "Full Solar Reinvestment Request ingest mode"
+    log "Full ingest mode for ${APPLICATION_NAME} (${PROCESS_ID})"
   fi
 
   log "Retrieving process items"
@@ -121,52 +123,45 @@ else
   log "Existing item details: ${DETAIL_ITEM_COUNT}"
 fi
 
-RUN_ID="solar-ingest-$(date -u +'%Y%m%dT%H%M%SZ')"
+RUN_ID="process-ingest-$(date -u +'%Y%m%dT%H%M%SZ')"
 GENERATED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 export SNAPSHOT_RUN_ID="${RUN_ID}"
 export APPLICATION_ID PROCESS_ID ENVIRONMENT
 
 log "Normalizing items"
-# Solar fields often arrive as Kissflow lookup objects / multi-select arrays.
-# Flatten to plain text before CSV staging (jq @csv rejects objects/arrays).
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" \
   --arg app_id "${APPLICATION_ID}" --arg app_name "${APPLICATION_NAME}" \
   --arg proc_id "${PROCESS_ID}" --arg proc_name "${PROCESS_NAME}" '
 def as_text:
   if . == null then ""
-  elif type == "string" or type == "number" or type == "boolean" then tostring
-  elif type == "array" then
-    [ .[] | as_text | select(length > 0) ] | unique | join(", ")
+  elif type == "string" then .
+  elif type == "number" or type == "boolean" then tostring
   elif type == "object" then
-    (.Name // .name // .label // .Label // .Title // .title
-      // .site_id_f // .site_id // .Site_ID // .Site_Id // .Selected_Site_ID
-      // .Id // .id // ._id // .value // .Value // empty) as $primary
-    | if $primary != null and ($primary | tostring | length) > 0 then ($primary | as_text)
-      else tojson end
+    (.Name // .name // .label // .Label // .Title // .title // .Id // .id // ._id // .value // .Value // empty) as $primary
+    | if $primary != null and ($primary | tostring | length) > 0 then ($primary | tostring) else tojson end
   else tostring end;
-
 {
   snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
   application_id: $app_id, application_name: $app_name,
   process_id: $proc_id, process_name: $proc_name,
   instance_id: (.__requested_instance_id // .Instance_ID // ._id // null),
   request_number: (._request_number // null),
-  request_id: ((.Claim_No // .Name // null) | as_text | if . == "" then null else . end),
+  request_id: ((.Claim_No // .Name // .Task_ID_Formulated // .Request_ID // null) | as_text | if . == "" then null else . end),
   process_status: (
-    (._status // .Status // "") as $st
+    (._status // .Status // .Task_Status // "") as $st
     | if ($st | ascii_downcase) | test("complete|closed|done|paid|settled|approved") then "Completed"
       elif ($st | ascii_downcase) | test("withdraw|reject|cancel") then "Withdrawn"
       elif ($st == "InProgress" or $st == "Open" or (($st | ascii_downcase) | test("progress|pending|submit|open|new"))) then "InProgress"
       elif ($st == "Completed") then "Completed"
       else (if $st == "" then "InProgress" else $st end) end
   ),
-  current_step: ((.Service_Category // .Expense_Type // null) | as_text | if . == "" then null else . end),
+  current_step: ((.Service_Category // .Expense_Type // .Function_Category // .Travel_Type // null) | as_text | if . == "" then null else . end),
   stage: (._stage // null | if . == null then null else tostring end),
-  criticality: ((.Expense_Type // null) | as_text | if . == "" then null else . end),
-  entity: ((.Unit // .Selected_Site_ID // .Side_ID // .Site_ID // null) | as_text | if . == "" then null else . end),
+  criticality: ((.Expense_Type // .Task_Priority // .Priority // null) | as_text | if . == "" then null else . end),
+  entity: ((.Entity // .Company // .Unit // .Selected_Site_ID // null) | as_text | if . == "" then null else . end),
   requester_email: ((.Requested_Email // .Created_by_flat_field_email // null) | as_text | if . == "" then null else . end),
   source_payload: .
-}' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/solar-items.jsonl"
+}' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/process-items.jsonl"
 
 log "Building assignment bridge"
 jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" \
@@ -175,21 +170,97 @@ jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONM
 | (
     (._current_assigned_to // [])
     + (if .Assigned_To then [.Assigned_To] else [] end)
-    + (if .Site_Incharge then [.Site_Incharge] else [] end)
-    + (if .Site_Incharge_1 then [.Site_Incharge_1] else [] end)
+    + (if .Requester then [.Requester] else [] end)
+    + (if .Requested_By then [.Requested_By] else [] end)
+    + (if .Created_By then [.Created_By] else [] end)
+    + (if .Approver then [.Approver] else [] end)
   )
 | map(select(type == "object" and ._id != null))
 | unique_by(._id)
 | .[]
+| (
+    (.Kind // "User") as $kind
+    | ($kind | ascii_downcase) as $k
+    | if ($k == "user") then "USER"
+      elif ($k | test("role")) then "APP_ROLE"
+      else empty
+      end
+  ) as $ptype
+| select($ptype != null and $ptype != "")
 | { snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
     application_id: $app_id, process_id: $proc_id, instance_id: $iid,
     principal_id: ._id, principal_name: .Name,
-    principal_kind: (if (.Kind // "User") | ascii_downcase == "user" then "USER" elif (.Kind // "") | ascii_downcase | test("role") then "APP_ROLE" else empty end),
-    assignment_source_field: (if .Kind=="User" then "Site_Incharge" else "_current_assigned_to" end) }
-' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/solar-assignments.jsonl"
+    principal_kind: $ptype,
+    assignment_source_field: (if $ptype == "USER" then "Assigned_To" else "_current_assigned_to" end) }
+' "${DATA_DIR}/item-details.jsonl" > "${NORM_DIR}/process-assignments.jsonl"
 
-NORM_ITEM_COUNT="$(wc -l < "${NORM_DIR}/solar-items.jsonl" | tr -d ' ')"
-ASSIGN_COUNT="$(wc -l < "${NORM_DIR}/solar-assignments.jsonl" | tr -d ' ')"
+NORM_ITEM_COUNT="$(wc -l < "${NORM_DIR}/process-items.jsonl" | tr -d ' ')"
+ASSIGN_COUNT="$(wc -l < "${NORM_DIR}/process-assignments.jsonl" | tr -d ' ')"
+log "Normalized items=${NORM_ITEM_COUNT} assignments=${ASSIGN_COUNT} (USER/APP_ROLE only)"
+
+log "Refreshing last-sign-in for assigned users"
+mkdir -p "${DATA_DIR}/user-details"
+: > "${NORM_DIR}/process-users.jsonl"
+: > "${NORM_DIR}/process-user-ids.txt"
+if [[ "${ASSIGN_COUNT}" -gt 0 ]]; then
+  jq -r 'select(.principal_kind == "USER") | .principal_id' "${NORM_DIR}/process-assignments.jsonl" \
+    | sort -u > "${NORM_DIR}/process-user-ids.txt"
+  role_in="$(python3 - "${NORM_DIR}/process-assignments.jsonl" <<'PY'
+import json, sys
+ids = set()
+with open(sys.argv[1], encoding="utf-8") as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        if row.get("principal_kind") == "APP_ROLE" and row.get("principal_id"):
+            ids.add(str(row["principal_id"]).replace("'", "''"))
+print(",".join("'" + i + "'" for i in sorted(ids)))
+PY
+)"
+  if [[ -n "${role_in}" ]]; then
+    echo "
+\pset tuples_only on
+\pset format unaligned
+SELECT DISTINCT user_id
+FROM engagement_reporting.principal_user
+WHERE principal_type = 'APP_ROLE'
+  AND valid_to IS NULL
+  AND user_id IS NOT NULL
+  AND principal_id IN (${role_in});
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE:-engagement_reporting} user=${PGUSER:-postgres}" \
+      | tr -d '\r' | grep -v '^$' >> "${NORM_DIR}/process-user-ids.txt" || true
+  fi
+  sort -u "${NORM_DIR}/process-user-ids.txt" -o "${NORM_DIR}/process-user-ids.txt"
+  while IFS= read -r uid; do
+        [[ -z "${uid}" ]] && continue
+        safe_id="$(printf '%s' "${uid}" | tr -cs 'A-Za-z0-9._-' '_')"
+        detail_file="${DATA_DIR}/user-details/${safe_id}.json"
+        if [[ -n "${ACCOUNT_ID}" ]] && api_get "${BASE_URL}/user/2/${ACCOUNT_ID}/${uid}" "${detail_file}"; then
+          jq -c --arg run_id "${RUN_ID}" --arg gen "${GENERATED_AT}" --arg env "${ENVIRONMENT}" --arg rid "${uid}" '
+            {
+              snapshot_run_id: $run_id, snapshot_at: $gen, environment: $env,
+              user_id: (.__requested_user_id // ._id // $rid),
+              user_name: (.Name // null), email: (.Email // null),
+              user_type: (._user_type // null), active_status: (.Status // null),
+              last_sign_in: (
+                (if (.LastLoggedInAt | type) == "object" then (.LastLoggedInAt.v // .LastLoggedInAt.dv // .LastLoggedInAt.Date // null)
+                 elif (.LastLoggedInAt | type) == "string" then .LastLoggedInAt else null end)
+                // (if (.Last_Signin | type) == "object" then (.Last_Signin.v // .Last_Signin.dv // null)
+                    elif (.Last_Signin | type) == "string" then .Last_Signin else null end)
+                // (if (.LastSignIn | type) == "object" then (.LastSignIn.v // .LastSignIn.dv // null)
+                    elif (.LastSignIn | type) == "string" then .LastSignIn else null end)
+              ),
+              ever_logged_in: (.LastLoggedInAt != null or .Last_Signin != null or .LastSignIn != null or .Ever_Logged_In == true),
+              source_payload: .
+            }
+          ' "${detail_file}" >> "${NORM_DIR}/process-users.jsonl"
+        fi
+  done < "${NORM_DIR}/process-user-ids.txt"
+fi
+USER_REFRESH_COUNT="$(wc -l < "${NORM_DIR}/process-users.jsonl" | tr -d ' ')"
+log "User last-sign-in rows refreshed: ${USER_REFRESH_COUNT}"
 
 log "Loading into PostgreSQL"
 
@@ -198,12 +269,13 @@ PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
 PG_CONN="host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}"
 
-run_sql() { psql "${PG_CONN}"; }
+run_sql() { psql "${PG_CONN}" -v ON_ERROR_STOP=1; }
 
 echo "
-CREATE TABLE IF NOT EXISTS engagement_reporting.stg_solar_items (instance_id text, snapshot_at text, process_status text, current_step text, stage text, request_number text, request_id text, criticality text, entity text, requester_email text, source_payload text);
-CREATE TABLE IF NOT EXISTS engagement_reporting.stg_solar_assignments (instance_id text, snapshot_at text, principal_id text, principal_kind text, assignment_source text);
-TRUNCATE engagement_reporting.stg_solar_items, engagement_reporting.stg_solar_assignments;
+CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_items (instance_id text, snapshot_at text, process_status text, current_step text, stage text, request_number text, request_id text, criticality text, entity text, requester_email text, source_payload text);
+CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_assignments (instance_id text, snapshot_at text, principal_id text, principal_kind text, assignment_source text);
+CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_users (user_id text, snapshot_at text, user_name text, email text, user_type text, active_status text, last_sign_in text, ever_logged_in text, source_payload text);
+TRUNCATE engagement_reporting.stg_process_items, engagement_reporting.stg_process_assignments, engagement_reporting.stg_process_users;
 " | run_sql
 
 if command -v cygpath >/dev/null 2>&1; then
@@ -212,11 +284,19 @@ else
   COPY_NORM_DIR="${NORM_DIR}"
 fi
 
-jq -r '[.instance_id, .snapshot_at, .process_status, (.current_step // "" | tostring), (.stage // "" | tostring), (.request_number // "" | tostring), (.request_id // "" | tostring), (.criticality // "" | tostring), (.entity // "" | tostring), (.requester_email // "" | tostring), (.source_payload | tojson)] | @csv' "${NORM_DIR}/solar-items.jsonl" > "${NORM_DIR}/solar-items-staging.csv"
-jq -r '[.instance_id, .snapshot_at, .principal_id, .principal_kind, .assignment_source_field] | @csv' "${NORM_DIR}/solar-assignments.jsonl" > "${NORM_DIR}/solar-assignments-staging.csv"
+jq -r '[.instance_id, .snapshot_at, .process_status, (.current_step // "" | tostring), (.stage // "" | tostring), (.request_number // "" | tostring), (.request_id // "" | tostring), (.criticality // "" | tostring), (.entity // "" | tostring), (.requester_email // "" | tostring), (.source_payload | tojson)] | @csv' "${NORM_DIR}/process-items.jsonl" > "${NORM_DIR}/process-items-staging.csv"
+jq -r '[.instance_id, .snapshot_at, .principal_id, .principal_kind, .assignment_source_field] | @csv' "${NORM_DIR}/process-assignments.jsonl" > "${NORM_DIR}/process-assignments-staging.csv"
+if [[ -s "${NORM_DIR}/process-users.jsonl" ]]; then
+  jq -r '[.user_id, .snapshot_at, (.user_name // ""), (.email // ""), (.user_type // ""), (.active_status // ""), (.last_sign_in // ""), (.ever_logged_in | tostring), (.source_payload | tojson)] | @csv' "${NORM_DIR}/process-users.jsonl" > "${NORM_DIR}/process-users-staging.csv"
+else
+  : > "${NORM_DIR}/process-users-staging.csv"
+fi
 
-echo "\copy engagement_reporting.stg_solar_items FROM '${COPY_NORM_DIR}/solar-items-staging.csv' WITH (FORMAT csv)" | run_sql
-echo "\copy engagement_reporting.stg_solar_assignments FROM '${COPY_NORM_DIR}/solar-assignments-staging.csv' WITH (FORMAT csv)" | run_sql
+echo "\copy engagement_reporting.stg_process_items FROM '${COPY_NORM_DIR}/process-items-staging.csv' WITH (FORMAT csv)" | run_sql
+echo "\copy engagement_reporting.stg_process_assignments FROM '${COPY_NORM_DIR}/process-assignments-staging.csv' WITH (FORMAT csv)" | run_sql
+if [[ -s "${NORM_DIR}/process-users-staging.csv" ]]; then
+  echo "\copy engagement_reporting.stg_process_users FROM '${COPY_NORM_DIR}/process-users-staging.csv' WITH (FORMAT csv)" | run_sql
+fi
 
 PREV_SNAPSHOT_RUN_ID=""
 if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
@@ -241,7 +321,7 @@ INSERT INTO engagement_reporting.process (environment, process_id, application_i
 VALUES ('${ENVIRONMENT}', '${PROCESS_ID}', '${APPLICATION_ID}', '${PROCESS_NAME}', now(), now(), true, '{}')
 ON CONFLICT (environment, process_id) DO UPDATE SET last_seen_at = now();
 
-INSERT INTO engagement_reporting.stg_solar_assignments (instance_id, snapshot_at, principal_id, principal_kind, assignment_source)
+INSERT INTO engagement_reporting.stg_process_assignments (instance_id, snapshot_at, principal_id, principal_kind, assignment_source)
 SELECT
   prev.instance_id,
   '${GENERATED_AT}',
@@ -253,16 +333,16 @@ WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
   AND prev.process_id = '${PROCESS_ID}'
   AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
   AND NOT EXISTS (
-    SELECT 1 FROM engagement_reporting.stg_solar_items s WHERE s.instance_id = prev.instance_id
+    SELECT 1 FROM engagement_reporting.stg_process_items s WHERE s.instance_id = prev.instance_id
   )
   AND NOT EXISTS (
-    SELECT 1 FROM engagement_reporting.stg_solar_assignments s
+    SELECT 1 FROM engagement_reporting.stg_process_assignments s
     WHERE s.instance_id = prev.instance_id
       AND s.principal_id = prev.principal_id
       AND s.principal_kind = prev.principal_type
   );
 
-INSERT INTO engagement_reporting.stg_solar_items (
+INSERT INTO engagement_reporting.stg_process_items (
   instance_id, snapshot_at, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload
 )
 SELECT
@@ -282,28 +362,57 @@ WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
   AND prev.process_id = '${PROCESS_ID}'
   AND '${PREV_SNAPSHOT_RUN_ID}' <> ''
   AND NOT EXISTS (
-    SELECT 1 FROM engagement_reporting.stg_solar_items s WHERE s.instance_id = prev.instance_id
+    SELECT 1 FROM engagement_reporting.stg_process_items s WHERE s.instance_id = prev.instance_id
   );
 
 INSERT INTO engagement_reporting.item (environment, process_id, instance_id, snapshot_at, snapshot_run_id, process_status, current_step, stage, request_number, request_id, criticality, entity, requester_email, source_payload, row_hash)
-SELECT '${ENVIRONMENT}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', process_status, NULLIF(current_step,''), NULLIF(stage,''), NULLIF(request_number,'')::integer, NULLIF(request_id,''), NULLIF(criticality,''), NULLIF(entity,''), NULLIF(requester_email,''), source_payload::jsonb, md5(source_payload)
-FROM engagement_reporting.stg_solar_items
+SELECT '${ENVIRONMENT}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', process_status, NULLIF(current_step,''), NULLIF(stage,''),
+  CASE WHEN NULLIF(request_number,'') ~ '^[0-9]+$' THEN request_number::integer ELSE NULL END,
+  NULLIF(request_id,''), NULLIF(criticality,''), NULLIF(entity,''), NULLIF(requester_email,''), source_payload::jsonb, md5(source_payload)
+FROM engagement_reporting.stg_process_items
 ON CONFLICT (environment, process_id, instance_id, snapshot_at) DO NOTHING;
+
+INSERT INTO engagement_reporting.\"user\" (environment, user_id, snapshot_at, snapshot_run_id, user_name, email, user_type, active_status, last_sign_in, ever_logged_in, source_payload, row_hash)
+SELECT '${ENVIRONMENT}', s.user_id, s.snapshot_at::timestamptz, '${RUN_ID}',
+  COALESCE(NULLIF(s.user_name,''), prev.user_name),
+  COALESCE(NULLIF(s.email,''), prev.email),
+  NULLIF(s.user_type,''), NULLIF(s.active_status,''),
+  COALESCE(NULLIF(s.last_sign_in,'')::timestamptz, prev.last_sign_in),
+  COALESCE(NULLIF(s.ever_logged_in,'')::boolean, prev.ever_logged_in, false),
+  CASE
+    WHEN NULLIF(s.last_sign_in,'') IS NOT NULL THEN s.source_payload::jsonb
+    WHEN prev.source_payload ? 'LastLoggedInAt' THEN
+      s.source_payload::jsonb || jsonb_build_object('LastLoggedInAt', prev.source_payload->'LastLoggedInAt')
+    ELSE s.source_payload::jsonb
+  END,
+  md5(COALESCE(s.source_payload, '{}'))
+FROM engagement_reporting.stg_process_users s
+LEFT JOIN LATERAL (
+  SELECT u.user_name, u.email, u.last_sign_in, u.ever_logged_in, u.source_payload
+  FROM engagement_reporting.\"user\" u
+  WHERE u.environment = '${ENVIRONMENT}' AND u.user_id = s.user_id
+  ORDER BY u.last_sign_in DESC NULLS LAST, u.snapshot_at DESC
+  LIMIT 1
+) prev ON true
+WHERE NULLIF(s.user_id,'') IS NOT NULL
+ON CONFLICT (environment, user_id, snapshot_at) DO NOTHING;
 
 INSERT INTO engagement_reporting.principal (environment, application_id, principal_id, principal_type, principal_name, first_seen_at, last_seen_at, is_current, source_payload)
 SELECT DISTINCT '${ENVIRONMENT}', '${APPLICATION_ID}', principal_id, principal_kind, principal_id, now(), now(), true, '{}'::jsonb
-FROM engagement_reporting.stg_solar_assignments
+FROM engagement_reporting.stg_process_assignments
+WHERE principal_kind IN ('USER', 'APP_ROLE')
 ON CONFLICT (environment, application_id, principal_id, principal_type) DO UPDATE SET last_seen_at = now();
 
 INSERT INTO engagement_reporting.item_assignment (environment, application_id, process_id, instance_id, snapshot_at, snapshot_run_id, principal_id, principal_type, assignment_source, source_payload)
 SELECT '${ENVIRONMENT}', '${APPLICATION_ID}', '${PROCESS_ID}', instance_id, snapshot_at::timestamptz, '${RUN_ID}', principal_id, principal_kind, assignment_source, '{}'::jsonb
-FROM engagement_reporting.stg_solar_assignments
+FROM engagement_reporting.stg_process_assignments
+WHERE principal_kind IN ('USER', 'APP_ROLE')
 ON CONFLICT (environment, process_id, instance_id, snapshot_at, principal_id, principal_type) DO NOTHING;
 
 UPDATE engagement_reporting.snapshot_run SET status = 'COMPLETED', load_completed_at = now(), updated_at = now() WHERE snapshot_run_id = '${RUN_ID}';
 
 COMMIT;
-" | run_sql
+" | run_sql || stop "PostgreSQL load failed for ${APPLICATION_ID}/${PROCESS_ID} — snapshot not committed, watermark not updated."
 
 ingest_set_watermark_now "${ITEMS_RESOURCE_KEY:-$(ingest_resource_key items)}"
 
