@@ -43,14 +43,7 @@ USER_SUMMARY_JSON="$(echo "
 WITH latest_users AS (
   SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER BY snapshot_at DESC LIMIT 1
 ),
-latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${ITSM_APP_ID}'
-    AND process_id = '${ITSM_PROCESS_ID}'
-  ORDER BY created_at DESC
-  LIMIT 1
-),
+$(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 process_roles AS (
   SELECT DISTINCT ia.principal_id AS role_id
   FROM engagement_reporting.item_assignment ia
@@ -60,7 +53,7 @@ process_roles AS (
    AND i.snapshot_run_id = ia.snapshot_run_id
   WHERE ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
     AND ia.principal_type = 'APP_ROLE'
-    AND i.entity = 'Refex'
+    AND (${ENTITY_SCOPE_SQL:-lower(trim(coalesce(i.entity,''))) = 'refex'})
 ),
 app_members AS (
   SELECT DISTINCT pu.user_id
@@ -116,7 +109,7 @@ log "Querying ITSM ticket summary"
 ITSM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${ITSM_APP_ID}' AND process_id = '${ITSM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 sla AS (
   SELECT instance_id, process_status,
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
@@ -134,7 +127,7 @@ sla AS (
       AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
     ) AS is_open
   FROM engagement_reporting.item i, latest l
-  WHERE i.snapshot_run_id = l.snapshot_run_id AND i.entity = 'Refex'
+  WHERE i.snapshot_run_id = l.snapshot_run_id AND (${ENTITY_SCOPE_SQL:-lower(trim(coalesce(i.entity,''))) = 'refex'})
 )
 SELECT json_build_object(
   'total_tickets', (SELECT count(*) FROM sla),
@@ -152,7 +145,7 @@ log "Querying ITSM per-user breakdown"
 ITSM_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${ITSM_APP_ID}' AND process_id = '${ITSM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER BY snapshot_at DESC LIMIT 1)
 SELECT json_agg(t) FROM (
   SELECT
@@ -166,7 +159,7 @@ SELECT json_agg(t) FROM (
     FROM engagement_reporting.item_assignment ia
     JOIN engagement_reporting.item i ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
     WHERE ia.principal_type = 'USER'
-      AND i.entity = 'Refex'
+      AND (${ENTITY_SCOPE_SQL:-lower(trim(coalesce(i.entity,''))) = 'refex'})
       AND i.process_status = 'InProgress'
       AND lower(trim(coalesce(i.current_step, i.source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
@@ -175,7 +168,10 @@ SELECT json_agg(t) FROM (
   LEFT JOIN (
     SELECT (source_payload->'_created_by'->>'_id') AS user_id, count(*) AS closed_count
     FROM engagement_reporting.item
-    WHERE entity = 'Refex'
+    WHERE (
+        lower(trim(coalesce(entity, ''))) = 'refex'
+        OR lower(trim(coalesce(source_payload->>'Entity', source_payload->'Entity'->>'Name', ''))) = 'refex'
+      )
       AND snapshot_run_id = (SELECT snapshot_run_id FROM latest)
       AND (
         process_status = 'Completed'
@@ -196,7 +192,7 @@ log "Querying Project Management task summary"
 PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${PM_APP_ID}' AND process_id = '${PM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 tasks AS (SELECT instance_id, process_status, current_step, (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at, (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at FROM engagement_reporting.item i, latest l WHERE i.snapshot_run_id = l.snapshot_run_id AND i.process_id = '${PM_PROCESS_ID}')
 SELECT json_build_object(
   'total_tasks', (SELECT count(*) FROM tasks),
@@ -213,7 +209,7 @@ log "Querying Project Management per-user breakdown"
 PM_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (SELECT snapshot_run_id FROM engagement_reporting.snapshot_run WHERE application_id = '${PM_APP_ID}' AND process_id = '${PM_PROCESS_ID}' ORDER BY created_at DESC LIMIT 1),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 latest_users AS (SELECT snapshot_run_id FROM engagement_reporting.\"user\" ORDER BY snapshot_at DESC LIMIT 1)
 SELECT json_agg(t) FROM (
   SELECT
@@ -298,22 +294,28 @@ PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
 
-ITSM_ROWS_HTML="$(jq -r '
+ITSM_ROWS_HTML="$(jq -r --arg today "$(TZ='Asia/Kolkata' date +'%Y-%m-%d')" '
+  def signed_today: ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg: if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style: if signed_today then "padding:11px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   to_entries | map(
-    "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+    "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+    "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
     "</tr>"
   ) | join("")
 ' <<< "${ITSM_USERS_JSON}")"
 
-PM_ROWS_HTML="$(jq -r '
+PM_ROWS_HTML="$(jq -r --arg today "$(TZ='Asia/Kolkata' date +'%Y-%m-%d')" '
+  def signed_today: ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg: if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style: if signed_today then "padding:11px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   to_entries | map(
-    "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+    "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+    "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
     "<td style=\"padding:11px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
     "</tr>"

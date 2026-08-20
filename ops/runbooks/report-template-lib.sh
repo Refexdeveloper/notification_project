@@ -91,6 +91,14 @@ report_kf_ts_sql() {
   local col="${1:?jsonb datetime expression required}"
   cat <<EOF
 CASE
+  WHEN jsonb_typeof(${col}) = 'number' THEN
+    CASE
+      WHEN (${col} #>> '{}')::numeric > 1000000000000
+        THEN to_timestamp(((${col} #>> '{}')::numeric) / 1000.0)
+      WHEN (${col} #>> '{}')::numeric > 1000000000
+        THEN to_timestamp((${col} #>> '{}')::numeric)
+      ELSE NULL
+    END
   WHEN jsonb_typeof(${col}) = 'string'
    AND (${col} #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
     CASE
@@ -167,6 +175,36 @@ REPORT_ITEM_COMPLETED_AT_SQL="$(report_item_completed_at_sql source_payload '')"
 REPORT_ITEM_CREATED_AT_I_SQL="$(report_item_created_at_sql i.source_payload)"
 REPORT_ITEM_COMPLETED_AT_I_SQL="$(report_item_completed_at_sql i.source_payload 'i.')"
 REPORT_IST_TODAY_SQL="(now() AT TIME ZONE 'Asia/Kolkata')::date"
+
+# Prefer a recent high-volume snapshot over a sparse/newer incremental run.
+# Arg1: application_id SQL literal (already quoted). Arg2: process_id SQL literal.
+report_latest_snapshot_cte() {
+  local app_lit="${1:?application_id literal required}"
+  local proc_lit="${2:?process_id literal required}"
+  cat <<EOF
+latest AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.snapshot_run
+  WHERE application_id = ${app_lit}
+    AND process_id = ${proc_lit}
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY
+    CASE
+      WHEN COALESCE(load_completed_at, extraction_completed_at, created_at) > now() - interval '3 days'
+      THEN 0 ELSE 1
+    END,
+    COALESCE(item_record_count, 0) DESC,
+    COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
+  LIMIT 1
+)
+EOF
+}
+
+# MIS table row background: green when last_sign_in (YYYY-MM-DD …) is today IST.
+# Usage inside jq with --arg today "${TODAY_IST}".
+REPORT_MIS_ROW_BG_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end)'
+REPORT_MIS_SIGNIN_CELL_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end)'
 
 report_template_seed_for_app() {
   case "${1:-}" in

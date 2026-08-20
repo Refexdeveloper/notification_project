@@ -76,16 +76,7 @@ log "Querying Project Management task summary"
 PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${PM_APP_ID}'
-    AND process_id = '${PM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 tasks AS (
   SELECT
     instance_id,
@@ -183,16 +174,7 @@ log "Querying Project Management per-user breakdown"
 PM_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${PM_APP_ID}'
-    AND process_id = '${PM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
@@ -266,18 +248,20 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 log "Rendering PM HTML report"
 
-PM_ROWS_HTML="$(jq -r '
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+PM_ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
+  def signed_today: ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg: if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style: if signed_today then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   to_entries | map(
-    "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+    "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+    "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
     "</tr>"
   ) | join("")
 ' <<< "${PM_USERS_JSON}")"
-
-TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
 PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {

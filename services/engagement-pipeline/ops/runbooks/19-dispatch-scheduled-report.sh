@@ -230,8 +230,9 @@ send_test_report() {
   export REPORT_CACHE_KEY_SCHEDULE="$(schedule_cache_key)"
   # Prefer re-render so a newly published template is used. Cached HTML is only a
   # fallback when no render runbook is available (avoids sending stale schedule:* cache).
+  # Caller must ingest first when live today KPIs are required (ITSM/PM/Solar do).
   if [[ -n "${render_runbook}" ]]; then
-    log "Test send: rendering with latest published template from PostgreSQL snapshot (no Kissflow ingest)"
+    log "Test send: rendering with latest published template from PostgreSQL snapshot"
     bash "${render_runbook}"
     [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
     bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
@@ -323,12 +324,16 @@ case "${APPLICATION_ID}" in
       [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
     }
     if [[ "${TEST_SEND}" == "true" ]]; then
-      # Extrovis (and any new process) has no snapshot until the first ingest.
-      # Test send previously skipped Kissflow → empty KPIs / "No users" table.
-      if ! itsm_has_snapshot; then
-        log "No usable snapshot for process ${ITSM_PROCESS_ID} — running full Kissflow ingest before test send"
-        export FULL_INGEST=true
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
+      # Always full-ingest on test send so Opened/Closed Today match live Kissflow
+      # (stale snapshots made today KPIs show 0 while Lead Tracker looked correct).
+      log "Test send: full Kissflow ingest for ITSM ${ITSM_PROCESS_ID} before render"
+      export FULL_INGEST=true
+      if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"; then
+        if itsm_has_snapshot; then
+          log "Live ingest failed — rendering from last ITSM snapshot (today KPIs may be stale)"
+        else
+          stop "Live ITSM ingest failed and no snapshot exists. Fix ingest, then retry Test Send."
+        fi
       fi
       send_test_report \
         "${REPO_ROOT}/templates/generated/report-latest.html" \
@@ -337,6 +342,7 @@ case "${APPLICATION_ID}" in
       log "ITSM test send completed"
     else
       log "Step 1/3: Ingest latest Kissflow data into PostgreSQL"
+      export FULL_INGEST="${FULL_INGEST:-true}"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
       log "Step 2/3: Rendering ITSM report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
@@ -348,6 +354,10 @@ case "${APPLICATION_ID}" in
   Project_Management_Tracker_A00)
     export SUBJECT="${SUBJECT:-Kissflow - Project Task Report}"
     if [[ "${TEST_SEND}" == "true" ]]; then
+      log "Test send: full Kissflow ingest for PM before render"
+      export FULL_INGEST=true
+      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh" \
+        || log "PM ingest failed — rendering from last snapshot if present"
       send_test_report \
         "${REPO_ROOT}/templates/generated/pm-report-latest.html" \
         "$(report_cache_key)" \
@@ -355,6 +365,7 @@ case "${APPLICATION_ID}" in
       log "PM test send completed"
     else
       log "Step 1/3: Ingest latest Kissflow PM data into PostgreSQL"
+      export FULL_INGEST="${FULL_INGEST:-true}"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
       log "Step 2/3: Rendering PM report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/14-render-pm-html-report.sh"
@@ -380,10 +391,14 @@ case "${APPLICATION_ID}" in
       [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
     }
     if [[ "${TEST_SEND}" == "true" ]]; then
-      if ! solar_has_snapshot; then
-        log "No usable Solar snapshot for ${SOLAR_PROCESS_ID} — running full Kissflow ingest before test send"
-        export FULL_INGEST=true
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/20-ingest-solar-and-load.sh"
+      log "Test send: full Kissflow ingest for Solar before render"
+      export FULL_INGEST=true
+      if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/20-ingest-solar-and-load.sh"; then
+        if solar_has_snapshot; then
+          log "Solar ingest failed — rendering from last snapshot (today KPIs may be stale)"
+        else
+          stop "Live Solar ingest failed and no snapshot exists. Fix ingest, then retry Test Send."
+        fi
       fi
       send_test_report \
         "${REPO_ROOT}/templates/generated/solar-report-latest.html" \
@@ -392,6 +407,7 @@ case "${APPLICATION_ID}" in
       log "Solar test send completed"
     else
       log "Step 1/3: Ingest latest Kissflow Solar Reinvestment Request data"
+      export FULL_INGEST="${FULL_INGEST:-true}"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/20-ingest-solar-and-load.sh"
       log "Step 2/3: Rendering Solar report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/21-render-solar-html-report.sh"

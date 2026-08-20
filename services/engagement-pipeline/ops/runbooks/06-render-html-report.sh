@@ -76,11 +76,21 @@ fi
 ENTITY_FILTER_SQL="$(printf '%s' "${ENTITY_FILTER}" | sed "s/'/''/g")"
 ENTITY_SCOPE_SQL="(
   '${ENTITY_FILTER_SQL}' = ''
-  OR i.entity = '${ENTITY_FILTER_SQL}'
+  OR lower(trim(coalesce(i.entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR lower(trim(coalesce(
+       i.source_payload->>'Entity',
+       i.source_payload->'Entity'->>'Name',
+       ''
+     ))) = lower(trim('${ENTITY_FILTER_SQL}'))
 )"
 ENTITY_SCOPE_SQL_BARE="(
   '${ENTITY_FILTER_SQL}' = ''
-  OR entity = '${ENTITY_FILTER_SQL}'
+  OR lower(trim(coalesce(entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR lower(trim(coalesce(
+       source_payload->>'Entity',
+       source_payload->'Entity'->>'Name',
+       ''
+     ))) = lower(trim('${ENTITY_FILTER_SQL}'))
 )"
 
 # Total Users = members of this process's Kissflow app roles only
@@ -117,16 +127,7 @@ fi
 SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${ITSM_APP_ID}'
-    AND process_id = '${ITSM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 sla AS (
   SELECT
     instance_id,
@@ -281,16 +282,7 @@ fi
 USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${ITSM_APP_ID}'
-    AND process_id = '${ITSM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
@@ -461,9 +453,17 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 log "Rendering HTML report"
 
-ROWS_HTML="$(jq -r '
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
   def is_kissflow_id:
     type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
+  def signed_today:
+    ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg:
+    if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style:
+    if signed_today then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;"
+    else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   [ .[]
     | select((.user_name // "") | tostring | length > 0)
     | select((.user_name | is_kissflow_id | not))
@@ -472,9 +472,9 @@ ROWS_HTML="$(jq -r '
     "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"5\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No users with open or closed tickets in this snapshot.</td></tr>"
   else
     $rows | to_entries | map(
-      "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+      "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+      "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;\" align=\"center\"><b>" + ((.value.sla_breached_count // 0) | tostring) + "</b></td>" +
@@ -482,8 +482,6 @@ ROWS_HTML="$(jq -r '
     ) | join("")
   end
 ' <<< "${USERS_JSON}")"
-
-TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
 MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   def is_kissflow_id:
     type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");

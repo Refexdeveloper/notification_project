@@ -512,12 +512,15 @@ function renderUserTableRows(rows) {
   }
   return rows
     .map((row, idx) => {
-      const bg = idx % 2 ? '#ffffff' : '#faf9f7';
+      const bg = row.loggedInToday ? '#dcfce7' : idx % 2 ? '#ffffff' : '#faf9f7';
       const lastLogin = formatLogin(row.lastSignedIn);
       const lastCell = !lastLogin || lastLogin === 'Never' ? '-' : lastLogin;
+      const lastStyle = row.loggedInToday
+        ? 'padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;'
+        : 'padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;';
       return `<tr style="background-color:${bg};" bgcolor="${bg}">
 <td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(row.name)}</td>
-<td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(lastCell)}</td>
+<td style="${lastStyle}">${escapeHtml(lastCell)}</td>
 <td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>${row.openLeads}</b></td>
 <td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">${row.closedLeads}</td>
 </tr>`;
