@@ -73,7 +73,8 @@ export default function ScheduleReportIdentityFields({
         <h4 className="text-xs font-semibold text-foreground-900 uppercase tracking-wide">Report to send</h4>
         <p className="text-[11px] text-foreground-500 mt-0.5">
           Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
-          excluded. For Travel Management, keep Refex and Venwind on separate usage reports.
+          excluded. For Travel Management, all three app processes are combined into one report — pick Venwind or Refex
+          as the entity, not both.
         </p>
       </div>
 
@@ -171,17 +172,21 @@ export default function ScheduleReportIdentityFields({
             Travel entity scope
           </label>
           <select
-            value={value.entityFilter || 'both'}
+            value={
+              !value.entityFilter || value.entityFilter === 'both' || value.entityFilter === 'all'
+                ? 'Venwind'
+                : value.entityFilter
+            }
             onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
             disabled={disabled}
             className="field-input w-full disabled:opacity-60"
           >
-            <option value="both">Refex and Venwind (separate sections)</option>
-            <option value="Refex">Entity = Refex only</option>
             <option value="Venwind">Entity = Venwind only</option>
+            <option value="Refex">Entity = Refex only</option>
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
-            Requester-wise pending and usage is calculated per entity. Do not mix Refex and Venwind users in one table.
+            One email per entity. Advance Payment, Expense Management, and Travel Management are combined, then filtered
+            to this entity. Create a second schedule for the other entity.
           </p>
         </div>
       )}

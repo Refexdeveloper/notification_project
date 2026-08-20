@@ -79,12 +79,17 @@ describe('templatePreview', () => {
     expect(samples.SignedInToday).toBe('1');
   });
 
-  it('builds separate Refex and Venwind travel usage sections', () => {
+  it('builds a single-entity Venwind travel preview', () => {
     const samples = buildPreviewSampleData({ kissflowAppId: 'Expense_and_Travel_Management_A00' });
-    expect(samples.EntityScope).toBe('Refex and Venwind shown separately');
-    expect(samples.EntitySectionsHtml).toContain('Refex travel usage');
-    expect(samples.EntitySectionsHtml).toContain('Venwind travel usage');
+    expect(samples.EntityScope).toBe('Venwind travel requests only');
+    expect(samples.EntityName).toBe('Venwind');
+    expect(samples.EntitySectionsHtml).toBe('');
+    expect(samples.UserTableSectionHtml).toContain('Users with pending travel requests');
+    expect(samples.UserTableSectionHtml).toContain('Pending Duration');
+    expect(samples.UserTableSectionHtml).toContain('SLA Breached');
     expect(samples.UserTableHtml).toContain('Priya Sharma');
-    expect(samples.RejectedRequests).toBe('3');
+    expect(samples.UserTableHtml).toContain('8 days · Manager Approval');
+    expect(samples.PendingDetailsHtml).toBe('');
+    expect(samples.UsersWithPending).toBe('2');
   });
 });

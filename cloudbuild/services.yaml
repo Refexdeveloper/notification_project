@@ -38,7 +38,7 @@ steps:
       - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/engagement-pipeline:${COMMIT_SHA}
       - -f
       - services/engagement-pipeline/Dockerfile
-      - services/engagement-pipeline
+      - .
 
 images:
   - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/backend-api:${COMMIT_SHA}

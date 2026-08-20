@@ -16,15 +16,18 @@ TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
 ENVIRONMENT="${ENVIRONMENT:-production}"
 KISSFLOW_ACCOUNT_ID="${KISSFLOW_ACCOUNT_ID:-AcCMptlq60zH}"
 APPLICATION_ID="${APPLICATION_ID:-Expense_and_Travel_Management_A00}"
-PROCESS_ID="${PROCESS_ID:-Copy_of_Venwind_Travel_Request_A00}"
+PROCESS_ID="${PROCESS_ID:-Travel_Management_A02}"
 
 TEMPLATE_ID="${SEED_TEMPLATE_ID:-f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5}"
 REPORT_DEF_ID="${SEED_REPORT_DEF_ID:-f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6}"
 REPORT_DEF_VERSION_ID="${SEED_REPORT_DEF_VERSION_ID:-f7f7f7f7-f7f7-4f7f-8f7f-f7f7f7f7f7f7}"
 SCHEDULE_ID="${SEED_SCHEDULE_ID:-f8f8f8f8-f8f8-4f8e-8f8e-f8f8f8f8f8f8}"
+REPORT_DEF_ID_REFEX="${SEED_REPORT_DEF_ID_REFEX:-f9f9f9f9-f9f9-4f9f-8f9f-f9f9f9f9f9f9}"
+REPORT_DEF_VERSION_ID_REFEX="${SEED_REPORT_DEF_VERSION_ID_REFEX:-fafafafa-fafa-4afa-8afa-fafafafafafa}"
+SCHEDULE_ID_REFEX="${SEED_SCHEDULE_ID_REFEX:-fbfbfbfb-fbfb-4bfb-8bfb-fbfbfbfbfbfb}"
 
-TEMPLATE_NAME="Travel Request Engagement Report"
-SCHEDULE_NAME="Daily Travel Management report"
+TEMPLATE_NAME="Travel Management Report"
+SCHEDULE_NAME="Daily Venwind Travel Management report"
 CONTENT_REF="db/seeds/travel-engagement-template.html"
 CRON_EXPRESSION="0 9 * * *"
 TIMEZONE="Asia/Kolkata"
@@ -96,8 +99,8 @@ VALUES (
     'process_id', '${PROCESS_ID}',
     'template_id', (SELECT report_template_id::text FROM engagement_reporting.report_template WHERE name = '${TEMPLATE_NAME}'),
     'template_name', '${TEMPLATE_NAME}',
-    'entity_filter', 'both',
-    'subject', 'Kissflow - Travel Management Daily Usage Report',
+    'entity_filter', 'Venwind',
+    'subject', 'Kissflow - Venwind Travel Management Daily Usage Report',
     'legacy_template_id', 'tpl-refex-travel-engagement',
     'legacy_scheduler_id', 'sch-refex-travel-daily',
     'seed_runbook', '38-seed-travel-report-config'
@@ -122,7 +125,70 @@ VALUES (
   '${CRON_EXPRESSION}',
   '${TIMEZONE}',
   false,
-  'daily:${APPLICATION_ID}:${ENVIRONMENT}'
+  'daily:${APPLICATION_ID}:venwind:${ENVIRONMENT}'
+)
+ON CONFLICT (report_schedule_id) DO UPDATE
+  SET cron_expression = EXCLUDED.cron_expression,
+      timezone = EXCLUDED.timezone,
+      is_active = EXCLUDED.is_active,
+      report_definition_version_id = EXCLUDED.report_definition_version_id;
+
+INSERT INTO engagement_reporting.report_definition (
+  report_definition_id, account_id, name, is_active
+)
+VALUES (
+  '${REPORT_DEF_ID_REFEX}'::uuid,
+  (SELECT account_id FROM engagement_reporting.account WHERE kissflow_account_id = '${KISSFLOW_ACCOUNT_ID}'),
+  'Daily Refex Travel Management report',
+  false
+)
+ON CONFLICT (report_definition_id) DO UPDATE
+  SET name = EXCLUDED.name,
+      account_id = EXCLUDED.account_id;
+
+INSERT INTO engagement_reporting.report_definition_version (
+  report_definition_version_id,
+  report_definition_id,
+  version_number,
+  config,
+  frozen_at
+)
+VALUES (
+  '${REPORT_DEF_VERSION_ID_REFEX}'::uuid,
+  '${REPORT_DEF_ID_REFEX}'::uuid,
+  1,
+  jsonb_build_object(
+    'application_id', '${APPLICATION_ID}',
+    'process_id', '${PROCESS_ID}',
+    'template_id', (SELECT report_template_id::text FROM engagement_reporting.report_template WHERE name = '${TEMPLATE_NAME}'),
+    'template_name', '${TEMPLATE_NAME}',
+    'entity_filter', 'Refex',
+    'subject', 'Kissflow - Refex Travel Management Daily Usage Report',
+    'legacy_template_id', 'tpl-refex-travel-engagement',
+    'legacy_scheduler_id', 'sch-refex-travel-daily-refex',
+    'seed_runbook', '38-seed-travel-report-config'
+  ),
+  now()
+)
+ON CONFLICT (report_definition_id, version_number) DO UPDATE
+  SET config = EXCLUDED.config,
+      frozen_at = EXCLUDED.frozen_at;
+
+INSERT INTO engagement_reporting.report_schedule (
+  report_schedule_id,
+  report_definition_version_id,
+  cron_expression,
+  timezone,
+  is_active,
+  idempotency_scope
+)
+VALUES (
+  '${SCHEDULE_ID_REFEX}'::uuid,
+  '${REPORT_DEF_VERSION_ID_REFEX}'::uuid,
+  '${CRON_EXPRESSION}',
+  '${TIMEZONE}',
+  false,
+  'daily:${APPLICATION_ID}:refex:${ENVIRONMENT}'
 )
 ON CONFLICT (report_schedule_id) DO UPDATE
   SET cron_expression = EXCLUDED.cron_expression,
@@ -170,7 +236,7 @@ cat > "${AUDIT_DIR}/runbook-38-${TIMESTAMP}.json" <<EOF
   "schedule_rows": ${SCHEDULE_COUNT:-0},
   "cron_expression": "${CRON_EXPRESSION}",
   "timezone": "${TIMEZONE}",
-  "entity_filter": "both",
+  "entity_filter": "Venwind",
   "schedule_active": false
 }
 EOF

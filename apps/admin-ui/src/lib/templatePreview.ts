@@ -23,27 +23,24 @@ function samplePmUserTableHtml(): string {
 
 function sampleTravelUserTableHtml(): string {
   return (
-    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">5</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">3</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center">0</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td></tr>` +
-    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">3</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">1</td><td style="padding:10px 6px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center">1</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Travel Desk</td></tr>`
+    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>1</b></td></tr>` +
+    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Finance Review</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`
   );
 }
 
-function sampleTravelEntitySectionHtml(entity: string, counts: string[], usersHtml: string): string {
+function sampleTravelUserTableSectionHtml(usersHtml: string): string {
   return (
-    `<tr><td style="padding:18px 32px 0 32px;" bgcolor="#ffffff"><div style="font-size:13.5px; font-weight:bold; color:#0369a1 !important; border-left:4px solid #0ea5e9; padding-left:10px;">${entity} travel usage</div><div style="font-size:11px; color:#64748b !important; margin-top:4px; padding-left:14px;">Requester-wise pending, completed, rejected, and pending ageing for this entity only.</div></td></tr>` +
-    `<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">${entity} request summary</div></td></tr>` +
-    `<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
-    `<td width="18%" align="center">${counts[0]} total</td><td width="18%" align="center">${counts[1]} pending</td><td width="18%" align="center">${counts[2]} completed</td><td width="18%" align="center">${counts[3]} rejected</td><td width="20%" align="center">${counts[4]} requesters</td>` +
-    `</tr></table></td></tr>` +
-    `<tr><td style="padding:22px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">${entity} requesters with pending or recent travel requests</td></tr>` +
-    `<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${usersHtml}</table></td></tr>`
-  );
-}
-
-function sampleTravelOverallHtml(): string {
-  return (
-    '<tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Overall Travel Management Summary</div></td></tr>' +
-    '<tr><td style="padding:10px 32px 4px 32px;" bgcolor="#ffffff">48 total · 9 pending · 36 completed · 3 rejected</td></tr>'
+    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending travel requests</td></tr>' +
+    '<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:11.5px;">' +
+    '<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">User</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Pending Duration</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">SLA Breached</td>' +
+    '</tr>' +
+    usersHtml +
+    '</table></td></tr>'
   );
 }
 
@@ -170,7 +167,9 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     PendingRequests: '9',
     CompletedRequests: '39',
     RejectedRequests: '3',
-    EntityScope: 'Refex and Venwind shown separately',
+    EntityScope: 'Venwind travel requests only',
+    EntityName: 'Venwind',
+    UsersWithPending: '2',
     OverallSummaryHtml: '',
     EntitySectionsHtml: '',
     SalesPersons: '3',
@@ -204,16 +203,23 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
   } else if (kind === 'travel') {
     const travelUsers = sampleTravelUserTableHtml();
     base.UserTableHtml = travelUsers;
+    base.UserTableSectionHtml = sampleTravelUserTableSectionHtml(travelUsers);
+    base.PendingDetailsHtml = '';
+    base.SlaAnalysisHtml = '';
+    base.SlaAnalysisHtml = '';
     base.SignedInToday = '1';
     base.TotalUsers = '2';
-    base.RejectedRequests = '3';
-    base.EntityScope = 'Refex and Venwind shown separately';
-    base.OverallSummaryHtml = sampleTravelOverallHtml();
-    base.EntitySectionsHtml =
-      sampleTravelEntitySectionHtml('Refex', ['31', '6', '24', '1', '2'], travelUsers) +
-      sampleTravelEntitySectionHtml('Venwind', ['17', '3', '12', '2', '2'], travelUsers);
+    base.UsersWithPending = '2';
+    base.SlaBreachedTotal = '1';
+    base.SlaBreachedOpen = '1';
+    base.SlaBreachedClosed = '0';
+    base.RejectedRequests = '0';
+    base.EntityScope = 'Venwind travel requests only';
+    base.EntityName = 'Venwind';
+    base.OverallSummaryHtml = '';
+    base.EntitySectionsHtml = '';
     base.ReportBody =
-      'Requester-wise Travel Management usage from live Kissflow data. Refex and Venwind are shown in separate sections and are not combined.';
+      'Venwind only. Combines Advance Payment, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.';
   }
 
   return base;
@@ -355,17 +361,22 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ReportTitle',
     'ReportDate',
     'EntityScope',
+    'EntityName',
     'TotalRequests',
     'PendingRequests',
     'CompletedRequests',
-    'RejectedRequests',
+    'UsersWithPending',
+    'SlaBreachedTotal',
+    'SlaBreachedOpen',
+    'SlaBreachedClosed',
     'TotalUsers',
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
-    'OverallSummaryHtml',
-    'EntitySectionsHtml',
     'UserTableHtml',
+    'UserTableSectionHtml',
+    'PendingDetailsHtml',
+    'SlaAnalysisHtml',
     'ReportBody',
   ],
   generic: [

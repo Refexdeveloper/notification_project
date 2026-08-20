@@ -126,19 +126,20 @@ report_cache_key() {
       ;;
     EMS_001_A00) echo "expense:${ENVIRONMENT:-production}" ;;
     Expense_and_Travel_Management_A00)
-      echo "travel:v2:${ENTITY_FILTER:-both}:${ENVIRONMENT:-production}"
+      echo "travel:v3:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
       ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
 }
 
 process_has_snapshot() {
+  local process_id="${1:-${PROCESS_ID}}"
   local n
   n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
     SELECT count(*)::text
     FROM engagement_reporting.snapshot_run
     WHERE application_id = '${APPLICATION_ID}'
-      AND process_id = '${PROCESS_ID}'
+      AND process_id = '${process_id}'
       AND environment = '${ENVIRONMENT:-production}'
       AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
   " 2>/dev/null | tr -d '[:space:]')"
@@ -190,6 +191,75 @@ dispatch_pm_style_process() {
     log "Step 3/3: Sending ${app_name} report"
     send_cached_report "${latest}"
     log "${app_name} ingest-render-send completed"
+  fi
+}
+
+# Travel Management: ingest ALL registered processes, then render one entity-scoped report.
+ingest_travel_processes() {
+  local pid ok=0 failed=()
+  local saved_full="${FULL_INGEST:-false}"
+  for pid in ${TRAVEL_PROCESS_IDS}; do
+    [[ -n "${pid}" ]] || continue
+    export PROCESS_ID="${pid}"
+    if process_has_snapshot "${pid}"; then
+      export FULL_INGEST="${saved_full}"
+      log "Travel ingest ${pid} (incremental unless FULL_INGEST=true)"
+    else
+      export FULL_INGEST=true
+      log "No snapshot for ${pid} — full Kissflow ingest"
+    fi
+    if bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
+      ok=$((ok + 1))
+    else
+      failed+=("${pid}")
+      log "WARNING: ingest failed for ${APPLICATION_ID}/${pid}"
+    fi
+  done
+  export FULL_INGEST="${saved_full}"
+  if [[ "${ok}" -eq 0 ]]; then
+    return 1
+  fi
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    log "Continuing with ${ok} process snapshot(s); failed: ${failed[*]}"
+  fi
+  return 0
+}
+
+dispatch_travel_usage_report() {
+  export REPORT_SLUG="travel"
+  export APPLICATION_NAME="Travel Management"
+  export PROCESS_NAME="Travel Management (combined)"
+  export SUBJECT="${SUBJECT:-Kissflow - ${ENTITY_FILTER:-Venwind} Travel Management Daily Usage Report}"
+  export REPORT_BODY="${ENTITY_FILTER:-Venwind} only. Combines Advance Payment, Expense Management, and Travel Management."
+  export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-Advance_Payment_Request_Process_A01 Expense_Management_A03 Travel_Management_A02}"
+  local latest="${REPO_ROOT}/templates/generated/travel-report-latest.html"
+  local render_script="${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
+  if [[ "${TEST_SEND}" == "true" ]]; then
+    log "Test send: ingesting ALL Travel processes (${TRAVEL_PROCESS_IDS}) then rendering entity=${ENTITY_FILTER}"
+  # Keep PROCESS_ID as Travel_Management_A02 for logging/cache labels only.
+  export PROCESS_ID="Travel_Management_A02"
+    if ! ingest_travel_processes; then
+      log "Live Travel ingest failed — trying last cached HTML"
+      if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
+        || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${latest}" "travel:"; then
+        export REPORT_FILE_OVERRIDE="${latest}"
+        export DELIVERY_KIND="test"
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
+        log "Travel Management test send completed from last cache"
+        return 0
+      fi
+      stop "Live ingest failed for all Travel processes and no cached report exists. Fix ingest, then retry Test Send."
+    fi
+    send_test_report "${latest}" "$(report_cache_key)" "${render_script}"
+    log "Travel Management test send completed (${ENTITY_FILTER})"
+  else
+    log "Step 1/3: Ingest latest Kissflow data for all Travel processes"
+    ingest_travel_processes || stop "Travel ingest failed for every process"
+    log "Step 2/3: Rendering ${ENTITY_FILTER} Travel usage report"
+    bash "${render_script}"
+    log "Step 3/3: Sending ${ENTITY_FILTER} Travel usage report"
+    send_cached_report "${latest}"
+    log "Travel Management ingest-render-send completed (${ENTITY_FILTER})"
   fi
 }
 
@@ -269,7 +339,7 @@ export SOLAR_PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
 export ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
 
 # Entity scope comes from the schedule. ITSM still defaults classic process → Refex.
-# Travel defaults to both (separate Refex / Venwind sections). Other apps leave it empty.
+# Travel defaults to Venwind (one email per entity; all three app processes are combined).
 ENTITY_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.entity_filter // empty')"
 if [[ "${APPLICATION_ID}" == "IT_Service_Management_A00" ]]; then
   if [[ -z "${ENTITY_FILTER}" ]]; then
@@ -283,11 +353,14 @@ if [[ "${APPLICATION_ID}" == "IT_Service_Management_A00" ]]; then
     ENTITY_FILTER=""
   fi
 elif [[ "${APPLICATION_ID}" == "Expense_and_Travel_Management_A00" ]]; then
-  if [[ -z "${ENTITY_FILTER}" || "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
-    ENTITY_FILTER="both"
+  export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-Advance_Payment_Request_Process_A01 Expense_Management_A03 Travel_Management_A02}"
+  local_entity="$(printf '%s' "${ENTITY_FILTER}" | tr '[:upper:]' '[:lower:]')"
+  if [[ -z "${ENTITY_FILTER}" || "${local_entity}" == "all" || "${local_entity}" == "*" || "${local_entity}" == "both" ]]; then
+    ENTITY_FILTER="Venwind"
   fi
 fi
 export ENTITY_FILTER
+export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-}"
 
 [[ -n "${APPLICATION_ID}" ]] || stop "Schedule ${SCHEDULE_ID} has no application_id in config"
 if [[ "${TEST_SEND}" != "true" ]]; then
@@ -295,7 +368,11 @@ if [[ "${TEST_SEND}" != "true" ]]; then
 fi
 [[ -n "${FROM_EMAIL}" ]] || stop "No from_email on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
 
-log "Dispatching ${APPLICATION_ID} schedule ${SCHEDULE_ID}${TEMPLATE_NAME:+ · template ${TEMPLATE_NAME}}${PROCESS_ID:+ · process ${PROCESS_ID}}${ENTITY_FILTER:+ · entity ${ENTITY_FILTER}}"
+if [[ "${APPLICATION_ID}" == "Expense_and_Travel_Management_A00" ]]; then
+  log "Dispatching ${APPLICATION_ID} schedule ${SCHEDULE_ID}${TEMPLATE_NAME:+ · template ${TEMPLATE_NAME}} · processes ${TRAVEL_PROCESS_IDS} · entity ${ENTITY_FILTER}"
+else
+  log "Dispatching ${APPLICATION_ID} schedule ${SCHEDULE_ID}${TEMPLATE_NAME:+ · template ${TEMPLATE_NAME}}${PROCESS_ID:+ · process ${PROCESS_ID}}${ENTITY_FILTER:+ · entity ${ENTITY_FILTER}}"
+fi
 
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/ops/runbooks/load-kissflow-creds.sh"
@@ -420,14 +497,7 @@ case "${APPLICATION_ID}" in
       "Expense Management covers pending and closed claims from Kissflow."
     ;;
   Expense_and_Travel_Management_A00)
-    dispatch_pm_style_process \
-      "travel" \
-      "Copy_of_Venwind_Travel_Request_A00" \
-      "Travel Management" \
-      "Travel Request" \
-      "Kissflow - Travel Management Daily Usage Report" \
-      "Requester-wise Travel Management usage. Refex and Venwind are reported separately." \
-      "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
+    dispatch_travel_usage_report
     ;;
   *)
     FALLBACK_SLUG="$(printf '%s' "${APPLICATION_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"

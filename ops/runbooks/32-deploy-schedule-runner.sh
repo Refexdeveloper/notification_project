@@ -78,7 +78,7 @@ deploy_service() {
     --service-account="${SERVICE_ACCOUNT}" \
     --memory=1Gi \
     --cpu=1 \
-    --timeout=900 \
+    --timeout=1800 \
     --min-instances=0 \
     --max-instances=3
 

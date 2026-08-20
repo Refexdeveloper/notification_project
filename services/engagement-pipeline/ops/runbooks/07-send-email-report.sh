@@ -161,7 +161,7 @@ if [[ -f "${REPO_ROOT}/ops/runbooks/record-report-delivery.sh" ]]; then
       *pm-report*) export PROCESS_ID="${PM_PROCESS_ID:-Project_Sub_Task_A01}" ;;
       *solar-report*) export PROCESS_ID="${SOLAR_PROCESS_ID:-Technician_Reimbursement__YTLM}" ;;
       *expense-report*) export PROCESS_ID="${PROCESS_ID:-Travel_Expense_A00}" ;;
-      *travel-report*) export PROCESS_ID="${PROCESS_ID:-Copy_of_Venwind_Travel_Request_A00}" ;;
+      *travel-report*) export PROCESS_ID="${PROCESS_ID:-Travel_Management_A02}" ;;
       *lead-tracker*) export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}" ;;
       *) export PROCESS_ID="${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}" ;;
     esac
@@ -183,7 +183,7 @@ if [[ "${STATUS}" == "SENT" && -f "${REPO_ROOT}/ops/runbooks/cache-report-html.s
         ;;
       EMS_001_A00) export REPORT_CACHE_KEY="expense:${ENVIRONMENT:-production}" ;;
       Expense_and_Travel_Management_A00)
-        export REPORT_CACHE_KEY="travel:v2:${ENTITY_FILTER:-both}:${ENVIRONMENT:-production}"
+        export REPORT_CACHE_KEY="travel:v3:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
         ;;
     esac
   fi

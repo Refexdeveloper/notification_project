@@ -15,6 +15,6 @@ COPY db/ ./db/
 
 RUN chmod +x ./ops/runbooks/*.sh
 
-COPY entrypoint.py ./entrypoint.py
+COPY services/engagement-pipeline/entrypoint.py ./entrypoint.py
 
 ENTRYPOINT ["python3", "./entrypoint.py"]

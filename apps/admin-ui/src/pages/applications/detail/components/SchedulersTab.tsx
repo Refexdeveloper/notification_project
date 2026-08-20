@@ -27,6 +27,8 @@ import {
   defaultEntityFilterForProcess,
   formatEntityFilterLabel,
   isExtrovisProcess,
+  isTravelApp,
+  preferredTravelProcessId,
   processLabel,
 } from '@/lib/processLabels';
 
@@ -96,8 +98,9 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       templatesRes.templates.find((t) => t.status === 'published') || templatesRes.templates[0];
     setCreateTemplates(templatesRes.templates);
     setCreateTemplateId(published?.id || '');
-    const preferredProcess =
-      (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || app.processIds?.[0] || '';
+    const preferredProcess = isTravelApp(app.appId, app.displayName || app.name)
+      ? preferredTravelProcessId(app.processIds)
+      : (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || app.processIds?.[0] || '';
     setCreateProcessId(preferredProcess);
     setCreateDialogOpen(true);
   };
