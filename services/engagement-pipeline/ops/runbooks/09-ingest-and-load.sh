@@ -38,6 +38,8 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
 
+ingest_force_full_for_schedule
+
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ingest_wait_for_snapshot_slot "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}" \
   || stop "Another ingest is IN_PROGRESS for ${APPLICATION_ID}/${PROCESS_ID}"

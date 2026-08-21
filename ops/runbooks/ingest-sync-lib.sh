@@ -9,6 +9,19 @@ WATERMARK_OVERLAP_SECONDS="${WATERMARK_OVERLAP_SECONDS:-300}"
 
 ingest_log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 
+# Scheduled Cloud Run dispatches set SCHEDULE_ID. Always full-ingest for those runs so
+# Opened/Closed Today cannot drift from a sparse incremental + stale carry-forward base.
+# Does not change TEST_SEND / manual incremental behavior unless FULL_INGEST is already set.
+ingest_force_full_for_schedule() {
+  if [[ "${FULL_INGEST:-false}" == "true" ]]; then
+    return 0
+  fi
+  if [[ -n "${SCHEDULE_ID:-}" && "${TEST_SEND:-false}" != "true" ]]; then
+    export FULL_INGEST=true
+    ingest_log "Schedule ${SCHEDULE_ID}: forcing FULL_INGEST=true (today KPIs require complete snapshot)"
+  fi
+}
+
 ingest_sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
 
 ingest_psql() {

@@ -77,20 +77,36 @@ ENTITY_FILTER_SQL="$(printf '%s' "${ENTITY_FILTER}" | sed "s/'/''/g")"
 ENTITY_SCOPE_SQL="(
   '${ENTITY_FILTER_SQL}' = ''
   OR lower(trim(coalesce(i.entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
-  OR lower(trim(coalesce(
-       i.source_payload->>'Entity',
-       i.source_payload->'Entity'->>'Name',
-       ''
-     ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    jsonb_typeof(i.source_payload->'Entity') = 'object'
+    AND lower(trim(coalesce(
+      i.source_payload->'Entity'->>'Name',
+      i.source_payload->'Entity'->>'Value',
+      i.source_payload->'Entity'->>'v',
+      ''
+    ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
+  OR (
+    jsonb_typeof(i.source_payload->'Entity') = 'string'
+    AND lower(trim(coalesce(i.source_payload->>'Entity', ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
 )"
 ENTITY_SCOPE_SQL_BARE="(
   '${ENTITY_FILTER_SQL}' = ''
   OR lower(trim(coalesce(entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
-  OR lower(trim(coalesce(
-       source_payload->>'Entity',
-       source_payload->'Entity'->>'Name',
-       ''
-     ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    jsonb_typeof(source_payload->'Entity') = 'object'
+    AND lower(trim(coalesce(
+      source_payload->'Entity'->>'Name',
+      source_payload->'Entity'->>'Value',
+      source_payload->'Entity'->>'v',
+      ''
+    ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
+  OR (
+    jsonb_typeof(source_payload->'Entity') = 'string'
+    AND lower(trim(coalesce(source_payload->>'Entity', ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
 )"
 
 # Total Users = members of this process's Kissflow app roles only
@@ -506,6 +522,19 @@ SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
 OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SUMMARY_JSON}")"
 CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SUMMARY_JSON}")"
+if report_live_today_kpis "${ITSM_PROCESS_ID}" "${ITSM_APP_ID}" "${ENTITY_FILTER}"; then
+  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?} (sql opened=${OPENED_TODAY} closed=${CLOSED_TODAY})"
+  # Prefer live for opened (list always has _created_at). For closed, take the max of
+  # live vs SQL — list often omits _modified_at so SQL/detail may be higher after full ingest.
+  OPENED_TODAY="$(report_prefer_live_today "${OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ ]]; then
+    if [[ "${REPORT_LIVE_CLOSED_TODAY}" -ge "${CLOSED_TODAY}" ]]; then
+      CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
+    fi
+  fi
+else
+  log "Live Kissflow today KPI overlay unavailable — using PostgreSQL snapshot counts"
+fi
 
 TOTAL_OPEN="$(jq '[.[].open_count] | add // 0' <<< "${USERS_JSON}")"
 TOTAL_CLOSED="$(jq '[.[].closed_count] | add // 0' <<< "${USERS_JSON}")"

@@ -34,6 +34,8 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
 
+ingest_force_full_for_schedule
+
 ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
 
 HEADERS=(

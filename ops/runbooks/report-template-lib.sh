@@ -176,6 +176,48 @@ REPORT_ITEM_CREATED_AT_I_SQL="$(report_item_created_at_sql i.source_payload)"
 REPORT_ITEM_COMPLETED_AT_I_SQL="$(report_item_completed_at_sql i.source_payload 'i.')"
 REPORT_IST_TODAY_SQL="(now() AT TIME ZONE 'Asia/Kolkata')::date"
 
+# Overlay OpenedToday/ClosedToday from live Kissflow list (Lead Tracker pattern).
+# Sets REPORT_LIVE_OPENED_TODAY / REPORT_LIVE_CLOSED_TODAY when successful.
+# Args: process_id, application_id (optional), entity_filter (optional).
+report_live_today_kpis() {
+  local process_id="${1:-}"
+  local application_id="${2:-}"
+  local entity_filter="${3:-}"
+  REPORT_LIVE_OPENED_TODAY=""
+  REPORT_LIVE_CLOSED_TODAY=""
+  [[ -n "${process_id}" ]] || return 1
+  local script="${REPO_ROOT:-}/services/engagement-pipeline/scripts/count-live-today-kpis.js"
+  if [[ ! -f "${script}" ]]; then
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/services/engagement-pipeline/scripts/count-live-today-kpis.js"
+  fi
+  [[ -f "${script}" ]] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  local json
+  if ! json="$(
+    PROCESS_ID="${process_id}" \
+    APPLICATION_ID="${application_id}" \
+    ENTITY_FILTER="${entity_filter}" \
+    node "${script}" 2>/dev/null
+  )"; then
+    return 1
+  fi
+  REPORT_LIVE_OPENED_TODAY="$(jq -r '.opened_today // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_CLOSED_TODAY="$(jq -r '.closed_today // empty' <<< "${json}" 2>/dev/null || true)"
+  [[ -n "${REPORT_LIVE_OPENED_TODAY}" || -n "${REPORT_LIVE_CLOSED_TODAY}" ]] || return 1
+  return 0
+}
+
+# Prefer live overlay when present; keep SQL value as fallback.
+report_prefer_live_today() {
+  local sql_val="${1:-0}"
+  local live_val="${2:-}"
+  if [[ -n "${live_val}" && "${live_val}" =~ ^[0-9]+$ ]]; then
+    printf '%s' "${live_val}"
+  else
+    printf '%s' "${sql_val:-0}"
+  fi
+}
+
 # Prefer the newest completed snapshot (scheduled ingest writes this just before render).
 # item_record_count is only a tie-breaker so a sparse same-second run cannot win over a fuller one.
 # Arg1: application_id SQL literal (already quoted). Arg2: process_id SQL literal.

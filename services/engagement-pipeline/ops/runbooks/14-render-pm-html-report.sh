@@ -276,6 +276,13 @@ PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
+if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" ""; then
+  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?} (sql opened=${PM_OPENED_TODAY} closed=${PM_CLOSED_TODAY})"
+  PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then
+    PM_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
+  fi
+fi
 PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
 PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 
