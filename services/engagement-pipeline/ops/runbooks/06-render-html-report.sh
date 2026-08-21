@@ -74,9 +74,26 @@ if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
   ENTITY_FILTER=""
 fi
 ENTITY_FILTER_SQL="$(printf '%s' "${ENTITY_FILTER}" | sed "s/'/''/g")"
+# Refex scope: match Entity=Refex OR blank/null Entity (Kissflow often leaves Entity empty).
 ENTITY_SCOPE_SQL="(
   '${ENTITY_FILTER_SQL}' = ''
   OR lower(trim(coalesce(i.entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    '${ENTITY_FILTER_SQL}' <> ''
+    AND lower(trim('${ENTITY_FILTER_SQL}')) = 'refex'
+    AND coalesce(nullif(trim(i.entity), ''), '') = ''
+    AND (
+      i.source_payload->'Entity' IS NULL
+      OR i.source_payload->>'Entity' IS NULL
+      OR nullif(trim(coalesce(
+           CASE WHEN jsonb_typeof(i.source_payload->'Entity') = 'object'
+             THEN coalesce(i.source_payload->'Entity'->>'Name', i.source_payload->'Entity'->>'Value', i.source_payload->'Entity'->>'v', '')
+             ELSE coalesce(i.source_payload->>'Entity', '')
+           END,
+           ''
+         )), '') IS NULL
+    )
+  )
   OR (
     jsonb_typeof(i.source_payload->'Entity') = 'object'
     AND lower(trim(coalesce(
@@ -94,6 +111,22 @@ ENTITY_SCOPE_SQL="(
 ENTITY_SCOPE_SQL_BARE="(
   '${ENTITY_FILTER_SQL}' = ''
   OR lower(trim(coalesce(entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    '${ENTITY_FILTER_SQL}' <> ''
+    AND lower(trim('${ENTITY_FILTER_SQL}')) = 'refex'
+    AND coalesce(nullif(trim(entity), ''), '') = ''
+    AND (
+      source_payload->'Entity' IS NULL
+      OR source_payload->>'Entity' IS NULL
+      OR nullif(trim(coalesce(
+           CASE WHEN jsonb_typeof(source_payload->'Entity') = 'object'
+             THEN coalesce(source_payload->'Entity'->>'Name', source_payload->'Entity'->>'Value', source_payload->'Entity'->>'v', '')
+             ELSE coalesce(source_payload->>'Entity', '')
+           END,
+           ''
+         )), '') IS NULL
+    )
+  )
   OR (
     jsonb_typeof(source_payload->'Entity') = 'object'
     AND lower(trim(coalesce(
@@ -522,23 +555,25 @@ SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
 OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SUMMARY_JSON}")"
 CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SUMMARY_JSON}")"
+# KPI cards must use the same sla snapshot counts (not MIS user-row sums).
+TOTAL_TICKETS="$(jq -r '.total_tickets // 0' <<< "${SUMMARY_JSON}")"
+TOTAL_OPEN="$(jq -r '.open_tickets // 0' <<< "${SUMMARY_JSON}")"
+TOTAL_CLOSED="$(jq -r '.closed_tickets // 0' <<< "${SUMMARY_JSON}")"
 if report_live_today_kpis "${ITSM_PROCESS_ID}" "${ITSM_APP_ID}" "${ENTITY_FILTER}"; then
-  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?} (sql opened=${OPENED_TODAY} closed=${CLOSED_TODAY})"
-  # Prefer live for opened (list always has _created_at). For closed, take the max of
-  # live vs SQL — list often omits _modified_at so SQL/detail may be higher after full ingest.
+  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?} closed_today=${REPORT_LIVE_CLOSED_TODAY:-?} (sql total=${TOTAL_TICKETS} open=${TOTAL_OPEN} closed=${TOTAL_CLOSED})"
   OPENED_TODAY="$(report_prefer_live_today "${OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  TOTAL_TICKETS="$(report_prefer_live_today "${TOTAL_TICKETS}" "${REPORT_LIVE_TOTAL_TICKETS}")"
+  TOTAL_OPEN="$(report_prefer_live_today "${TOTAL_OPEN}" "${REPORT_LIVE_OPEN_TICKETS}")"
+  TOTAL_CLOSED="$(report_prefer_live_today "${TOTAL_CLOSED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ ]]; then
     if [[ "${REPORT_LIVE_CLOSED_TODAY}" -ge "${CLOSED_TODAY}" ]]; then
       CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
     fi
   fi
 else
-  log "Live Kissflow today KPI overlay unavailable — using PostgreSQL snapshot counts"
+  log "Live Kissflow ticket KPI overlay unavailable — using PostgreSQL snapshot counts"
 fi
 
-TOTAL_OPEN="$(jq '[.[].open_count] | add // 0' <<< "${USERS_JSON}")"
-TOTAL_CLOSED="$(jq '[.[].closed_count] | add // 0' <<< "${USERS_JSON}")"
-TOTAL_TICKETS="$(jq -r '.total_tickets' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_OPEN="$(jq -r '.sla_breached_open' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_CLOSED="$(jq -r '.sla_breached_closed' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_TOTAL="$(( SLA_BREACHED_OPEN + SLA_BREACHED_CLOSED ))"

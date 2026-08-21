@@ -276,14 +276,17 @@ SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
       )
     }
 ' <<< "${SOLAR_USERS_JSON}")"
-SOLAR_TOTAL="$(jq -r '.total_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_OPEN="$(jq -r '.open_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_CLOSED="$(jq -r '.closed_requests' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_TOTAL="$(jq -r '.total_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_OPEN="$(jq -r '.open_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_CLOSED="$(jq -r '.closed_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 if report_live_today_kpis "${SOLAR_PROCESS_ID}" "${SOLAR_APP_ID}" ""; then
-  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?} (sql opened=${SOLAR_OPENED_TODAY} closed=${SOLAR_CLOSED_TODAY})"
+  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?}"
   SOLAR_OPENED_TODAY="$(report_prefer_live_today "${SOLAR_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  SOLAR_TOTAL="$(report_prefer_live_today "${SOLAR_TOTAL}" "${REPORT_LIVE_TOTAL_TICKETS}")"
+  SOLAR_OPEN="$(report_prefer_live_today "${SOLAR_OPEN}" "${REPORT_LIVE_OPEN_TICKETS}")"
+  SOLAR_CLOSED="$(report_prefer_live_today "${SOLAR_CLOSED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${SOLAR_CLOSED_TODAY}" ]]; then
     SOLAR_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
   fi

@@ -271,14 +271,17 @@ PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
       )
     }
 ' <<< "${PM_USERS_JSON}")"
-PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
 if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" ""; then
-  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?} (sql opened=${PM_OPENED_TODAY} closed=${PM_CLOSED_TODAY})"
+  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?}"
   PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  PM_TOTAL="$(report_prefer_live_today "${PM_TOTAL}" "${REPORT_LIVE_TOTAL_TICKETS}")"
+  PM_PENDING="$(report_prefer_live_today "${PM_PENDING}" "${REPORT_LIVE_OPEN_TICKETS}")"
+  PM_COMPLETED="$(report_prefer_live_today "${PM_COMPLETED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then
     PM_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
   fi

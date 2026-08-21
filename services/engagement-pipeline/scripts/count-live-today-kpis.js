@@ -79,9 +79,21 @@ function pickEntity(raw) {
   return '';
 }
 
+function isBusinessOpen(raw) {
+  if (applicationId === ITSM_APP_ID) {
+    const status = normalizeStatus(raw);
+    const step = String(raw?._current_step || raw?.Current_Step || '').toLowerCase();
+    return status === 'InProgress' && !step.includes('it tech reopen');
+  }
+  return normalizeStatus(raw) === 'InProgress';
+}
+
 function entityMatches(raw) {
   if (!entityFilter || entityFilter === 'all' || entityFilter === '*') return true;
-  return pickEntity(raw).toLowerCase() === entityFilter.toLowerCase();
+  const entity = pickEntity(raw);
+  // Classic Refex report: include blank Entity (many live tickets omit the field).
+  if (!entity && entityFilter.toLowerCase() === 'refex') return true;
+  return entity.toLowerCase() === entityFilter.toLowerCase();
 }
 
 function normalizeStatus(raw) {
@@ -206,10 +218,14 @@ async function main() {
   const items = await fetchAllItems();
   let openedToday = 0;
   let closedToday = 0;
+  let openCount = 0;
+  let closedCount = 0;
   let scoped = 0;
   for (const raw of items) {
     if (!entityMatches(raw)) continue;
     scoped += 1;
+    if (isBusinessOpen(raw)) openCount += 1;
+    else if (isBusinessClosed(raw)) closedCount += 1;
     if (isTodayIst(itemCreatedAt(raw))) openedToday += 1;
     if (isTodayIst(itemCompletedAt(raw))) closedToday += 1;
   }
@@ -217,6 +233,9 @@ async function main() {
     JSON.stringify({
       opened_today: openedToday,
       closed_today: closedToday,
+      open_tickets: openCount,
+      closed_tickets: closedCount,
+      total_tickets: scoped,
       item_count: scoped,
       list_count: items.length,
       entity_filter: entityFilter || null,
