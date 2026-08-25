@@ -696,6 +696,7 @@ router.patch('/:scheduleId', async (req, res) => {
       hasProcessId ||
       hasWebsiteFilter ||
       hasUserGroupFilter ||
+      hasEntityFilter ||
       hasSubject
     ) {
       if (hasTemplateId) {

@@ -21,6 +21,29 @@ function samplePmUserTableHtml(): string {
   return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 09:40</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>3</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">12</td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-28 16:05</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">8</td></tr>`;
 }
 
+function sampleTravelUserTableHtml(): string {
+  return (
+    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>1</b></td></tr>` +
+    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Finance Review</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`
+  );
+}
+
+function sampleTravelUserTableSectionHtml(usersHtml: string): string {
+  return (
+    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending travel requests</td></tr>' +
+    '<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:11.5px;">' +
+    '<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">User</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Pending Duration</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">SLA Breached</td>' +
+    '</tr>' +
+    usersHtml +
+    '</table></td></tr>'
+  );
+}
+
 function sampleItsmSourceBreakdownHtml(): string {
   const row = (label: string, count: string, tone: string, bg: string) =>
     `<tr style="background-color:${bg};" bgcolor="${bg}"><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:12px; color:#334155 !important;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${tone};margin-right:8px;"></span>${label}</td><td style="padding:9px 12px; border-bottom:1px solid #ececea; font-size:13px; font-weight:bold; color:#1a1a1a !important;" align="right">${count}</td></tr>`;
@@ -82,7 +105,7 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
     case 'expense':
       return 'Expense Management Report';
     case 'travel':
-      return 'Travel Management Report';
+      return 'Travel Management Daily Usage Report';
     case 'itsm':
       return 'Kissflow User Engagement Report';
     default:
@@ -143,6 +166,12 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     ClosedClaims: '72',
     PendingRequests: '9',
     CompletedRequests: '39',
+    RejectedRequests: '3',
+    EntityScope: 'Venwind travel requests only',
+    EntityName: 'Venwind',
+    UsersWithPending: '2',
+    OverallSummaryHtml: '',
+    EntitySectionsHtml: '',
     SalesPersons: '3',
     UserTableHtml: sampleEngagementUserTableHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
@@ -172,10 +201,25 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.TotalUsers = '2';
     base.ReportBody = 'Expense Management covers pending and closed claims from Kissflow.';
   } else if (kind === 'travel') {
-    base.UserTableHtml = samplePmUserTableHtml();
+    const travelUsers = sampleTravelUserTableHtml();
+    base.UserTableHtml = travelUsers;
+    base.UserTableSectionHtml = sampleTravelUserTableSectionHtml(travelUsers);
+    base.PendingDetailsHtml = '';
+    base.SlaAnalysisHtml = '';
+    base.SlaAnalysisHtml = '';
     base.SignedInToday = '1';
     base.TotalUsers = '2';
-    base.ReportBody = 'Travel Management covers pending and completed travel requests from Kissflow.';
+    base.UsersWithPending = '2';
+    base.SlaBreachedTotal = '1';
+    base.SlaBreachedOpen = '1';
+    base.SlaBreachedClosed = '0';
+    base.RejectedRequests = '0';
+    base.EntityScope = 'Venwind travel requests only';
+    base.EntityName = 'Venwind';
+    base.OverallSummaryHtml = '';
+    base.EntitySectionsHtml = '';
+    base.ReportBody =
+      'Venwind only. Combines Advance Payment, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.';
   }
 
   return base;
@@ -316,14 +360,23 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
   travel: [
     'ReportTitle',
     'ReportDate',
+    'EntityScope',
+    'EntityName',
     'TotalRequests',
     'PendingRequests',
     'CompletedRequests',
+    'UsersWithPending',
+    'SlaBreachedTotal',
+    'SlaBreachedOpen',
+    'SlaBreachedClosed',
     'TotalUsers',
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
     'UserTableHtml',
+    'UserTableSectionHtml',
+    'PendingDetailsHtml',
+    'SlaAnalysisHtml',
     'ReportBody',
   ],
   generic: [

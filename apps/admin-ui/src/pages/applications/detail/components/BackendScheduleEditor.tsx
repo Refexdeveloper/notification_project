@@ -16,6 +16,7 @@ import ScheduleFromEmailField from '@/components/schedules/ScheduleFromEmailFiel
 import ScheduleReportIdentityFields, {
   type ScheduleReportIdentityValue,
 } from '@/components/schedules/ScheduleReportIdentityFields';
+import { isTravelApp } from '@/lib/processLabels';
 import { Button } from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
@@ -55,13 +56,17 @@ function scheduleToCadenceState(schedule: ReportScheduler): ScheduleCadenceState
 }
 
 function scheduleToIdentity(schedule: ReportScheduler, app: KissflowApplication): ScheduleReportIdentityValue {
+  const rawEntity = schedule.entityFilter || '';
+  const travel = isTravelApp(app.appId, app.displayName || app.name);
+  const entityFilter =
+    travel && (!rawEntity || rawEntity === 'both' || rawEntity === 'all') ? 'Venwind' : rawEntity;
   return {
     templateId: schedule.templateId,
     templateName: schedule.templateName,
     processId: schedule.processId || app.processIds?.[0] || '',
     websiteFilter: schedule.websiteFilter || '',
     userGroupFilter: schedule.userGroupFilter || '',
-    entityFilter: schedule.entityFilter || '',
+    entityFilter,
     subject: schedule.subject || schedule.templateName || schedule.name,
   };
 }
