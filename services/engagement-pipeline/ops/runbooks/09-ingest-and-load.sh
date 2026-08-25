@@ -460,7 +460,7 @@ SELECT
   COALESCE(prev.criticality, ''),
   COALESCE(prev.entity, ''),
   COALESCE(prev.requester_email, ''),
-  prev.source_payload::text
+  prev.source_payload
 FROM engagement_reporting.item prev
 WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
   AND prev.process_id = '${PROCESS_ID}'

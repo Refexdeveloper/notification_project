@@ -18,6 +18,12 @@
  * Prints JSON: { opened_today, closed_today, open_tickets, closed_tickets, total_tickets, ... }
  */
 const https = require('https');
+const path = require('path');
+const {
+  classifyTicketSource,
+  emptySourceBuckets,
+  bumpSource,
+} = require(path.join(__dirname, 'itsm-ticket-source.js'));
 
 const TZ = 'Asia/Kolkata';
 const PAGE_SIZE = 100;
@@ -351,12 +357,24 @@ async function main() {
   let openCount = 0;
   let closedCount = 0;
   let scoped = 0;
+  const sourceAll = emptySourceBuckets();
+  const sourceOpen = emptySourceBuckets();
+  const sourceOpenedToday = emptySourceBuckets();
   for (const raw of items) {
     if (!entityMatches(raw)) continue;
     scoped += 1;
-    if (isBusinessOpen(raw)) openCount += 1;
-    else if (isBusinessClosed(raw)) closedCount += 1;
-    if (isOpenedToday(raw)) openedToday += 1;
+    const channel = classifyTicketSource(raw);
+    bumpSource(sourceAll, channel);
+    if (isBusinessOpen(raw)) {
+      openCount += 1;
+      bumpSource(sourceOpen, channel);
+    } else if (isBusinessClosed(raw)) {
+      closedCount += 1;
+    }
+    if (isOpenedToday(raw)) {
+      openedToday += 1;
+      bumpSource(sourceOpenedToday, channel);
+    }
     if (isClosedToday(raw)) closedToday += 1;
   }
   process.stdout.write(
@@ -370,6 +388,9 @@ async function main() {
       list_count: items.length,
       entity_filter: entityFilter || null,
       process_id: processId,
+      source_all: sourceAll,
+      source_open: sourceOpen,
+      source_opened_today: sourceOpenedToday,
     }),
   );
 }

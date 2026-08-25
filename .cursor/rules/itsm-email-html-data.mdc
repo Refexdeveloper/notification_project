@@ -1,0 +1,47 @@
+---
+description: ITSM email HTML KPIs, Source breakdown, Today and Sign-in conditions
+globs: services/engagement-pipeline/**/*,ops/runbooks/report-template-lib.sh,db/seeds/itsm-engagement-template.html,tests/playwright/**/*
+alwaysApply: false
+---
+
+# ITSM scheduled email — data rules
+
+Read `docs/release-notes/2026-08-21-report-kpi-fixes.md` and `AGENTS.md` first.
+Deploy target for email numbers: `refex-schedule-runner` only.
+
+## KPI cards (Admin All — no Me/Team/Closed By)
+
+| Card | Condition |
+|------|-----------|
+| Total Tickets | Entity-scoped process items (Refex includes blank Entity) |
+| Open | NOT Closed, NOT Rejected, NOT Cancelled |
+| Closed | NOT Rejected AND (IT Tech Reopen / ReOpen Window / Employee Feedback **or** Kissflow **Completed**). Not Statu_1 Closed alone |
+| Opened Today | Created today IST **and** still Open |
+| Closed Today | Closed rule + closed-at today IST (`_modified_at` first on reopen) |
+| Signed In Today / Total Users | MIS user table (app role members); green row if signed in today |
+
+Live overlay: `count-live-today-kpis.js` preferred over SQL when available.
+
+## Ticket source panel (Email / WhatsApp / Mobile / Web)
+
+Root cause of Email/Mobile always 0: Source often lives on report Column ids, not `Source`.
+
+Extract from (in order):
+
+- `Source` / `Ticket_Source` / `Channel` / `Raised_By` / `Entity_Source` (string or `{Name,Value,v}`)
+- Refex: `Column_BDSZ_sAHys`
+- Extrovis: `Column_hFjGV8lRrn`
+
+Classify: whats→WhatsApp; email/mail→Email; mobile/phone/sms/app→Mobile; web/portal/browser/desktop→Web; else Other.
+
+Shared helper: `services/engagement-pipeline/scripts/itsm-ticket-source.js`  
+SQL + live overlay in `06-render-html-report.sh`.
+
+Show **0 only when the channel truly has zero tickets**. If data exists, counts must be non-zero. Prefer live source overlay when SQL mapped Email+WhatsApp+Mobile+Web is 0.
+
+## Tests
+
+- `node tests/itsm-ticket-source.test.js`
+- `npx playwright test tests/playwright/itsm-report-html.spec.js`
+
+Do not change test-send behavior unless the user asks.

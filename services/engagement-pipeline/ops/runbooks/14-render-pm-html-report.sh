@@ -276,12 +276,48 @@ PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
+# Defaults until live portfolio overlay runs
+PM_TOTAL_PROJECTS="0"
+PM_OPEN_PROJECTS="0"
+PM_COMPLETED_PROJECTS="0"
+PM_LINKED_TASKS="0"
+PM_INDIVIDUAL="0"
+PM_INDIVIDUAL_PENDING="0"
+PM_INDIVIDUAL_COMPLETED="0"
+PM_TOTAL_SUBTASKS="0"
+PM_PENDING_SUBTASKS="0"
+PM_COMPLETED_SUBTASKS="0"
+
+PM_PORTFOLIO_SCRIPT="${REPO_ROOT}/services/engagement-pipeline/scripts/count-pm-portfolio-kpis.js"
+if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
+  if PM_PORTFOLIO_JSON="$(
+    PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_TASK_PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}" \
+    PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}" \
+    node "${PM_PORTFOLIO_SCRIPT}" 2>/dev/null
+  )"; then
+    log "Live PM portfolio: projects=$(jq -r '.total_projects' <<< "${PM_PORTFOLIO_JSON}") tasks=$(jq -r '.total_tasks' <<< "${PM_PORTFOLIO_JSON}") individual=$(jq -r '.individual_tasks' <<< "${PM_PORTFOLIO_JSON}") subtasks=$(jq -r '.total_subtasks' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_PROJECTS="$(jq -r '.total_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_OPEN_PROJECTS="$(jq -r '.open_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_PROJECTS="$(jq -r '.completed_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_LINKED_TASKS="$(jq -r '.linked_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL="$(jq -r '.individual_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_PENDING="$(jq -r '.individual_pending // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_COMPLETED="$(jq -r '.individual_completed // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_SUBTASKS="$(jq -r '.total_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING_SUBTASKS="$(jq -r '.pending_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_SUBTASKS="$(jq -r '.completed_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+  else
+    log "Live PM portfolio overlay unavailable — using snapshot task totals only"
+  fi
+fi
 if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" ""; then
-  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?}"
+  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?}"
   PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
-  PM_TOTAL="$(report_prefer_live_today "${PM_TOTAL}" "${REPORT_LIVE_TOTAL_TICKETS}")"
-  PM_PENDING="$(report_prefer_live_today "${PM_PENDING}" "${REPORT_LIVE_OPEN_TICKETS}")"
-  PM_COMPLETED="$(report_prefer_live_today "${PM_COMPLETED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then
     PM_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
   fi
@@ -298,31 +334,59 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
+# Prefer portfolio seed when published Admin HTML is still the old tasks-only layout.
+if ! grep -q '{{TotalProjects}}' "${TEMPLATE_SRC}" 2>/dev/null; then
+  PM_SEED="$(report_template_repo_root)/db/seeds/pm-engagement-template.html"
+  if [[ -f "${PM_SEED}" ]]; then
+    log "Published PM template lacks portfolio placeholders — using seed ${PM_SEED}"
+    cp "${PM_SEED}" "${TEMPLATE_SRC}"
+  fi
+fi
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
-  REPORT_TITLE="${SUBJECT:-Project Management Task Report}"
+  REPORT_TITLE="${SUBJECT:-Project Management Portfolio Report}"
 fi
 
 jq -n \
   --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg TotalProjects "${PM_TOTAL_PROJECTS}" \
+  --arg OpenProjects "${PM_OPEN_PROJECTS}" \
+  --arg CompletedProjects "${PM_COMPLETED_PROJECTS}" \
   --arg TotalTasks "${PM_TOTAL}" \
   --arg PendingTasks "${PM_PENDING}" \
   --arg CompletedTasks "${PM_COMPLETED}" \
+  --arg LinkedTasks "${PM_LINKED_TASKS}" \
+  --arg IndividualTasks "${PM_INDIVIDUAL}" \
+  --arg IndividualPending "${PM_INDIVIDUAL_PENDING}" \
+  --arg IndividualCompleted "${PM_INDIVIDUAL_COMPLETED}" \
+  --arg TotalSubTasks "${PM_TOTAL_SUBTASKS}" \
+  --arg PendingSubTasks "${PM_PENDING_SUBTASKS}" \
+  --arg CompletedSubTasks "${PM_COMPLETED_SUBTASKS}" \
   --arg OpenedToday "${PM_OPENED_TODAY}" \
   --arg ClosedToday "${PM_CLOSED_TODAY}" \
   --arg TotalUsers "${PM_TOTAL_USERS}" \
   --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${PM_ROWS_HTML}" \
-  --arg ReportBody "Project Tracker covers all entities group-wide." \
+  --arg ReportBody "Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
+    TotalProjects: $TotalProjects,
+    OpenProjects: $OpenProjects,
+    CompletedProjects: $CompletedProjects,
     TotalTasks: $TotalTasks,
     PendingTasks: $PendingTasks,
     CompletedTasks: $CompletedTasks,
+    LinkedTasks: $LinkedTasks,
+    IndividualTasks: $IndividualTasks,
+    IndividualPending: $IndividualPending,
+    IndividualCompleted: $IndividualCompleted,
+    TotalSubTasks: $TotalSubTasks,
+    PendingSubTasks: $PendingSubTasks,
+    CompletedSubTasks: $CompletedSubTasks,
     OpenedToday: $OpenedToday,
     ClosedToday: $ClosedToday,
     TotalUsers: $TotalUsers,

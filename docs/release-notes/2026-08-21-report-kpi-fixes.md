@@ -61,6 +61,21 @@ Rows for users whose last sign-in is today (IST) get green background (`#dcfce7`
 
 ---
 
+## Ticket source panel (Email / Mobile was always 0)
+
+**Root cause:** Kissflow stores Source on report column ids (`Column_BDSZ_sAHys` Refex, `Column_hFjGV8lRrn` Extrovis), often as `{Name:…}` objects. SQL only read `Source` / `Ticket_Source` / `Channel` → almost everything became Other → Email/Mobile/Web showed **0**.
+
+**Fix:**
+
+- Shared classifier: `services/engagement-pipeline/scripts/itsm-ticket-source.js`
+- Expanded SQL coalesce in `06-render-html-report.sh`
+- Live overlay source counts from `count-live-today-kpis.js` when SQL mapped channels are empty/weaker
+- Ingest carry-forward: stop casting `source_payload` to text when column is jsonb (`09-ingest-and-load.sh`)
+
+**Tests:** `tests/itsm-ticket-source.test.js`, Playwright `tests/playwright/itsm-report-html.spec.js`
+
+---
+
 ## Closed Today — exact condition (aligned to Admin All dashboard)
 
 Source of truth: `aasik_ITSM` `kfITServiceDashboard.js` —

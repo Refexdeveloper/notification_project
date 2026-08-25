@@ -238,13 +238,28 @@ sla AS (
         )
       )
     ) AS is_open,
-    -- Kissflow Source field (Email / WhatsApp / Mobile / Web).
+    -- Kissflow Source (native name + report Column_* ids from aasik_ITSM profiles).
     lower(trim(coalesce(
       NULLIF(trim(source_payload->>'Source'), ''),
       NULLIF(trim(source_payload->'Source'->>'Name'), ''),
       NULLIF(trim(source_payload->'Source'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Source'->>'v'), ''),
       NULLIF(trim(source_payload->>'Ticket_Source'), ''),
       NULLIF(trim(source_payload->>'Channel'), ''),
+      NULLIF(trim(source_payload->>'Raised_By'), ''),
+      NULLIF(trim(source_payload->'Raised_By'->>'Name'), ''),
+      NULLIF(trim(source_payload->>'Entity_Source'), ''),
+      NULLIF(trim(source_payload->'Entity_Source'->>'Name'), ''),
+      -- Refex process/report Source column
+      NULLIF(trim(source_payload->>'Column_BDSZ_sAHys'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'Name'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'v'), ''),
+      -- Extrovis process/report Source column
+      NULLIF(trim(source_payload->>'Column_hFjGV8lRrn'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'Name'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'v'), ''),
       ''
     ))) AS source_raw
   FROM engagement_reporting.item i, latest l
@@ -255,9 +270,11 @@ sla_sourced AS (
     *,
     CASE
       WHEN source_raw LIKE '%whats%' THEN 'WhatsApp'
-      WHEN source_raw LIKE '%email%' OR source_raw LIKE '%e-mail%' OR source_raw LIKE '%e mail%' THEN 'Email'
-      WHEN source_raw LIKE '%mobile%' OR source_raw LIKE '%android%' OR source_raw LIKE '%ios%' THEN 'Mobile'
-      WHEN source_raw LIKE '%web%' OR source_raw LIKE '%portal%' OR source_raw LIKE '%browser%' THEN 'Web'
+      WHEN source_raw LIKE '%email%' OR source_raw LIKE '%e-mail%' OR source_raw LIKE '%e mail%' OR source_raw = 'mail' THEN 'Email'
+      WHEN source_raw LIKE '%mobile%' OR source_raw LIKE '%android%' OR source_raw LIKE '%ios%'
+        OR source_raw LIKE '%phone%' OR source_raw LIKE '%sms%' OR source_raw LIKE '%app%' THEN 'Mobile'
+      WHEN source_raw LIKE '%web%' OR source_raw LIKE '%portal%' OR source_raw LIKE '%browser%'
+        OR source_raw LIKE '%desktop%' OR source_raw LIKE '%kissflow%' THEN 'Web'
       ELSE 'Other'
     END AS source_channel
   FROM sla
@@ -632,7 +649,37 @@ SOURCE_WHATSAPP_TODAY="$(jq -r '.source_opened_today.WhatsApp // 0' <<< "${SUMMA
 SOURCE_MOBILE_TODAY="$(jq -r '.source_opened_today.Mobile // 0' <<< "${SUMMARY_JSON}")"
 SOURCE_WEB_TODAY="$(jq -r '.source_opened_today.Web // 0' <<< "${SUMMARY_JSON}")"
 SOURCE_OTHER_TODAY="$(jq -r '.source_opened_today.Other // 0' <<< "${SUMMARY_JSON}")"
+
+# Prefer live Source classification when SQL mapped Email+Mobile+Web+WhatsApp is all zero
+# but tickets exist (legacy Source field empty; real values live on Column_* ids).
+if [[ -n "${REPORT_LIVE_SOURCE_JSON:-}" ]]; then
+  sql_mapped=$(( SOURCE_EMAIL_ALL + SOURCE_WHATSAPP_ALL + SOURCE_MOBILE_ALL + SOURCE_WEB_ALL ))
+  live_mapped="$(jq -r '(.source_all.Email//0)+(.source_all.WhatsApp//0)+(.source_all.Mobile//0)+(.source_all.Web//0)' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+  if [[ "${sql_mapped}" -eq 0 && "${live_mapped}" =~ ^[0-9]+$ && "${live_mapped}" -gt 0 ]] \
+    || [[ "${live_mapped}" =~ ^[0-9]+$ && "${live_mapped}" -ge "${sql_mapped}" && "${TOTAL_TICKETS}" -gt 0 ]]; then
+    log "Live Kissflow source overlay: email=$(jq -r '.source_all.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}") mobile=$(jq -r '.source_all.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}") (sql mapped=${sql_mapped})"
+    SOURCE_EMAIL_ALL="$(jq -r '.source_all.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_ALL="$(jq -r '.source_all.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_ALL="$(jq -r '.source_all.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_ALL="$(jq -r '.source_all.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_ALL="$(jq -r '.source_all.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_EMAIL_OPEN="$(jq -r '.source_open.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_OPEN="$(jq -r '.source_open.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_OPEN="$(jq -r '.source_open.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_OPEN="$(jq -r '.source_open.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_OPEN="$(jq -r '.source_open.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_EMAIL_TODAY="$(jq -r '.source_opened_today.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_TODAY="$(jq -r '.source_opened_today.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_TODAY="$(jq -r '.source_opened_today.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_TODAY="$(jq -r '.source_opened_today.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_TODAY="$(jq -r '.source_opened_today.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+  fi
+fi
 SOURCE_TODAY_TOTAL="$(( SOURCE_EMAIL_TODAY + SOURCE_WHATSAPP_TODAY + SOURCE_MOBILE_TODAY + SOURCE_WEB_TODAY + SOURCE_OTHER_TODAY ))"
+# Keep Today-open panel total aligned with Opened Today KPI when overlay is present.
+if [[ "${OPENED_TODAY}" =~ ^[0-9]+$ && "${OPENED_TODAY}" -gt 0 ]]; then
+  SOURCE_TODAY_TOTAL="${OPENED_TODAY}"
+fi
 
 # Compact All | Today-open source panel (email-safe). Built in Node (same markup as Admin UI preview)
 # so jq never JSON-escapes style="..." attributes (that made Extrovis/Refex panels look unstyled).

@@ -438,7 +438,9 @@ case "${APPLICATION_ID}" in
     fi
     ;;
   Project_Management_Tracker_A00)
-    export SUBJECT="${SUBJECT:-Kissflow - Project Task Report}"
+    export SUBJECT="${SUBJECT:-Kissflow - Project Management Portfolio Report}"
+    export PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}"
+    export PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}"
     if [[ "${TEST_SEND}" == "true" ]]; then
       send_test_report \
         "${REPO_ROOT}/templates/generated/pm-report-latest.html" \
@@ -446,10 +448,19 @@ case "${APPLICATION_ID}" in
         "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/14-render-pm-html-report.sh"
       log "PM test send completed"
     else
-      log "Step 1/3: Ingest latest Kissflow PM data into PostgreSQL"
+      log "Step 1/3: Ingest latest Kissflow PM tasks into PostgreSQL"
       export FULL_INGEST=true
+      export PROCESS_ID="${PROCESS_ID:-Project_Sub_Task_A01}"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
-      log "Step 2/3: Rendering PM report"
+      log "Step 1b/3: Ingest PM sub-tasks (${PM_SUBTASK_PROCESS_ID})"
+      (
+        export PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+        export PM_PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+        export PROCESS_NAME="Sub Task"
+        export FULL_INGEST=true
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
+      ) || log "WARNING: sub-task ingest failed — live portfolio overlay still counts Sub_Task_Process_A00"
+      log "Step 2/3: Rendering PM portfolio report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/14-render-pm-html-report.sh"
       log "Step 3/3: Sending PM report"
       send_cached_report "${REPO_ROOT}/templates/generated/pm-report-latest.html"

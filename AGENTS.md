@@ -18,8 +18,16 @@ GCP: project `master-diorama-489103-u2`, region `asia-south1`.
 
 - Fix **scheduled** mail KPIs without changing **test-send** conditions unless the user explicitly asks.
 - ITSM Closed / Today Closed / Today Open must match **Admin All** rules in `aasik_ITSM` (`kfITServiceDashboard.js`) — no Me/Team/Closed By. See release note.
+- ITSM **Source** (Email/Mobile/…) must read Kissflow `Source` **and** report Column ids (`Column_BDSZ_sAHys` / `Column_hFjGV8lRrn`); never ship all-zero Email/Mobile when tickets exist. Helper: `itsm-ticket-source.js`.
 - KPI source of truth for process reports: live Kissflow overlay + full ingest on schedules.
 - Never commit secrets, `ops/tmp/`, or noisy `data/audit/` artifacts.
+
+## Tests for ITSM HTML data
+
+```bash
+node tests/itsm-ticket-source.test.js
+npx playwright test tests/playwright/itsm-report-html.spec.js
+```
 
 ## Deploy that affects email numbers
 
@@ -29,6 +37,7 @@ DEPLOY_APPROVED=true bash ops/runbooks/32-deploy-schedule-runner.sh build-deploy
 
 Admin UI / backend-api deploys do **not** update scheduled email KPI logic.
 
-## Cursor rule
+## Cursor rules
 
-Project rule `.cursor/rules/engagement-report-kpis.mdc` reminds agents of Closed Today conditions and the docs above when editing pipeline/report files.
+- `.cursor/rules/engagement-report-kpis.mdc` — Closed Today / entity scope
+- `.cursor/rules/itsm-email-html-data.mdc` — Source panel, Today, Sign-in, Playwright

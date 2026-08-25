@@ -18,7 +18,7 @@
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">{{ReportTitle}}</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Project Task &middot; Project Management Tracker</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Projects · Tasks · Individual · Sub-tasks</div>
 <div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated {{ReportDate}}</div>
 </td>
 </tr></table>
@@ -28,32 +28,7 @@
 <img src="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif" alt="" width="680" height="6" style="display:block; width:100%; height:6px; border:0;">
 </td></tr>
 
-<tr><td style="padding:24px 32px 6px 32px;" bgcolor="#ffffff">
-<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Task Summary</div>
-</td></tr>
-<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td width="23%" align="center" valign="top" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(30,80,160,0.06);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{TotalTasks}}</div>
-<div style="font-size:10.5px; color:#5b7ba3 !important; margin-top:4px;">Total Tasks</div>
-<div style="font-size:9.5px; color:#5b7ba3 !important; margin-top:2px; line-height:1;">&nbsp;</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" valign="top" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(180,120,20,0.07);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{PendingTasks}}</div>
-<div style="font-size:10.5px; color:#9a7a3a !important; margin-top:4px;">Pending Tasks</div>
-<div style="font-size:9.5px; color:#9a7a3a !important; margin-top:2px; line-height:1;">&nbsp;</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" valign="top" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#1a1a1a !important;">{{CompletedTasks}}</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Completed Tasks</div>
-<div style="font-size:9.5px; color:#3f8f63 !important; margin-top:2px; line-height:1;">&nbsp;</div></td>
-<td width="2.6%"></td>
-<td width="23%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 4px; box-shadow:0 2px 6px rgba(26,140,92,0.08);">
-<div style="font-size:20px; font-weight:bold; color:#14503a !important;">{{TotalUsers}}</div>
-<div style="font-size:10.5px; color:#3f8f63 !important; margin-top:4px;">Total Users</div>
-<div style="font-size:12px; font-weight:bold; color:#14503a !important; margin-top:2px; line-height:1.25;">{{SignedInToday}} of {{TotalUsers}} today</div></td>
-</tr></table></td></tr>
-
+<!-- Today's activity (top) -->
 <tr><td style="padding:22px 32px 6px 32px;" bgcolor="#ffffff">
 <div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Today's Task Activity</div>
 </td></tr>
@@ -68,13 +43,108 @@
 <div style="font-size:12px; color:#3468a8 !important; margin-top:6px; font-weight:bold; text-transform:uppercase; letter-spacing:0.4px;">Closed Today</div></td>
 </tr></table></td></tr>
 
+<!-- Projects -->
+<tr><td style="padding:20px 32px 4px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Projects</div>
+<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">In Progress = at least one pending task · Completed = all linked tasks done</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f5f3ff 0%,#ede9fe 100%) !important; border:1px solid #ddd6fe; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#5b21b6 !important;">{{TotalProjects}}</div>
+<div style="font-size:11px; color:#7c3aed !important; margin-top:4px; font-weight:bold;">Total Projects</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#9a7a3a !important;">{{OpenProjects}}</div>
+<div style="font-size:11px; color:#9a7a3a !important; margin-top:4px; font-weight:bold;">In Progress</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#14503a !important;">{{CompletedProjects}}</div>
+<div style="font-size:11px; color:#3f8f63 !important; margin-top:4px; font-weight:bold;">Completed Projects</div></td>
+</tr></table></td></tr>
+
+<!-- All tasks (project-linked + individual) -->
+<tr><td style="padding:20px 32px 4px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">All Tasks</div>
+<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Every task on Project Task process (linked to a project or not)</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#1a1a1a !important;">{{TotalTasks}}</div>
+<div style="font-size:11px; color:#5b7ba3 !important; margin-top:4px; font-weight:bold;">Total Tasks</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#1a1a1a !important;">{{PendingTasks}}</div>
+<div style="font-size:11px; color:#9a7a3a !important; margin-top:4px; font-weight:bold;">In Progress</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#1a1a1a !important;">{{CompletedTasks}}</div>
+<div style="font-size:11px; color:#3f8f63 !important; margin-top:4px; font-weight:bold;">Completed</div></td>
+</tr></table></td></tr>
+
+<!-- Individual tasks (no project) -->
+<tr><td style="padding:20px 32px 4px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Individual Tasks</div>
+<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Tasks with no linked Project ID — stand-alone work</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#fff7ed 0%,#ffedd5 100%) !important; border:1px solid #fed7aa; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#9a3412 !important;">{{IndividualTasks}}</div>
+<div style="font-size:11px; color:#c2410c !important; margin-top:4px; font-weight:bold;">Total Individual</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#9a7a3a !important;">{{IndividualPending}}</div>
+<div style="font-size:11px; color:#9a7a3a !important; margin-top:4px; font-weight:bold;">In Progress</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#14503a !important;">{{IndividualCompleted}}</div>
+<div style="font-size:11px; color:#3f8f63 !important; margin-top:4px; font-weight:bold;">Completed</div></td>
+</tr></table></td></tr>
+
+<!-- Sub-tasks -->
+<tr><td style="padding:20px 32px 4px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Sub-tasks</div>
+<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Child work under a parent task (Sub Task process)</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f0f9ff 0%,#e0f2fe 100%) !important; border:1px solid #bae6fd; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#075985 !important;">{{TotalSubTasks}}</div>
+<div style="font-size:11px; color:#0284c7 !important; margin-top:4px; font-weight:bold;">Total Sub-tasks</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%) !important; border:1px solid #f2e2c4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#9a7a3a !important;">{{PendingSubTasks}}</div>
+<div style="font-size:11px; color:#9a7a3a !important; margin-top:4px; font-weight:bold;">In Progress</div></td>
+<td width="3.5%"></td>
+<td width="31%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:14px 6px;">
+<div style="font-size:22px; font-weight:bold; color:#14503a !important;">{{CompletedSubTasks}}</div>
+<div style="font-size:11px; color:#3f8f63 !important; margin-top:4px; font-weight:bold;">Completed</div></td>
+</tr></table></td></tr>
+
+<!-- Users -->
+<tr><td style="padding:20px 32px 4px 32px;" bgcolor="#ffffff">
+<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">People</div>
+</td></tr>
+<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td width="48%" align="center" valign="top" style="background:linear-gradient(180deg,#f0fbf4 0%,#e0f5e8 100%) !important; border:1px solid #c7ead4; border-radius:8px; padding:16px 8px;">
+<div style="font-size:22px; font-weight:bold; color:#14503a !important;">{{TotalUsers}}</div>
+<div style="font-size:11px; color:#3f8f63 !important; margin-top:4px;">Total Users</div>
+<div style="font-size:12px; font-weight:bold; color:#14503a !important; margin-top:4px;">{{SignedInToday}} signed in today</div></td>
+<td width="4%"></td>
+<td width="48%" align="center" valign="top" style="background:linear-gradient(180deg,#f2f6fb 0%,#e8eef8 100%) !important; border:1px solid #dfe8f2; border-radius:8px; padding:16px 8px;">
+<div style="font-size:13px; color:#5b7ba3 !important; line-height:1.45;">Project-linked tasks: <b style="color:#1a1a1a !important;">{{LinkedTasks}}</b><br>Individual tasks: <b style="color:#1a1a1a !important;">{{IndividualTasks}}</b><br>Sub-tasks: <b style="color:#1a1a1a !important;">{{TotalSubTasks}}</b></div></td>
+</tr></table></td></tr>
+
 <tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending or recent activity</td></tr>
 <tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12.5px; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
 <tr style="background:linear-gradient(90deg,#4b2e83 0%,#7b52c9 100%) !important;" bgcolor="#4b2e83">
 <td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">User</td>
 <td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>
-<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>
+<td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">In Progress</td>
 <td style="padding:12px 14px; color:#ffffff !important; font-weight:bold;" align="center">Completed</td>
 </tr>
 {{UserTableHtml}}

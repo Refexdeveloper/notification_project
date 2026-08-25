@@ -124,6 +124,26 @@ else
   fail "no vite proxy to mysql api"
 fi
 
+# 12. ITSM Source classification + HTML panel counts
+if command -v node >/dev/null 2>&1 \
+  && node tests/itsm-ticket-source.test.js >/dev/null 2>&1 \
+  && node tests/itsm-source-breakdown-html.test.js >/dev/null 2>&1; then
+  pass "itsm ticket source + HTML panel"
+else
+  fail "itsm ticket source + HTML panel"
+fi
+
+# 13. Playwright ITSM HTML (optional — skip if @playwright/test missing)
+if command -v node >/dev/null 2>&1 && [[ -d node_modules/@playwright/test ]]; then
+  if npx playwright test tests/playwright/itsm-report-html.spec.js >/dev/null 2>&1; then
+    pass "playwright itsm report html"
+  else
+    fail "playwright itsm report html"
+  fi
+else
+  pass "playwright itsm report html (skipped — install deps to enable)"
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ "${FAIL}" -eq 0 ]]
