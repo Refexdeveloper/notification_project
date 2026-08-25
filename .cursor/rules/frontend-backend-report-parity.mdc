@@ -1,0 +1,17 @@
+---
+description: Keep Admin UI and schedule-runner/backend report KPIs in lockstep
+alwaysApply: true
+---
+
+# Frontend ↔ backend report parity
+
+When changing **scheduled email** KPIs, layouts, or placeholders:
+
+1. **Backend / runner first or together** — seed HTML (`db/seeds/*`), `reportStarters.js`, render runbook (`06` / `14` / …), live KPI scripts.
+2. **Admin UI in the same change** — `templatePreview.ts` samples + `PLACEHOLDER_HINTS_BY_APP`, starter Apply button / TemplatesTab help, PlaceholderPicker labels, Settings/Overview resource hints.
+3. **Do not ship runner-only or UI-only** for the same report feature. Users manage reports from the frontend; preview must match what email sends.
+4. **Check gaps before done** — starter placeholders ≡ seed `{{…}}` ≡ render vars ≡ FE preview samples; process/board IDs used by runner ≡ FE catalog / attach UX.
+5. **ITSM Source / PM portfolio** — follow `.cursor/rules/itsm-email-html-data.mdc` and `pmPortfolioSetup.ts` / `count-pm-portfolio-kpis.js` as shared contracts.
+6. **Field sync** — processes only (Admin Get-all-items). Boards are registered for PM project counts but have no field catalog. Attach/sync must cover **all** PM processes (`Project_Sub_Task_A01`, `Sub_Task_Process_A00`).
+
+Deploy: schedule-runner for email numbers; admin-ui for what users see in Preview/Settings.

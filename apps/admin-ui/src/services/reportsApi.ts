@@ -294,6 +294,11 @@ export type ReportStarter = {
   description: string;
   placeholders: string[];
   recommended?: boolean;
+  recommended_resources?: {
+    process_ids?: string[];
+    board_ids?: string[];
+    dataform_ids?: string[];
+  } | null;
   html?: string;
 };
 

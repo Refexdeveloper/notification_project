@@ -154,6 +154,16 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     AssignedTasks: '180',
     PendingTasks: '42',
     CompletedTasks: '198',
+    TotalProjects: '18',
+    OpenProjects: '11',
+    CompletedProjects: '7',
+    LinkedTasks: '212',
+    IndividualTasks: '28',
+    IndividualPending: '9',
+    IndividualCompleted: '19',
+    TotalSubTasks: '22',
+    PendingSubTasks: '8',
+    CompletedSubTasks: '14',
     TotalRequests: '48',
     AssignedRequests: '36',
     OpenRequests: '12',
@@ -183,7 +193,10 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
     base.TotalUsers = '2';
-    base.ReportBody = 'Project Tracker covers all entities group-wide.';
+    base.OpenedToday = '6';
+    base.ClosedToday = '4';
+    base.ReportBody =
+      "Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks.";
   } else if (kind === 'solar') {
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
@@ -305,13 +318,23 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
   pm: [
     'ReportTitle',
     'ReportDate',
+    'OpenedToday',
+    'ClosedToday',
+    'TotalProjects',
+    'OpenProjects',
+    'CompletedProjects',
     'TotalTasks',
     'PendingTasks',
     'CompletedTasks',
+    'LinkedTasks',
+    'IndividualTasks',
+    'IndividualPending',
+    'IndividualCompleted',
+    'TotalSubTasks',
+    'PendingSubTasks',
+    'CompletedSubTasks',
     'TotalUsers',
     'SignedInToday',
-    'OpenedToday',
-    'ClosedToday',
     'UserTableHtml',
     'ReportBody',
   ],

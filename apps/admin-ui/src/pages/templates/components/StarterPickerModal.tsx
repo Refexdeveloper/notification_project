@@ -170,6 +170,15 @@ export default function StarterPickerModal({
                   <p className="text-xs text-foreground-500 mt-1 leading-relaxed">
                     {item.description}
                   </p>
+                  {active && item.recommended_resources && (
+                    <p className="text-[11px] text-foreground-500 mt-1.5">
+                      Links:{' '}
+                      {[
+                        ...(item.recommended_resources.process_ids || []),
+                        ...(item.recommended_resources.board_ids || []),
+                      ].join(' · ') || '—'}
+                    </p>
+                  )}
                   {active && item.placeholders?.length > 0 && (
                     <p className="text-[11px] font-mono text-foreground-400 mt-2 line-clamp-2">
                       {item.placeholders.map((p) => `{{${p}}}`).join(' · ')}

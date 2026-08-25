@@ -514,8 +514,14 @@ router.post('/:applicationId/resources', async (req, res) => {
     await client.query('COMMIT');
 
     let field_sync = [];
-    if (syncFields && attached.added_process_ids.length) {
-      for (const processId of attached.added_process_ids) {
+    const processIdsToSync =
+      syncFields && validatedProcessIds.length
+        ? [...new Set(validatedProcessIds)]
+        : syncFields && attached.added_process_ids.length
+          ? [...new Set(attached.added_process_ids)]
+          : [];
+    if (processIdsToSync.length) {
+      for (const processId of processIdsToSync) {
         try {
           const syncResult = await syncProcessFields(pool, {
             environment,

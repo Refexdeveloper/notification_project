@@ -31,6 +31,17 @@ import {
   preferredTravelProcessId,
   processLabel,
 } from '@/lib/processLabels';
+import {
+  PM_STARTER_ID,
+  missingPmBoardIds,
+  missingPmProcessIds,
+  pmPortfolioResourcesComplete,
+  pmRecommendedBoardIds,
+  pmRecommendedProcessIds,
+  shouldShowPmSetup,
+  syncPmPortfolioProcessFields,
+} from '@/lib/pmPortfolioSetup';
+import { attachResourcesOnBackend } from '@/services/applicationsApi';
 
 interface SchedulersTabProps {
   app: KissflowApplication;
@@ -52,6 +63,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
   const [createProcessId, setCreateProcessId] = useState('');
   const [quickSetupBusy, setQuickSetupBusy] = useState(false);
   const [quickSetupMsg, setQuickSetupMsg] = useState('');
+  const [pmQuickSetupMsg, setPmQuickSetupMsg] = useState('');
 
   const extrovisProcessId =
     (app.processIds || []).find((pid) => isExtrovisProcess(pid)) || '';
@@ -237,6 +249,122 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     );
   };
 
+  const runPmPortfolioQuickSetup = async () => {
+    if (!backendMode || !shouldShowPmSetup(app)) return;
+    setQuickSetupBusy(true);
+    setPmQuickSetupMsg('');
+    setLoadError(null);
+
+    let setupNote = '';
+    if (!pmPortfolioResourcesComplete(app)) {
+      const nextProcesses = [
+        ...(app.processIds || []),
+        ...pmRecommendedProcessIds(),
+      ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
+      const nextBoards = [
+        ...(app.boardIds || []),
+        ...pmRecommendedBoardIds(),
+      ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
+      const attached = await attachResourcesOnBackend(app, {
+        process_ids: nextProcesses,
+        board_ids: nextBoards,
+        sync_fields: true,
+      });
+      if (!attached.ok) {
+        setLoadError(
+          attached.error ||
+            `Could not attach portfolio resources (need ${[
+              ...missingPmProcessIds(app),
+              ...missingPmBoardIds(app),
+            ].join(', ')})`,
+        );
+        setQuickSetupBusy(false);
+        return;
+      }
+      setupNote = 'Linked Project Tasks, Sub-tasks, and Projects board. ';
+      const syncAll = await syncPmPortfolioProcessFields({
+        ...app,
+        processIds: attached.process_ids || nextProcesses,
+        boardIds: attached.board_ids || nextBoards,
+      });
+      setupNote += `${syncAll.message} `;
+    }
+
+    let templatesRes = await loadTemplatesFromBackend(app);
+    let tpl =
+      templatesRes.templates.find((t) => /portfolio|project management/i.test(t.name)) ||
+      templatesRes.templates[0];
+
+    if (!tpl) {
+      const created = await createTemplateOnBackend(app, {
+        name: 'Project Management Portfolio Report',
+        description:
+          'PM portfolio — Total / In Progress / Completed for projects, tasks, individual, and sub-tasks',
+        subject: 'Kissflow - Project Management Portfolio Report',
+        status: 'draft',
+        starter_id: PM_STARTER_ID,
+      });
+      if (!created.ok || !created.template) {
+        setLoadError(created.error || 'Could not create PM portfolio template');
+        setQuickSetupBusy(false);
+        return;
+      }
+      tpl = created.template;
+      setupNote += 'Created portfolio template. ';
+    } else {
+      const starter = await loadReportStarterHtmlFromBackend(app, PM_STARTER_ID);
+      if (starter.ok && starter.item?.html) {
+        const updated = await updateTemplateOnBackend(app, tpl.id, {
+          html: starter.item.html,
+          description:
+            'PM portfolio — Total / In Progress / Completed for projects, tasks, individual, and sub-tasks',
+        });
+        if (updated.ok && updated.template) {
+          tpl = updated.template;
+          setupNote += 'Refreshed portfolio HTML. ';
+        }
+      }
+    }
+
+    const taskProcessId =
+      (app.processIds || []).find((id) => id === 'Project_Sub_Task_A01') ||
+      pmRecommendedProcessIds()[0];
+    const existingPm = list.find(
+      (s) => s.processId === taskProcessId || /portfolio|project management/i.test(s.name),
+    );
+    if (existingPm) {
+      setSelectedId(existingPm.id);
+      setPmQuickSetupMsg(
+        `${setupNote}Schedule already exists — publish the template if draft, set recipients, then Activate.`,
+      );
+      setQuickSetupBusy(false);
+      setTick((n) => n + 1);
+      return;
+    }
+
+    const scheduleRes = await createScheduleOnBackend(app, {
+      name: `${tpl.name}`,
+      template_id: tpl.id,
+      template_name: tpl.name,
+      process_id: taskProcessId,
+      entity_filter: 'all',
+      subject: tpl.subject || 'Kissflow - Project Management Portfolio Report',
+      cron_expression: '0 9 * * 1-5',
+      timezone: 'Asia/Kolkata',
+      is_active: false,
+    });
+    setQuickSetupBusy(false);
+    if (!scheduleRes.ok || !scheduleRes.schedule) {
+      setLoadError(scheduleRes.error || 'Could not create PM schedule');
+      return;
+    }
+    setTick((n) => n + 1);
+    setSelectedId(scheduleRes.schedule.id);
+    setPmQuickSetupMsg(
+      `${setupNote}Template + schedule ready. Publish the template, set From/To, then Activate.`,
+    );
+  };
+
   return (
     <div>
       {backendMode && extrovisProcessId && (
@@ -259,6 +387,25 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
         </div>
       )}
 
+      {backendMode && shouldShowPmSetup(app) && (
+        <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50/70 px-4 py-3 space-y-2">
+          <p className="text-sm font-semibold text-violet-950">Project Management portfolio setup</p>
+          <p className="text-xs text-violet-900/90">
+            One click attaches Sub-tasks + Projects board (if missing), loads the portfolio HTML (Today, Projects,
+            Tasks, Individual, Sub-tasks), and creates a draft schedule.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              disabled={quickSetupBusy}
+              onClick={() => void runPmPortfolioQuickSetup()}
+            >
+              {quickSetupBusy ? 'Setting up…' : 'Setup PM portfolio report'}
+            </Button>
+            {pmQuickSetupMsg && <span className="text-xs text-violet-800">{pmQuickSetupMsg}</span>}
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 mb-4">
         <p className="text-sm text-foreground-500">
           {backendMode

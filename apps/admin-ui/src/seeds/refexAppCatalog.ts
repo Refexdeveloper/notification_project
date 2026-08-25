@@ -12,6 +12,10 @@ export interface RefexAppDefinition {
   kissflowAppId: string;
   processName: string;
   processId: string;
+  /** Extra Kissflow process IDs (e.g. PM Sub-task) registered on the app */
+  extraProcessIds?: string[];
+  /** Kissflow board IDs (e.g. PM Projects board) */
+  boardIds?: string[];
   /** Remix Icon class, e.g. ri-sun-line */
   icon: string;
   /** Soft tile background + icon color */
@@ -64,6 +68,9 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
     kissflowAppId: 'Project_Management_Tracker_A00',
     processName: 'Project Task',
     processId: 'Project_Sub_Task_A01',
+    // Portfolio email also counts Sub-tasks + Projects board (match schedule-runner)
+    extraProcessIds: ['Sub_Task_Process_A00'],
+    boardIds: ['Project_Management_A01'],
     icon: 'ri-list-check-3',
     tint: 'bg-[#E8F3FC] text-[#0F6CBD]',
   },

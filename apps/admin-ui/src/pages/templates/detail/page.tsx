@@ -26,6 +26,7 @@ import {
   type PreviewContext,
 } from '@/lib/templatePreview';
 import { ensureItsmSourcePlaceholders, preferExtrovisStarter } from '@/lib/itsmTemplateLayout';
+import { isPmPortfolioHtml } from '@/lib/pmPortfolioSetup';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import {
@@ -221,6 +222,11 @@ export default function TemplateDetailPage() {
 
   const appKind = useMemo(() => detectTemplateAppKind(previewContext), [previewContext]);
 
+  const pmLayoutStale = useMemo(
+    () => appKind === 'pm' && Boolean(html) && !isPmPortfolioHtml(html),
+    [appKind, html],
+  );
+
   const applyLatestItsmLayout = useCallback(async () => {
     if (!backendMode || !id) return;
     const appForSave =
@@ -268,6 +274,48 @@ export default function TemplateDetailPage() {
     );
     setMode('preview');
   }, [backendMode, id, backendApp, appRouteId, name, description, status]);
+
+  const applyLatestPmLayout = useCallback(async () => {
+    if (!backendMode || !id) return;
+    const appForSave =
+      backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+    if (!appForSave.id && !appRouteId) {
+      setLoadError('Missing application context. Open the template from an application tab.');
+      return;
+    }
+    if (
+      !window.confirm(
+        'Replace this template HTML with the latest Project Management portfolio layout (Today, Projects, Tasks, Individual, Sub-tasks)?',
+      )
+    ) {
+      return;
+    }
+    setLayoutBusy(true);
+    setLoadError(null);
+    setSaveMsg('');
+    const starter = await loadReportStarterHtmlFromBackend(appForSave, 'pm');
+    if (!starter.ok || !starter.item?.html) {
+      setLoadError(starter.error || 'Could not load PM portfolio starter');
+      setLayoutBusy(false);
+      return;
+    }
+    const nextHtml = starter.item.html;
+    setHtml(nextHtml);
+    const updated = await updateTemplateOnBackend(appForSave, id, {
+      html: nextHtml,
+      description:
+        description ||
+        'PM portfolio — Total / In Progress / Completed for projects, tasks, individual, and sub-tasks',
+      status: status === 'published' ? 'published' : undefined,
+    });
+    setLayoutBusy(false);
+    if (!updated.ok) {
+      setLoadError(updated.error || 'Failed to save updated layout');
+      return;
+    }
+    setSaveMsg('Applied PM portfolio layout. Preview updated — Publish if still draft.');
+    setMode('preview');
+  }, [backendMode, id, backendApp, appRouteId, description, status]);
 
   const insertPlaceholder = useCallback((token: string, target: 'html' | 'subject') => {
     if (target === 'subject') {
@@ -717,6 +765,17 @@ export default function TemplateDetailPage() {
                   : 'Apply Refex ITSM layout'}
             </Button>
           )}
+          {backendMode && appKind === 'pm' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() => void applyLatestPmLayout()}
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy ? 'Updating…' : 'Apply PM portfolio layout'}
+            </Button>
+          )}
           {backendMode && (
             <Button
               variant="secondary"
@@ -775,6 +834,28 @@ export default function TemplateDetailPage() {
       {loadError && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {loadError}
+        </div>
+      )}
+
+      {pmLayoutStale && (
+        <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-violet-950">Layout outdated vs live portfolio email</p>
+            <p className="text-xs text-violet-900/90 mt-0.5">
+              This HTML is missing Projects / Sub-tasks sections. Apply the PM portfolio layout, then Publish so
+              Preview matches scheduled mail.
+            </p>
+          </div>
+          {backendMode && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={layoutBusy}
+              onClick={() => void applyLatestPmLayout()}
+            >
+              {layoutBusy ? 'Updating…' : 'Apply PM portfolio layout'}
+            </Button>
+          )}
         </div>
       )}
 

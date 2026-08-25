@@ -17,6 +17,7 @@ GCP: project `master-diorama-489103-u2`, region `asia-south1`.
 ## Hard constraints (report emails)
 
 - Fix **scheduled** mail KPIs without changing **test-send** conditions unless the user explicitly asks.
+- **Frontend + backend together** — Admin UI preview/starters/Settings must match seed + `reportStarters` + schedule-runner. See `.cursor/rules/frontend-backend-report-parity.mdc`. Never ship email-only or UI-only for the same KPI/layout.
 - ITSM Closed / Today Closed / Today Open must match **Admin All** rules in `aasik_ITSM` (`kfITServiceDashboard.js`) — no Me/Team/Closed By. See release note.
 - ITSM **Source** (Email/Mobile/…) must read Kissflow `Source` **and** report Column ids (`Column_BDSZ_sAHys` / `Column_hFjGV8lRrn`); never ship all-zero Email/Mobile when tickets exist. Helper: `itsm-ticket-source.js`.
 - KPI source of truth for process reports: live Kissflow overlay + full ingest on schedules.
@@ -39,5 +40,6 @@ Admin UI / backend-api deploys do **not** update scheduled email KPI logic.
 
 ## Cursor rules
 
+- `.cursor/rules/frontend-backend-report-parity.mdc` — Admin UI + seed + runner must change together
 - `.cursor/rules/engagement-report-kpis.mdc` — Closed Today / entity scope
 - `.cursor/rules/itsm-email-html-data.mdc` — Source panel, Today, Sign-in, Playwright

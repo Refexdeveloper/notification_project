@@ -6,6 +6,14 @@ export const TRAVEL_COMBINED_PROCESS_IDS = [
   'Travel_Management_A02',
 ] as const;
 
+/** PM portfolio: tasks + sub-tasks (projects board is separate). */
+export const PM_PORTFOLIO_PROCESS_IDS = [
+  'Project_Sub_Task_A01',
+  'Sub_Task_Process_A00',
+] as const;
+
+export const PM_PROJECT_BOARD_ID = 'Project_Management_A01';
+
 export function processLabel(processId: string): string {
   const pid = (processId || '').trim();
   if (!pid) return '';
@@ -23,7 +31,9 @@ export function processLabel(processId: string): string {
   if (pid === 'Expense_Management_A03') {
     return `${pid} · Expense Management (combined into Travel entity report)`;
   }
-  if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Management`;
+  if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Tasks (portfolio)`;
+  if (pid === 'Sub_Task_Process_A00') return `${pid} · Sub-tasks (portfolio)`;
+  if (pid === 'Project_Management_A01') return `${pid} · Projects board (portfolio)`;
   if (pid === 'Technician_Reimbursement__YTLM') return `${pid} · Reinvestment Request (Solar)`;
   if (/lead_tracker/i.test(pid)) return `${pid} · Lead Tracker`;
   return pid;
@@ -37,6 +47,16 @@ export function isItsmApp(appId: string | undefined | null, appName?: string): b
   const id = String(appId || '').toLowerCase();
   const name = String(appName || '').toLowerCase();
   return id.includes('it_service') || id.includes('itsm') || name.includes('it service');
+}
+
+export function isPmApp(appId: string | undefined | null, appName?: string): boolean {
+  const id = String(appId || '').toLowerCase();
+  const name = String(appName || '').toLowerCase();
+  return (
+    id.includes('project_management') ||
+    id.includes('project_sub_task') ||
+    name.includes('project management')
+  );
 }
 
 export function isTravelApp(appId: string | undefined | null, appName?: string): boolean {

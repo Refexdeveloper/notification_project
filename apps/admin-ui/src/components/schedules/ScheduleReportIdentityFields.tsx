@@ -5,6 +5,7 @@ import {
   defaultEntityFilterForProcess,
   isExtrovisProcess,
   isItsmApp,
+  isPmApp,
   isTravelApp,
   processLabel,
 } from '@/lib/processLabels';
@@ -44,6 +45,7 @@ export default function ScheduleReportIdentityFields({
   const showLeadTrackerFilters = isLeadTrackerApp(app);
   const showItsmEntityFilter = isItsmApp(app.appId, app.displayName || app.name);
   const showTravelEntityFilter = isTravelApp(app.appId, app.displayName || app.name);
+  const showPmPortfolioHint = isPmApp(app.appId, app.displayName || app.name);
   const extrovis = isExtrovisProcess(value.processId);
 
   const selectTemplate = (templateId: string) => {
@@ -75,6 +77,9 @@ export default function ScheduleReportIdentityFields({
           Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
           excluded. For Travel Management, all three app processes are combined into one report — pick Venwind or Refex
           as the entity, not both.
+          {showPmPortfolioHint
+            ? ' For Project Management, register Project Tasks (Project_Sub_Task_A01) and Sub-tasks (Sub_Task_Process_A00); the schedule email also counts the Projects board.'
+            : ''}
         </p>
       </div>
 

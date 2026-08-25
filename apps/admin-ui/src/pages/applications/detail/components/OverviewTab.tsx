@@ -8,6 +8,13 @@ import { isBackendApiMode } from '@/services/backendApi';
 import { loadSchedulesFromBackend, loadTemplatesFromBackend } from '@/services/reportsApi';
 import type { ReportScheduler } from '@/stores/reportSchedulers';
 import type { ReportTemplate } from '@/stores/reportTemplates';
+import { processLabel } from '@/lib/processLabels';
+import {
+  missingPmBoardIds,
+  missingPmProcessIds,
+  pmPortfolioResourcesComplete,
+  shouldShowPmSetup,
+} from '@/lib/pmPortfolioSetup';
 
 interface OverviewTabProps {
   app: KissflowApplication;
@@ -137,6 +144,25 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
         <StatCard label="Published" value={published} onClick={() => onNavigateTab('templates')} />
       </div>
 
+      {shouldShowPmSetup(app) && !pmPortfolioResourcesComplete(app) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-amber-950">PM portfolio setup incomplete</p>
+            <p className="text-xs text-amber-900/90 mt-0.5">
+              Add {[...missingPmProcessIds(app), ...missingPmBoardIds(app)].join(', ')} so Templates and
+              Schedules match the live portfolio email (Projects + Sub-tasks).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('settings')}
+            className="text-xs font-semibold text-amber-950 underline cursor-pointer shrink-0"
+          >
+            Open App settings
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="surface p-5">
           <div className="flex items-center justify-between mb-4">
@@ -164,9 +190,19 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
             <Row label="Account" value={app.accountId} />
             <Row label="Application ID" value={app.appId || '—'} />
             <Row
-              label="Process"
-              value={(app.processIds || [])[0] || '—'}
+              label="Processes"
+              value={
+                (app.processIds || []).length
+                  ? (app.processIds || []).map((id) => processLabel(id)).join(' · ')
+                  : '—'
+              }
             />
+            {(app.boardIds || []).length > 0 && (
+              <Row
+                label="Boards"
+                value={(app.boardIds || []).map((id) => processLabel(id)).join(' · ')}
+              />
+            )}
             <Row label="Host" value={`${app.subdomain}.kissflow.${app.region}`} />
             <Row label="Schedules" value={String(schedules.length)} />
           </div>

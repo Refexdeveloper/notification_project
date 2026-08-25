@@ -26,6 +26,15 @@ function buildApp(
   const accessKeyId = creds.accessKeyId || existing?.accessKeyId || '';
   const accessKeySecret = creds.accessKeySecret || existing?.accessKeySecret || '';
   const processId = def.processId;
+  const processIds = [
+    processId,
+    ...(def.extraProcessIds || []),
+    ...(existing?.processIds || []),
+  ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
+  const boardIds = [
+    ...(def.boardIds || []),
+    ...(existing?.boardIds || []),
+  ].filter((id, idx, arr) => id && arr.indexOf(id) === idx);
 
   return {
     id: appStorageId(def.slug, env),
@@ -39,9 +48,9 @@ function buildApp(
     region: 'com',
     environment: env,
     status: 'Active',
-    processIds: [processId],
+    processIds,
     dataformIds: existing?.dataformIds || [],
-    boardIds: existing?.boardIds || [],
+    boardIds,
     datasetIds: existing?.datasetIds || [],
     accessKeyId,
     accessKeySecret,
@@ -55,8 +64,8 @@ function buildApp(
     lastSync: now,
     connected: Boolean(accessKeyId && accessKeySecret),
     dataformsCount: existing?.dataformsCount || 0,
-    processesCount: 1,
-    boardsCount: existing?.boardsCount || 0,
+    processesCount: processIds.length,
+    boardsCount: boardIds.length,
     templatesCount: existing?.templatesCount || 0,
     schedulersCount: existing?.schedulersCount || 0,
   };

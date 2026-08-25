@@ -134,7 +134,7 @@ const STARTER_CATALOG = [
     id: 'pm',
     name: 'Project Management portfolio report',
     description:
-      'Projects (total/open/completed), all tasks, individual tasks, sub-tasks, people, and today’s activity.',
+      'Today’s activity, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks.',
     seed_path: 'db/seeds/pm-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -160,6 +160,10 @@ const STARTER_CATALOG = [
       'ReportBody',
     ],
     best_for: ['Project_Management_Tracker_A00', 'pm', 'project'],
+    recommended_resources: {
+      process_ids: ['Project_Sub_Task_A01', 'Sub_Task_Process_A00'],
+      board_ids: ['Project_Management_A01'],
+    },
   },
   {
     id: 'solar-reinvestment',
@@ -356,7 +360,14 @@ function listStarters(applicationId = '') {
     description: item.description,
     placeholders: item.placeholders,
     recommended: item.id === suggested,
+    recommended_resources: item.recommended_resources || null,
   }));
+}
+
+function recommendedResourcesForApp(applicationId = '') {
+  const starterId = suggestStarterId(applicationId);
+  const item = STARTER_CATALOG.find((row) => row.id === starterId);
+  return item?.recommended_resources || null;
 }
 
 function getStarterHtml(starterId, appName = 'Application') {
@@ -384,5 +395,6 @@ module.exports = {
   listStarters,
   getStarterHtml,
   suggestStarterId,
+  recommendedResourcesForApp,
   STARTER_CATALOG,
 };

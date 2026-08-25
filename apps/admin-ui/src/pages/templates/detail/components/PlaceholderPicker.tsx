@@ -4,6 +4,7 @@ import {
   unknownPlaceholders,
   type TemplateAppKind,
 } from '@/lib/templatePreview';
+import { PM_PLACEHOLDER_LABELS } from '@/lib/pmPortfolioSetup';
 
 type InsertTarget = 'html' | 'subject';
 
@@ -12,6 +13,20 @@ type PlaceholderPickerProps = {
   usedInTemplate: string[];
   onInsert: (token: string, target: InsertTarget) => void;
 };
+
+function placeholderTitle(appKind: TemplateAppKind, key: string): string {
+  if (appKind === 'pm' && PM_PLACEHOLDER_LABELS[key]) {
+    return `${PM_PLACEHOLDER_LABELS[key]} — {{${key}}}`;
+  }
+  return `Insert {{${key}}}`;
+}
+
+function placeholderChipLabel(appKind: TemplateAppKind, key: string): string {
+  if (appKind === 'pm' && PM_PLACEHOLDER_LABELS[key]) {
+    return PM_PLACEHOLDER_LABELS[key];
+  }
+  return `{{${key}}}`;
+}
 
 export default function PlaceholderPicker({
   appKind,
@@ -55,19 +70,25 @@ export default function PlaceholderPicker({
             <button
               key={key}
               type="button"
-              title={inUse ? 'Already in template — click to insert again' : 'Insert into HTML'}
+              title={
+                inUse
+                  ? `${placeholderTitle(appKind, key)} (already in template)`
+                  : placeholderTitle(appKind, key)
+              }
               onClick={() => onInsert(`{{${key}}}`, 'html')}
               onContextMenu={(e) => {
                 e.preventDefault();
                 void copyToken(key);
               }}
-              className={`px-2 py-1 rounded-md text-[11px] font-mono cursor-pointer border transition-colors ${
+              className={`px-2 py-1 rounded-md text-[11px] cursor-pointer border transition-colors ${
+                appKind === 'pm' ? 'font-medium' : 'font-mono'
+              } ${
                 inUse
                   ? 'bg-primary-50 border-primary-200 text-primary-800'
                   : 'bg-white border-background-300 text-foreground-700 hover:border-primary-300 hover:text-primary-700'
               }`}
             >
-              {`{{${key}}}`}
+              {placeholderChipLabel(appKind, key)}
             </button>
           );
         })}

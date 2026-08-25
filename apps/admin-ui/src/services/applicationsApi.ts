@@ -7,7 +7,8 @@ import {
   type BackendProcessRow,
   type ProcessesListResponse,
 } from './backendApi';
-import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
+import { catalogEntryForApp, REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
+import { isPmApp } from '@/lib/processLabels';
 
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
@@ -37,6 +38,19 @@ export function resolveBackendApplicationId(app: KissflowApplication): string {
 
   if (isLeadTracker) {
     return 'Lead_Trcaker_A00';
+  }
+
+  const catalog = catalogEntryForApp({
+    appId,
+    processIds: app.processIds,
+  });
+  if (
+    isPmApp(appId, app.displayName || app.name) ||
+    catalog?.slug === 'pmt' ||
+    appId === 'Project_Sub_Task_A01' ||
+    appId === 'Sub_Task_Process_A00'
+  ) {
+    return catalog?.kissflowAppId || 'Project_Management_Tracker_A00';
   }
 
   if (appId && !/^production-/i.test(appId) && !/^development-/i.test(appId)) {
@@ -225,19 +239,32 @@ export async function loadApplicationFromBackend(routeId: string): Promise<Appli
   let application = mapRowToApplication(row);
   if (processesRes.ok && processesRes.data) {
     application = attachProcesses(application, parsed.environment, processesRes.data.items);
-  }
 
-  const primaryProcessId = application.processIds?.[0];
-  if (primaryProcessId) {
     const { loadFieldsFromBackend } = await import('./fieldsApi');
-    const fieldsRes = await loadFieldsFromBackend(application, primaryProcessId);
-    if (fieldsRes.ok && fieldsRes.fields.length) {
-      application = {
-        ...application,
-        discoveredFields: fieldsRes.fields,
-        discoveredItemCount: fieldsRes.itemCount,
-        lastFieldSyncAt: fieldsRes.syncedAt,
-      };
+    const fieldsByResourceId: NonNullable<KissflowApplication['fieldsByResourceId']> = {};
+    for (const processId of application.processIds || []) {
+      const fieldsRes = await loadFieldsFromBackend(application, processId);
+      if (fieldsRes.ok) {
+        fieldsByResourceId[processId] = {
+          fields: fieldsRes.fields,
+          syncedAt: fieldsRes.syncedAt || new Date().toISOString(),
+          itemCount: fieldsRes.itemCount,
+          adminProcessId: processId,
+        };
+      }
+    }
+    if (Object.keys(fieldsByResourceId).length) {
+      application = { ...application, fieldsByResourceId };
+      const primaryProcessId = application.processIds?.[0];
+      const primaryFields = primaryProcessId ? fieldsByResourceId[primaryProcessId] : undefined;
+      if (primaryFields) {
+        application = {
+          ...application,
+          discoveredFields: primaryFields.fields,
+          discoveredItemCount: primaryFields.itemCount,
+          lastFieldSyncAt: primaryFields.syncedAt,
+        };
+      }
     }
   }
 
@@ -484,6 +511,14 @@ export type AttachResourcesResult = {
   dataform_ids?: string[];
   board_ids?: string[];
   dataset_ids?: string[];
+  field_sync?: Array<{
+    process_id: string;
+    ok: boolean;
+    field_count?: number;
+    item_count?: number;
+    synced_at?: string;
+    error?: string;
+  }>;
   warnings?: string[];
   error?: string;
 };
@@ -505,6 +540,7 @@ export async function attachResourcesOnBackend(
     dataform_ids: string[];
     board_ids: string[];
     dataset_ids: string[];
+    field_sync?: AttachResourcesResult['field_sync'];
     warnings?: string[];
   }>(
     `/applications/${encodeURIComponent(applicationId)}/resources?environment=${encodeURIComponent(environment)}`,
@@ -531,6 +567,7 @@ export async function attachResourcesOnBackend(
     dataform_ids: res.data.dataform_ids,
     board_ids: res.data.board_ids,
     dataset_ids: res.data.dataset_ids,
+    field_sync: res.data.field_sync,
     warnings: res.data.warnings,
   };
 }

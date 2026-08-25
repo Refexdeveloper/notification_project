@@ -70,6 +70,29 @@ describe('templatePreview', () => {
     expect(samples.UserTableHtml).toContain('Priya Sharma');
     expect(samples.TotalUsers).toBe('2');
     expect(samples.SignedInToday).toBe('1');
+    expect(samples.TotalProjects).toBe('18');
+    expect(samples.OpenProjects).toBe('11');
+    expect(samples.CompletedProjects).toBe('7');
+    expect(samples.IndividualTasks).toBe('28');
+    expect(samples.TotalSubTasks).toBe('22');
+    expect(samples.PendingSubTasks).toBe('8');
+    expect(samples.CompletedSubTasks).toBe('14');
+  });
+
+  it('fills PM portfolio placeholders in preview HTML', () => {
+    const html =
+      '<div>{{OpenedToday}}</div><div>{{TotalProjects}}</div><div>{{OpenProjects}}</div><div>{{TotalSubTasks}}</div><div>{{IndividualTasks}}</div>';
+    const out = renderPreviewHtml(html, {
+      templateName: 'PM Portfolio',
+      kissflowAppId: 'Project_Management_Tracker_A00',
+    });
+    expect(out).toContain('6');
+    expect(out).toContain('18');
+    expect(out).toContain('11');
+    expect(out).toContain('22');
+    expect(out).toContain('28');
+    expect(out).not.toContain('{{TotalProjects}}');
+    expect(out).not.toContain('{{TotalSubTasks}}');
   });
 
   it('matches ITSM preview Total Users to the sample MIS table', () => {

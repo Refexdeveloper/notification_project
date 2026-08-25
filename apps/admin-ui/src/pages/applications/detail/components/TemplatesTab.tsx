@@ -8,6 +8,8 @@ import { createTemplateOnBackend, loadTemplatesFromBackend } from '@/services/re
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
+import { isItsmApp, isPmApp } from '@/lib/processLabels';
+import { shouldShowPmSetup } from '@/lib/pmPortfolioSetup';
 
 interface TemplatesTabProps {
   app: KissflowApplication;
@@ -53,6 +55,19 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
     return getTemplatesByAppId(app.id);
   }, [app.id, backendList, backendMode, tick]);
 
+  const helpText = useMemo(() => {
+    if (!backendMode) {
+      return 'HTML report designs for this app only — create several, publish the best.';
+    }
+    if (shouldShowPmSetup(app) || isPmApp(app.appId, app.displayName || app.name)) {
+      return 'New template → Project Management portfolio (Suggested). Or open a template → Apply PM portfolio layout → Publish. Preview shows Today, Projects, Tasks, Individual, and Sub-tasks.';
+    }
+    if (isItsmApp(app.appId, app.displayName || app.name)) {
+      return 'Open a template → Preview to see Ticket source. Use Apply Refex ITSM layout / Apply Extrovis layout to refresh HTML.';
+    }
+    return 'New template → pick the suggested starter (matches live email). Open a template to Preview, then Publish and attach to a schedule.';
+  }, [app, backendMode]);
+
   const handleCreateLocal = () => {
     const tpl = createTemplate({
       applicationId: app.id,
@@ -97,11 +112,7 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-4">
-        <p className="text-sm text-foreground-500">
-          {backendMode
-            ? 'Open a template → Preview to see Ticket source. Use Apply Refex ITSM layout / Apply Extrovis layout to refresh HTML.'
-            : 'HTML report designs for this app only — create several, publish the best.'}
-        </p>
+        <p className="text-sm text-foreground-500">{helpText}</p>
         <Button
           size="sm"
           onClick={openCreate}
@@ -131,7 +142,9 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
           title="No templates for this app"
           description={
             backendMode
-              ? 'Pick a starter layout (same as live ITSM/PM/Lead/Expense/Travel emails), then attach it to a schedule.'
+              ? shouldShowPmSetup(app)
+                ? 'Create the Project Management portfolio starter (Today, Projects, Tasks, Individual, Sub-tasks), then attach it to a schedule.'
+                : 'Pick a starter layout (same as live ITSM/PM/Lead/Expense/Travel emails), then attach it to a schedule.'
               : 'Design an HTML email report. You can make multiple versions and choose one in Schedules.'
           }
           primaryLabel="Create template"
