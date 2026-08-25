@@ -4,6 +4,10 @@
 /**
  * Count OpenedToday / ClosedToday from live Kissflow process list (Lead Tracker style).
  *
+ * ITSM Closed / Today Closed / Today Open match Admin All rules from
+ * aasik_ITSM `kfITServiceDashboard.js` (isRefexServiceClosedTicket +
+ * isDashboardRowClosedToday). No Me / My Team / Closed By filter.
+ *
  * Env:
  *   KISSFLOW_ACCOUNT_ID, KISSFLOW_KEY (or KISSFLOW_KEY_ID), KISSFLOW_SECRET
  *   PROCESS_ID (required)
@@ -11,7 +15,7 @@
  *   ENTITY_FILTER (optional — e.g. Refex; empty = all entities)
  *   KISSFLOW_HOST (optional, default refexgroup.kissflow.com)
  *
- * Prints JSON: { opened_today, closed_today, item_count, entity_filter }
+ * Prints JSON: { opened_today, closed_today, open_tickets, closed_tickets, total_tickets, ... }
  */
 const https = require('https');
 
@@ -79,15 +83,6 @@ function pickEntity(raw) {
   return '';
 }
 
-function isBusinessOpen(raw) {
-  if (applicationId === ITSM_APP_ID) {
-    const status = normalizeStatus(raw);
-    const step = String(raw?._current_step || raw?.Current_Step || '').toLowerCase();
-    return status === 'InProgress' && !step.includes('it tech reopen');
-  }
-  return normalizeStatus(raw) === 'InProgress';
-}
-
 function entityMatches(raw) {
   if (!entityFilter || entityFilter === 'all' || entityFilter === '*') return true;
   const entity = pickEntity(raw);
@@ -97,16 +92,115 @@ function entityMatches(raw) {
 }
 
 function normalizeStatus(raw) {
-  const s = String(raw?._status || raw?.Status || raw?.process_status || '').trim();
-  return s;
+  return String(raw?._status || raw?.Status || raw?.process_status || '').trim();
 }
 
-function isItsmBusinessClosed(raw) {
-  const status = normalizeStatus(raw);
-  const step = String(raw?._current_step || raw?.Current_Step || '').toLowerCase();
-  if (status === 'Completed' || status === 'Closed') return true;
-  if (status === 'InProgress' && step.includes('it tech reopen')) return true;
+function statusToken(raw) {
+  return normalizeStatus(raw).toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function currentStep(raw) {
+  return String(raw?._current_step || raw?.Current_Step || '').trim();
+}
+
+function stepLower(raw) {
+  return currentStep(raw).toLowerCase();
+}
+
+/** Rejected ≠ Closed (dashboard isRefexServiceRejectedTicket). */
+function isItsmRejected(raw) {
+  const candidates = [
+    raw?._status,
+    raw?.Status,
+    raw?.systemStatus,
+    raw?.Statu_1,
+    raw?.Validation,
+    raw?.Status_Validation,
+  ];
+  for (const value of candidates) {
+    const token = String(value || '')
+      .toLowerCase()
+      .replace(/[\s_-]+/g, '');
+    if (token === 'rejected' || token === 'reject' || token === 'declined') return true;
+  }
   return false;
+}
+
+function isItsmCancelled(raw) {
+  const candidates = [raw?.Statu_1, raw?.Validation, raw?.Status_Validation, raw?.Status, raw?._status];
+  for (const value of candidates) {
+    const token = String(value || '')
+      .toLowerCase()
+      .replace(/[\s_-]+/g, '');
+    if (token === 'cancelled' || token === 'canceled') return true;
+  }
+  return false;
+}
+
+/**
+ * Reopen hold step — Refex IT Tech Reopen / Extrovis ReOpen Window / Employee Feedback.
+ * Mirrors aasik_ITSM isEmployeeApprovalRefexStep (step-name path only).
+ */
+function isItsmReopenHoldStep(raw) {
+  const token = statusToken(raw);
+  if (token === 'completed' || token === 'complete' || token === 'withdrawn') return false;
+  const step = stepLower(raw);
+  if (!step) return false;
+  if (
+    step.includes('it agent pickup') ||
+    step.includes('it agent pick up') ||
+    step.includes('it agent solution') ||
+    (step.includes('tech support') && !step.includes('reopen')) ||
+    step === 'it tech' ||
+    step.includes('dependency')
+  ) {
+    return false;
+  }
+  return (
+    step === 'it tech reopen' ||
+    step.includes('it tech reopen') ||
+    step === 'reopen window' ||
+    step.includes('reopen window') ||
+    step.includes('employee feedback') ||
+    step.includes('employee verification') ||
+    step === 'ticket reopen' ||
+    (step.includes('ticket reopen') && !step.includes('reopened'))
+  );
+}
+
+/** Kissflow process Completed only — not Statu_1 / Validation Closed. */
+function isItsmProcessCompleted(raw) {
+  const token = statusToken(raw);
+  if (token === 'completed' || token === 'complete') return true;
+  if (token === 'inprogress' || token === 'pending' || token === 'draft' || token === 'assigned') {
+    return false;
+  }
+  if (token === 'open' || token === 'closed' || token === 'close') return false;
+  const step = stepLower(raw).replace(/[\s_-]+/g, '');
+  return step === 'completed' || step === 'complete';
+}
+
+/**
+ * Admin All Closed KPI — aasik_ITSM isRefexServiceClosedTicket.
+ * No Closed By / Me filter.
+ */
+function isItsmBusinessClosed(raw) {
+  if (isItsmRejected(raw)) return false;
+  if (isItsmReopenHoldStep(raw)) return true;
+  return isItsmProcessCompleted(raw);
+}
+
+/** Base Open — not Closed, not Rejected, not Cancelled. */
+function isItsmBusinessOpen(raw) {
+  if (isItsmRejected(raw)) return false;
+  if (isItsmBusinessClosed(raw)) return false;
+  if (isItsmCancelled(raw)) return false;
+  return true;
+}
+
+function isBusinessOpen(raw) {
+  if (applicationId === ITSM_APP_ID) return isItsmBusinessOpen(raw);
+  return normalizeStatus(raw) === 'InProgress';
 }
 
 function isBusinessClosed(raw) {
@@ -134,7 +228,30 @@ function itemCreatedAt(raw) {
   ]);
 }
 
+/**
+ * Closed-at — aasik_ITSM getRefexClosedAtRaw:
+ * reopen hold prefers _modified_at; Completed prefers explicit closed/completed then modified.
+ */
 function itemCompletedAt(raw) {
+  if (applicationId === ITSM_APP_ID) {
+    if (!isItsmBusinessClosed(raw)) return null;
+    if (isItsmReopenHoldStep(raw)) {
+      return (
+        pickDateTime(raw, ['_modified_at']) ||
+        pickDateTime(raw, ['_completed_at', '_closed_at', 'Completed_On', 'Closed_On', 'Completed_Date', 'Closed_Date'])
+      );
+    }
+    return (
+      pickDateTime(raw, [
+        '_completed_at',
+        '_closed_at',
+        'Completed_On',
+        'Closed_On',
+        'Completed_Date',
+        'Closed_Date',
+      ]) || pickDateTime(raw, ['_modified_at'])
+    );
+  }
   const explicit = pickDateTime(raw, [
     '_completed_at',
     '_closed_at',
@@ -146,6 +263,19 @@ function itemCompletedAt(raw) {
   if (explicit) return explicit;
   if (!isBusinessClosed(raw)) return null;
   return pickDateTime(raw, ['_modified_at']);
+}
+
+/** Today Open (dashboard): created today and still in flight. */
+function isOpenedToday(raw) {
+  if (!isTodayIst(itemCreatedAt(raw))) return false;
+  if (applicationId === ITSM_APP_ID) return isItsmBusinessOpen(raw);
+  return true;
+}
+
+/** Today Closed (dashboard): Closed KPI + closed today. */
+function isClosedToday(raw) {
+  if (!isBusinessClosed(raw)) return false;
+  return isTodayIst(itemCompletedAt(raw));
 }
 
 function httpsGetJson(path) {
@@ -226,8 +356,8 @@ async function main() {
     scoped += 1;
     if (isBusinessOpen(raw)) openCount += 1;
     else if (isBusinessClosed(raw)) closedCount += 1;
-    if (isTodayIst(itemCreatedAt(raw))) openedToday += 1;
-    if (isTodayIst(itemCompletedAt(raw))) closedToday += 1;
+    if (isOpenedToday(raw)) openedToday += 1;
+    if (isClosedToday(raw)) closedToday += 1;
   }
   process.stdout.write(
     JSON.stringify({

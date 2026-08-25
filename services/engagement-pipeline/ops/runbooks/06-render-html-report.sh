@@ -185,17 +185,58 @@ sla AS (
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
-    -- ITSM: Completed OR InProgress on step "IT Tech Reopen" counts as Closed (not Open).
+    -- Admin All Closed (aasik_ITSM isRefexServiceClosedTicket): NOT Rejected AND
+    -- (reopen hold step OR Kissflow process Completed). Not Statu_1/Validation Closed. No Closed By.
     (
-      process_status = 'Completed'
-      OR (
-        process_status = 'InProgress'
-        AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+      NOT (
+        lower(regexp_replace(coalesce(process_status, source_payload->>'_status', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+        OR lower(regexp_replace(coalesce(source_payload->>'Statu_1', source_payload->>'Validation', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+      )
+      AND (
+        process_status = 'Completed'
+        OR lower(coalesce(process_status, '')) IN ('completed', 'complete')
+        OR (
+          process_status = 'InProgress'
+          AND (
+            lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%reopen window%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee feedback%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee verification%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) = 'ticket reopen'
+          )
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent pickup%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent solution%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%dependency%'
+        )
       )
     ) AS is_closed,
+    -- Base Open: not Closed, not Rejected, not Cancelled (dashboard isRefexServiceOpenTicket).
     (
-      process_status = 'InProgress'
-      AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
+      NOT (
+        lower(regexp_replace(coalesce(process_status, source_payload->>'_status', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+        OR lower(regexp_replace(coalesce(source_payload->>'Statu_1', source_payload->>'Validation', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined', 'cancelled', 'canceled')
+      )
+      AND NOT (
+        process_status = 'Completed'
+        OR lower(coalesce(process_status, '')) IN ('completed', 'complete')
+        OR (
+          process_status = 'InProgress'
+          AND (
+            lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%reopen window%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee feedback%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee verification%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) = 'ticket reopen'
+          )
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent pickup%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent solution%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%dependency%'
+        )
+      )
     ) AS is_open,
     -- Kissflow Source field (Email / WhatsApp / Mobile / Web).
     lower(trim(coalesce(
@@ -290,8 +331,10 @@ SELECT json_build_object(
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
-  'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'opened_today', (SELECT count(*) FROM sla WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'open_tickets', (SELECT count(*) FROM sla WHERE is_open),
+  'closed_tickets', (SELECT count(*) FROM sla WHERE is_closed),
   'total_tickets', (SELECT count(*) FROM sla),
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
@@ -310,11 +353,11 @@ SELECT json_build_object(
     'Other', (SELECT count(*) FROM sla_sourced WHERE is_open AND source_channel = 'Other')
   ),
   'source_opened_today', json_build_object(
-    'Email', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Email'),
-    'WhatsApp', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'WhatsApp'),
-    'Mobile', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Mobile'),
-    'Web', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Web'),
-    'Other', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Other')
+    'Email', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Email'),
+    'WhatsApp', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'WhatsApp'),
+    'Mobile', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Mobile'),
+    'Web', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Web'),
+    'Other', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Other')
   )
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
@@ -562,14 +605,10 @@ TOTAL_CLOSED="$(jq -r '.closed_tickets // 0' <<< "${SUMMARY_JSON}")"
 if report_live_today_kpis "${ITSM_PROCESS_ID}" "${ITSM_APP_ID}" "${ENTITY_FILTER}"; then
   log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?} closed_today=${REPORT_LIVE_CLOSED_TODAY:-?} (sql total=${TOTAL_TICKETS} open=${TOTAL_OPEN} closed=${TOTAL_CLOSED})"
   OPENED_TODAY="$(report_prefer_live_today "${OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  CLOSED_TODAY="$(report_prefer_live_today "${CLOSED_TODAY}" "${REPORT_LIVE_CLOSED_TODAY}")"
   TOTAL_TICKETS="$(report_prefer_live_today "${TOTAL_TICKETS}" "${REPORT_LIVE_TOTAL_TICKETS}")"
   TOTAL_OPEN="$(report_prefer_live_today "${TOTAL_OPEN}" "${REPORT_LIVE_OPEN_TICKETS}")"
   TOTAL_CLOSED="$(report_prefer_live_today "${TOTAL_CLOSED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
-  if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ ]]; then
-    if [[ "${REPORT_LIVE_CLOSED_TODAY}" -ge "${CLOSED_TODAY}" ]]; then
-      CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
-    fi
-  fi
 else
   log "Live Kissflow ticket KPI overlay unavailable — using PostgreSQL snapshot counts"
 fi
