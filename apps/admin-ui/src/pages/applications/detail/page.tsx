@@ -84,20 +84,28 @@ export default function ApplicationDetail() {
     setHeaderSyncing(true);
     setHeaderSyncError('');
     setTab('discovery');
-    const adminProcessId = (app.processIds || [])[0] || app.appId;
 
     if (isBackendApiMode()) {
-      const result = await syncFieldsOnBackend(app, adminProcessId);
+      const { syncAllFieldsOnBackend } = await import('@/services/fieldsApi');
+      const processIds = (app.processIds || []).map((id) => id.trim()).filter(Boolean);
+      const result =
+        processIds.length > 1
+          ? await syncAllFieldsOnBackend(app)
+          : await syncFieldsOnBackend(app, processIds[0] || app.appId);
       if (!result.ok) {
         setHeaderSyncError(result.error || 'Sync failed');
         setHeaderSyncing(false);
         return;
+      }
+      if (result.failedProcesses?.length) {
+        setHeaderSyncError(`Synced with warnings: ${result.failedProcesses.join('; ')}`);
       }
       setAppRevision((n) => n + 1);
       setHeaderSyncing(false);
       return;
     }
 
+    const adminProcessId = (app.processIds || [])[0] || app.appId;
     const result = await syncFieldsFromAdminItems(app, { processId: adminProcessId });
     if (!result.ok) {
       setHeaderSyncError(result.error || 'Sync failed');
