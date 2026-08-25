@@ -237,8 +237,8 @@ dispatch_travel_usage_report() {
   local render_script="${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
   if [[ "${TEST_SEND}" == "true" ]]; then
     log "Test send: ingesting ALL Travel processes (${TRAVEL_PROCESS_IDS}) then rendering entity=${ENTITY_FILTER}"
-  # Keep PROCESS_ID as Travel_Management_A02 for logging/cache labels only.
-  export PROCESS_ID="Travel_Management_A02"
+    # Keep PROCESS_ID as Travel_Management_A02 for logging/cache labels only.
+    export PROCESS_ID="Travel_Management_A02"
     if ! ingest_travel_processes; then
       log "Live Travel ingest failed — trying last cached HTML"
       if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
@@ -255,6 +255,8 @@ dispatch_travel_usage_report() {
     log "Travel Management test send completed (${ENTITY_FILTER})"
   else
     log "Step 1/3: Ingest latest Kissflow data for all Travel processes"
+    # Scheduled sends must full-ingest so entity usage KPIs match live Kissflow.
+    export FULL_INGEST=true
     ingest_travel_processes || stop "Travel ingest failed for every process"
     log "Step 2/3: Rendering ${ENTITY_FILTER} Travel usage report"
     bash "${render_script}"
