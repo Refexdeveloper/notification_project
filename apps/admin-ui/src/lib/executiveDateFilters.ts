@@ -17,7 +17,7 @@ export type DatePresetId =
 export const DATE_PRESETS: Array<{ id: DatePresetId; label: string; hint: string }> = [
   { id: 'all', label: 'All time', hint: 'Current inventory (matches main dashboard when unfiltered)' },
   { id: 'daily', label: 'Today', hint: 'Created or closed today (IST activity)' },
-  { id: 'ytd', label: 'YTD', hint: 'Items created since 1 Jan this year' },
+  { id: 'ytd', label: 'YTD', hint: 'Year to date (created this calendar year; undated inventory included)' },
   { id: 'quarterly', label: 'QTD', hint: 'Items created this quarter' },
   { id: 'monthly', label: 'MTD', hint: 'Items created this month' },
   { id: 'last_30', label: 'Last 30 days', hint: 'Rolling 30-day created window' },
