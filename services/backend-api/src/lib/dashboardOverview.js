@@ -11,6 +11,13 @@ const {
   isEngagementCacheFresh,
   ENGAGEMENT_CACHE_TTL_MS,
 } = require('./engagementCache');
+const {
+  P2P_APPLICATION_ID,
+  P2P_APPLICATION_NAME,
+  isP2pApplication,
+  loadP2pDashboard,
+} = require('./p2pDashboard');
+const { isP2pConfigured } = require('./p2pReadonly');
 
 const OVERVIEW_QUERY = `
 WITH apps AS (
@@ -336,7 +343,7 @@ async function loadDashboardOverview(pool, environment) {
   const signInByApp = new Map((signInResult.rows || []).map((row) => [row.application_id, row]));
   const todayByApp = new Map((todayResult.rows || []).map((row) => [row.application_id, row]));
 
-  return overviewResult.rows.map((row) => {
+  const apps = overviewResult.rows.map((row) => {
     const signIn = signInByApp.get(row.application_id) || {};
     const today = todayByApp.get(row.application_id) || {};
     const overlay = overlayFromCache(row, signIn, today);
@@ -389,6 +396,83 @@ async function loadDashboardOverview(pool, environment) {
           },
     };
   });
+
+  // Overlay live MySQL P2P KPIs onto the registered Procurement to Pay row.
+  if (isP2pConfigured()) {
+    try {
+      const p2p = await loadP2pDashboard({ environment, period: 'all', entity: 'all' });
+      const m = p2p?.metrics || {};
+      const open = Number(m.open ?? m.pending ?? 0);
+      const closed = Number(m.closed ?? m.completed ?? 0);
+      const rejected = Number(m.rejected || 0);
+      const patch = {
+        open_tickets: open,
+        closed_tickets: closed,
+        rejected,
+        total_items: Number(m.total || open + closed + rejected),
+        total_users: Number(m.total_users || 0),
+        sign_in_today: Number(m.signed_in_today || 0),
+        sign_in_rate_overall: Number(m.sign_in_rate_overall || 0),
+        sign_in_rate_today: Number(m.sign_in_rate_today || 0),
+        opened_today: 0,
+        closed_today: 0,
+        in_progress: 0,
+      };
+      const idx = apps.findIndex((a) => isP2pApplication(a.application_id, a.application_name));
+      if (idx >= 0) {
+        apps[idx] = {
+          ...apps[idx],
+          application_name: P2P_APPLICATION_NAME,
+          snapshot_at: p2p.snapshot_at || apps[idx].snapshot_at,
+          data_source: p2p.data_source || 'p2p_mysql_readonly',
+          snapshot_stale: false,
+          metrics: { ...apps[idx].metrics, ...patch },
+          metric_labels: {
+            sign_in_today: 'Signed in today',
+            sign_in_rate_overall: 'Sign-in rate (overall)',
+            sign_in_rate_today: 'Sign-in rate today',
+            open_tickets: 'Open PR/PO',
+            closed_tickets: 'Closed PR/PO',
+          },
+        };
+      } else {
+        apps.push({
+          environment,
+          application_id: P2P_APPLICATION_ID,
+          application_name: P2P_APPLICATION_NAME,
+          snapshot_at: p2p.snapshot_at || new Date().toISOString(),
+          fetched_at: p2p.snapshot_at || null,
+          data_source: p2p.data_source || 'p2p_mysql_readonly',
+          snapshot_stale: false,
+          metrics: {
+            total_users: patch.total_users,
+            sign_in_today: patch.sign_in_today,
+            sign_in_rate_overall: patch.sign_in_rate_overall,
+            sign_in_rate_today: patch.sign_in_rate_today,
+            open_tickets: patch.open_tickets,
+            closed_tickets: patch.closed_tickets,
+            rejected: patch.rejected,
+            total_items: patch.total_items,
+            opened_today: 0,
+            closed_today: 0,
+            in_progress: 0,
+          },
+          metric_labels: {
+            sign_in_today: 'Signed in today',
+            sign_in_rate_overall: 'Sign-in rate (overall)',
+            sign_in_rate_today: 'Sign-in rate today',
+            open_tickets: 'Open PR/PO',
+            closed_tickets: 'Closed PR/PO',
+          },
+        });
+      }
+      apps.sort((a, b) => String(a.application_name).localeCompare(String(b.application_name)));
+    } catch {
+      // P2P overlay is best-effort — keep PG zeros rather than failing the whole dashboard.
+    }
+  }
+
+  return apps;
 }
 
 module.exports = {

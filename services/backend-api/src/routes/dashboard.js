@@ -127,6 +127,9 @@ router.get('/application/:applicationId', async (req, res) => {
       const payload = await loadP2pDashboard({
         environment,
         period: req.query.period,
+        entity: req.query.entity,
+        dateFrom: req.query.date_from || req.query.dateFrom,
+        dateTo: req.query.date_to || req.query.dateTo,
       });
       return ok(res, req.correlationId, {
         ...payload,

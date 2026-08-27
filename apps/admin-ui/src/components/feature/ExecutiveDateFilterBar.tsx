@@ -68,7 +68,7 @@ export default function ExecutiveDateFilterBar({
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {DATE_PRESETS.filter((p) => (compact ? !['fy', 'prev_fy', 'custom'].includes(p.id) : true)).map((opt) => {
           const active = period === opt.id;
           return (
@@ -93,8 +93,25 @@ export default function ExecutiveDateFilterBar({
             </button>
           );
         })}
+        {onEntityChange && entityOptions?.length ? (
+          <label className="ml-auto flex h-9 items-center gap-2 rounded-full border border-slate-200 bg-white pl-3 pr-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Entity</span>
+            <select
+              className="h-7 max-w-[200px] truncate rounded-full border-0 bg-transparent pr-2 text-sm font-medium text-slate-800 outline-none"
+              value={entity || 'all'}
+              onChange={(e) => onEntityChange(e.target.value)}
+            >
+              {entityOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
+      {(period === 'year' || period === 'pick_month' || period === 'custom') ? (
       <div className="mt-3 flex flex-wrap items-end gap-3">
         {period === 'year' ? (
           <label className="flex flex-col gap-1">
@@ -168,24 +185,8 @@ export default function ExecutiveDateFilterBar({
             </label>
           </div>
         ) : null}
-
-        {onEntityChange && entityOptions?.length ? (
-          <label className="ml-auto flex min-w-[180px] flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Entity</span>
-            <select
-              className="h-9 w-full truncate rounded-xl border border-slate-200 bg-white px-3 text-sm"
-              value={entity || 'all'}
-              onChange={(e) => onEntityChange(e.target.value)}
-            >
-              {entityOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
       </div>
+      ) : null}
 
       {period !== 'all' ? (
         <p className="mt-2 text-[11px] text-slate-500">

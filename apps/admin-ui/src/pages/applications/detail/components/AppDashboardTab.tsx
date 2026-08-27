@@ -696,31 +696,27 @@ export default function AppDashboardTab({ app, refreshNonce = 0, onRefreshingCha
   return (
     <div className="rounded-3xl bg-gradient-to-br from-slate-50 via-white to-sky-50/40 p-1">
       <div className="space-y-4">
-        {!isP2pApp && data?.report_layout?.kind !== 'p2p' ? (
-          <ExecutiveDateFilterBar
-            period={period}
-            onPeriodChange={setPeriod}
-            calendarYear={calendarYear}
-            onCalendarYearChange={setCalendarYear}
-            calendarMonth={calendarMonth}
-            onCalendarMonthChange={setCalendarMonth}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            onDateFromChange={setDateFrom}
-            onDateToChange={setDateTo}
-            entity={entity}
-            onEntityChange={setEntity}
-            entityOptions={entityOptions}
-            refreshing={refreshing}
-          />
-        ) : (
-          <div
-            className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-600 shadow-sm"
-            style={{ border: `1px solid ${CARD_BORDER}` }}
-          >
-            Live Procurement to Pay snapshot from MySQL · all PR/PO documents (date filters do not apply).
-          </div>
-        )}
+        <ExecutiveDateFilterBar
+          period={period}
+          onPeriodChange={setPeriod}
+          calendarYear={calendarYear}
+          onCalendarYearChange={setCalendarYear}
+          calendarMonth={calendarMonth}
+          onCalendarMonthChange={setCalendarMonth}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFromChange={setDateFrom}
+          onDateToChange={setDateTo}
+          entity={entity}
+          onEntityChange={setEntity}
+          entityOptions={entityOptions}
+          refreshing={refreshing}
+        />
+        {isP2pApp || data?.report_layout?.kind === 'p2p' ? (
+          <p className="text-xs text-slate-500">
+            Live MySQL read-only · filters apply to PR/PO created/submitted dates and entity.
+          </p>
+        ) : null}
 
         {data?.snapshot_at ? (
           <p className="text-xs text-slate-500">
@@ -853,56 +849,53 @@ export default function AppDashboardTab({ app, refreshNonce = 0, onRefreshingCha
             ) : null}
 
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-              {!isP2pLayout ? (
-                <>
-                  <div className="relative col-span-2 overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-700 px-4 py-4 text-white shadow-lg">
-                    <div className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/15" />
-                    <div className="relative">
-                      <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-violet-100">
-                        <Percent className="h-3.5 w-3.5" />
-                        Adoption · overall
-                      </div>
-                      <p className="mt-2 text-4xl font-bold tabular-nums leading-none">{adoptionOverall}%</p>
-                      <p className="mt-2 text-sm text-violet-100">
-                        Ever signed in ÷ app users (not today-only)
-                      </p>
-                    </div>
+              <div className="relative col-span-2 overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-700 px-4 py-4 text-white shadow-lg">
+                <div className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/15" />
+                <div className="relative">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-violet-100">
+                    <Percent className="h-3.5 w-3.5" />
+                    {isP2pLayout ? 'Users · P2P app' : 'Adoption · overall'}
                   </div>
-                  <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <Users className="h-3.5 w-3.5 text-sky-600" />
-                      Users
-                    </div>
-                    <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
-                      {Number(data.metrics.total_users || 0).toLocaleString('en-IN')}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
-                      Signed in today
-                    </div>
-                    <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
-                      {Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <Sparkles className="h-3.5 w-3.5 text-violet-600" />
-                      Adoption today
-                    </div>
-                    <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
-                      {adoptionToday}%
-                    </div>
-                    <p className="mt-0.5 text-[10px] text-slate-400">Today only · not affected by date filter</p>
-                  </div>
-                </>
-              ) : (
-                <div className="col-span-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-                  Direct MySQL read-only · document counts and INR values from live P2P tables. User adoption is not
-                  tracked on this dashboard.
+                  <p className="mt-2 text-4xl font-bold tabular-nums leading-none">
+                    {isP2pLayout
+                      ? Number(data.metrics.total_users || 0).toLocaleString('en-IN')
+                      : `${adoptionOverall}%`}
+                  </p>
+                  <p className="mt-2 text-sm text-violet-100">
+                    {isP2pLayout
+                      ? `${Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')} signed in today`
+                      : 'Ever signed in ÷ app users (not today-only)'}
+                  </p>
                 </div>
-              )}
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <Users className="h-3.5 w-3.5 text-sky-600" />
+                  Users
+                </div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+                  {Number(data.metrics.total_users || 0).toLocaleString('en-IN')}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
+                  Signed in today
+                </div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+                  {Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+                  Adoption today
+                </div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+                  {adoptionToday}%
+                </div>
+                <p className="mt-0.5 text-[10px] text-slate-400">Today only · not affected by date filter</p>
+              </div>
             </div>
 
             {data.report_layout?.note ? (
@@ -1186,15 +1179,14 @@ export default function AppDashboardTab({ app, refreshNonce = 0, onRefreshingCha
               </DashboardCard>
             )}
 
-            {!isP2pLayout ? (
             <DashboardCard
-              title="MIS · Users"
+              title={isP2pLayout ? 'MIS · P2P users (requesters / PO creators)' : 'MIS · Users'}
               right={
                 <span className="inline-flex items-center gap-1 text-xs text-slate-500">
                   <Users className="h-3.5 w-3.5" />
                   {misUsers.length}
                   {entity !== 'all' || period !== 'all' ? ' · same filters' : ''}
-                  {' · by closure % · totals = KPI cards'}
+                  {' · by closure %'}
                 </span>
               }
             >
@@ -1235,7 +1227,7 @@ export default function AppDashboardTab({ app, refreshNonce = 0, onRefreshingCha
                     {misUsers.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-5 py-8 text-center text-sm text-slate-400">
-                          No users for this filter. Try All entities / All resources.
+                          No users for this filter. Try All entities / All time.
                         </td>
                       </tr>
                     ) : null}
@@ -1243,7 +1235,6 @@ export default function AppDashboardTab({ app, refreshNonce = 0, onRefreshingCha
                 </table>
               </div>
             </DashboardCard>
-            ) : null}
 
             <p className="px-1 text-[11px] text-slate-400">
               Snapshot {formatWhen(data.snapshot_at)} · entity={data.filters.entity} · period={data.filters.period}

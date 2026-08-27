@@ -144,7 +144,7 @@ function kfTsSql(col) {
   END`;
 }
 
-function createdAtSql(alias = 'i', { allowSnapshotFallback = true } = {}) {
+function createdAtSql(alias = 'i', { allowSnapshotFallback = true, allowModifiedFallback = false } = {}) {
   const p = `${alias}.source_payload`;
   const parts = [
     kfTsSql(`${p}->'_created_at'`),
@@ -154,7 +154,17 @@ function createdAtSql(alias = 'i', { allowSnapshotFallback = true } = {}) {
     kfTsSql(`${p}->'CreatedAt'`),
     kfTsSql(`${p}->'Created_On'`),
     kfTsSql(`${p}->'Created_At'`),
+    kfTsSql(`${p}->'Created_Date'`),
+    kfTsSql(`${p}->'Date_Created'`),
+    kfTsSql(`${p}->'Ticket_Created_Date'`),
+    kfTsSql(`${p}->'Lead_Created_Date'`),
   ];
+  // Period filters: recover undated Kissflow rows via modified time (never snapshot_at —
+  // that falsely pulls every undated ticket into "today"/YTD).
+  if (allowModifiedFallback) {
+    parts.push(kfTsSql(`${p}->'_modified_at'`));
+    parts.push(kfTsSql(`${p}->'Modified_At'`));
+  }
   if (allowSnapshotFallback) parts.push(`${alias}.snapshot_at`);
   return `COALESCE(${parts.join(',\n    ')})`;
 }
@@ -533,7 +543,11 @@ async function loadApplicationDashboard(pool, opts) {
     ? `AND i.process_id = '${sqlLiteral(processIdFilter)}'`
     : '';
   const periodScoped = effectivePeriod && effectivePeriod !== 'all';
-  const createdAt = createdAtSql('i', { allowSnapshotFallback: !periodScoped });
+  const createdAt = createdAtSql('i', {
+    allowSnapshotFallback: !periodScoped,
+    // Recover undated tickets into YTD/MTD/etc without using snapshot_at (which skews all → "now").
+    allowModifiedFallback: periodScoped,
+  });
   const completedAt = completedAtSql('i');
   const periodClause = periodSqlClause(effectivePeriod, 'created_at', dateFrom, dateTo, 'completed_at');
   /** Solar slicer / matrix: Operation vs Finance (not site codes). */
