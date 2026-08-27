@@ -23,7 +23,7 @@ export interface NavItem {
 export const navigationItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', hint: 'Metrics & recent sends', icon: LayoutDashboard, path: '/dashboard' },
   { id: 'applications', label: 'Applications', hint: 'Connect Kissflow apps', icon: LayoutGrid, path: '/applications' },
-  { id: 'users', label: 'Users', hint: 'Full account directory', icon: Users, path: '/users' },
+  { id: 'users', label: 'User management', hint: 'Users by app · Open / Closed / Rejected', icon: Users, path: '/users' },
   { id: 'platform-users', label: 'Admin users', hint: 'Portal access & roles', icon: Shield, path: '/platform-users' },
   { id: 'templates', label: 'Report templates', hint: 'HTML emails per app', icon: Mail, path: '/templates' },
   { id: 'schedulers', label: 'Schedules', hint: 'When & who to send', icon: CalendarClock, path: '/schedulers' },

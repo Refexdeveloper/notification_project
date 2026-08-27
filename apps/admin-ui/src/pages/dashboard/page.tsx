@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   BarChart3,
@@ -35,37 +35,42 @@ import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadDashboard,
   readDashboardCache,
+  readDashboardCacheSoft,
+  isDashboardCacheFresh,
   refreshDashboardLive,
   type DashboardApplication,
 } from '@/services/dashboardApi';
 import { loadApplicationDashboard } from '@/services/appDashboardApi';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
+import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
 import {
   currentIstYear,
   resolveDateScope,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
+import { buildAppOpenPath, readEmbedFromSearch, withEmbedParams } from '@/lib/embedMode';
+import { EMBED_EXECUTIVE, personalGreeting } from '@/lib/timeGreeting';
 
 const CARD_BORDER = 'rgba(226, 232, 240, 0.9)';
 const MUTED = '#64748b';
 const CHART_GRID = '#e2e8f0';
 
 const KPI_STYLES = [
-  { accent: 'from-sky-500 via-blue-600 to-indigo-700', glow: 'shadow-blue-500/25', icon: Users },
-  { accent: 'from-emerald-400 via-teal-500 to-cyan-600', glow: 'shadow-emerald-500/25', icon: UserCheck },
-  { accent: 'from-amber-400 via-orange-500 to-rose-500', glow: 'shadow-orange-500/25', icon: FolderOpen },
-  { accent: 'from-emerald-400 via-green-500 to-teal-600', glow: 'shadow-emerald-500/25', icon: CheckCircle2 },
+  { bg: '#EAF3FF', text: '#1E3A5F', muted: '#5B7A9D', iconBg: '#D6E8FF', iconColor: '#3977BE', icon: Users },
+  { bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D', icon: UserCheck },
+  { bg: '#FFF2E4', text: '#7A4A1A', muted: '#A96A20', iconBg: '#FFE8CC', iconColor: '#A96A20', icon: FolderOpen },
+  { bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D', icon: CheckCircle2 },
 ] as const;
 
-const OPEN_COLOR = '#f97316';
-const CLOSED_COLOR = '#10b981';
+const OPEN_COLOR = '#D4A574';
+const CLOSED_COLOR = '#5BA88A';
 
 const APP_CARD_ACCENTS = [
-  'from-blue-500 to-indigo-600',
-  'from-emerald-500 to-teal-600',
-  'from-orange-500 to-rose-500',
-  'from-violet-500 to-purple-600',
-  'from-cyan-500 to-blue-600',
+  { bg: '#EAF3FF', text: '#3977BE' },
+  { bg: '#E8F7F1', text: '#287B5D' },
+  { bg: '#FFF2E4', text: '#A96A20' },
+  { bg: '#F0EDFF', text: '#5B4B9A' },
+  { bg: '#EAF7FB', text: '#2A7A8C' },
 ] as const;
 
 function formatWhen(value: string | null | undefined): string {
@@ -110,10 +115,10 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center gap-3">
-      <div className={`h-8 w-1 rounded-full bg-gradient-to-b ${accent}`} />
+      <div className="h-8 w-1 rounded-full bg-[#B8D0F0]" />
       <div className="flex items-center gap-2">
-        <div className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br ${accent} shadow-sm`}>
-          <Icon className="h-3.5 w-3.5 text-white" />
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#EAF2FF] shadow-sm ring-1 ring-[#D0E0F5]">
+          <Icon className="h-3.5 w-3.5 text-[#3977BE]" />
         </div>
         <span className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{title}</span>
       </div>
@@ -127,12 +132,14 @@ function DashboardCard({
   icon: Icon,
   children,
   className = '',
+  action,
 }: {
   title: string;
   subtitle?: string;
   icon?: typeof BarChart3;
   children: ReactNode;
   className?: string;
+  action?: ReactNode;
 }) {
   return (
     <div
@@ -150,6 +157,7 @@ function DashboardCard({
             <p className="text-sm font-semibold text-slate-900">{title}</p>
             {subtitle ? <p className="mt-0.5 text-[11px] text-slate-500">{subtitle}</p> : null}
           </div>
+          {action ? <div className="shrink-0">{action}</div> : null}
         </div>
       </div>
       <div className="min-h-[220px] flex-1 p-4">{children}</div>
@@ -175,20 +183,29 @@ function KpiCard({
 
   return (
     <div
-      className={`relative min-w-0 overflow-hidden rounded-2xl bg-gradient-to-br ${style.accent} p-5 text-white shadow-lg ${style.glow}`}
+      className="relative min-w-0 overflow-hidden rounded-2xl p-5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]"
+      style={{ background: style.bg }}
     >
-      <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/15" />
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-white/80">{label}</p>
-          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-wider" style={{ color: style.muted }}>
+            {label}
+          </p>
+          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums" style={{ color: style.text }}>
             {value.toLocaleString()}
             {suffix}
           </p>
-          {sub ? <p className="mt-2 text-sm font-semibold text-white/95">{sub}</p> : null}
+          {sub ? (
+            <p className="mt-2 text-sm font-semibold" style={{ color: style.muted }}>
+              {sub}
+            </p>
+          ) : null}
         </div>
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 ring-1 ring-white/30">
-          <Icon className="h-5 w-5 text-white" />
+        <div
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-black/5"
+          style={{ background: style.iconBg }}
+        >
+          <Icon className="h-5 w-5" style={{ color: style.iconColor }} />
         </div>
       </div>
     </div>
@@ -274,53 +291,16 @@ function DashboardSkeleton() {
   );
 }
 
-function AppSlicer({
-  apps,
-  selectedId,
-  onSelect,
-}: {
-  apps: DashboardApplication[];
-  selectedId: string | 'all';
-  onSelect: (id: string | 'all') => void;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-2xl border bg-white px-4 py-3 shadow-sm"
-      style={{ borderColor: CARD_BORDER }}
-    >
-      <span className="mr-1 text-[11px] font-bold uppercase tracking-widest text-slate-400">Application</span>
-      {(['all', ...apps.map((a) => `${a.environment}-${a.application_id}`)] as const).map((id) => {
-        const isAll = id === 'all';
-        const active = selectedId === id;
-        const label = isAll ? 'All apps' : apps.find((a) => `${a.environment}-${a.application_id}` === id)?.application_name ?? id;
-
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onSelect(isAll ? 'all' : id)}
-            className={`max-w-[180px] cursor-pointer truncate rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-              active
-                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function AppDetailCard({
   app,
   accentIndex,
   onOpen,
+  embed = false,
 }: {
   app: DashboardApplication;
   accentIndex: number;
   onOpen: () => void;
+  embed?: boolean;
 }) {
   const m = app.metrics;
   const labels = app.metric_labels;
@@ -345,8 +325,21 @@ function AppDetailCard({
   }${app.snapshot_stale ? ' · stale' : ''}`;
 
   return (
-    <DashboardCard title={app.application_name} subtitle={subtitle}>
-      <div className={`mb-4 h-1 w-full rounded-full bg-gradient-to-r ${accent}`} />
+    <DashboardCard
+      title={app.application_name}
+      subtitle={embed ? undefined : subtitle}
+      action={
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex items-center gap-1 rounded-full bg-[#E9F1FF] px-2.5 py-1 text-[10px] font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
+        >
+          Open
+          <ArrowRight className="h-3 w-3" />
+        </button>
+      }
+    >
+      <div className="mb-4 h-1 w-full rounded-full" style={{ background: accent.bg }} />
       <div className="space-y-2">
         {rows.map((row) => (
           <div
@@ -361,9 +354,10 @@ function AppDetailCard({
       <button
         type="button"
         onClick={onOpen}
-        className={`mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r ${accent} px-3 py-2.5 text-xs font-semibold text-white shadow-md hover:shadow-lg transition-shadow`}
+        className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-semibold shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#D0E0F5] transition-shadow hover:shadow-md"
+        style={{ background: accent.bg, color: accent.text }}
       >
-        Open application
+        Open {app.application_name}
         <ArrowRight className="h-3.5 w-3.5" />
       </button>
     </DashboardCard>
@@ -372,6 +366,8 @@ function AppDetailCard({
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const embed = readEmbedFromSearch(searchParams);
   const backendMode = isBackendApiMode();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -380,14 +376,30 @@ export default function DashboardPage() {
   const [refreshMode, setRefreshMode] = useState<'live' | 'snapshot' | null>(null);
   const [refreshWarnings, setRefreshWarnings] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedAppId, setSelectedAppId] = useState<string | 'all'>('all');
-  const [period, setPeriod] = useState<DatePresetId>('all');
+  const [selectedAppId, setSelectedAppId] = useState<string | 'all'>(() => {
+    const fromUrl = searchParams.get('app');
+    return fromUrl && fromUrl !== 'all' ? fromUrl : 'all';
+  });
+  const [period, setPeriod] = useState<DatePresetId>('fy');
   const [calendarYear, setCalendarYear] = useState(() => currentIstYear());
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    try {
+      return Number(
+        new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', month: 'numeric' }).format(new Date()),
+      );
+    } catch {
+      return new Date().getMonth() + 1;
+    }
+  });
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filteredApplications, setFilteredApplications] = useState<DashboardApplication[] | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
+
+  useEffect(() => {
+    const fromUrl = searchParams.get('app');
+    if (fromUrl && fromUrl !== 'all') setSelectedAppId(fromUrl);
+  }, [searchParams]);
 
   const resolvedDates = useMemo(
     () => resolveDateScope({ period, calendarYear, calendarMonth, dateFrom, dateTo }),
@@ -402,24 +414,9 @@ export default function DashboardPage() {
   }, []);
 
   const load = useCallback(async (forceRefresh = false) => {
-    let hadCachedSnapshot = false;
-
     if (forceRefresh) {
       setRefreshing(true);
-    } else {
-      const cached = readDashboardCache('production');
-      if (cached) {
-        hadCachedSnapshot = true;
-        applyDashboardData(cached);
-        setLoading(false);
-      } else {
-        setLoading(true);
-      }
-    }
-
-    setError('');
-    // Soft landing: paint from cache/snapshot first. Explicit Refresh runs related-user live overlay.
-    if (forceRefresh) {
+      setError('');
       const live = await refreshDashboardLive('production');
       if (live.ok && live.data?.applications) {
         applyDashboardData(live.data);
@@ -433,15 +430,35 @@ export default function DashboardPage() {
           return prev.includes(msg) ? prev : [...prev, msg];
         });
       }
+    } else if (isDashboardCacheFresh('production')) {
+      // Fresh within 5 minutes — paint from cache and skip network entirely.
+      const cached = readDashboardCache('production');
+      if (cached) {
+        applyDashboardData(cached);
+        setLoading(false);
+        setRefreshing(false);
+        setError('');
+        return;
+      }
     }
 
+    // Soft paint from any prior snapshot while a network fetch runs (only when stale/missing).
+    const soft = readDashboardCacheSoft('production');
+    if (soft) {
+      applyDashboardData(soft);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    setError('');
     const result = await loadDashboard('production', {
       live: false,
-      skipCache: forceRefresh || hadCachedSnapshot,
+      skipCache: true,
     });
 
     if (!result.ok || !result.data) {
-      if (!hadCachedSnapshot) {
+      if (!soft) {
         setError(result.error || 'Could not load dashboard');
         setApplications([]);
       } else if (result.error) {
@@ -463,14 +480,42 @@ export default function DashboardPage() {
   }, [load]);
 
   useEffect(() => {
-    if (period === 'all') {
+    // Default FY + All time: use overview snapshot (already fast) — no N-way API fan-out.
+    if (period === 'all' || period === 'fy') {
       setFilteredApplications(null);
+      setFilterLoading(false);
       return;
     }
+
     if (!applications.length) return;
+
+    // Today: use opened_today / closed_today already on the overview payload (instant).
+    if (period === 'daily') {
+      setFilterLoading(false);
+      setFilteredApplications(
+        applications.map((app) => {
+          const opened = Number(app.metrics.opened_today || 0);
+          const closed = Number(app.metrics.closed_today || 0);
+          return {
+            ...app,
+            metrics: {
+              ...app.metrics,
+              open_tickets: opened,
+              closed_tickets: closed,
+              total_items: opened + closed + Number(app.metrics.rejected || 0),
+            },
+          } satisfies DashboardApplication;
+        }),
+      );
+      return;
+    }
+
+    // Weekly / MTD / QTD / Month / Year / Custom → scoped app dashboards (5‑min cache).
+
     let cancelled = false;
     setFilterLoading(true);
     void (async () => {
+      // Prefer session cache (5 min). Never skipCache — that caused multi-minute filter waits.
       const scoped = await Promise.all(
         applications.map(async (app) => {
           try {
@@ -481,7 +526,7 @@ export default function DashboardPage() {
               dateFrom: resolvedDates.from,
               dateTo: resolvedDates.to,
               entity: 'all',
-              skipCache: true,
+              skipCache: false,
             });
             const dash = result.data;
             if (!dash) return app;
@@ -567,9 +612,18 @@ export default function DashboardPage() {
 
   const donutTotal = totals.open_tickets + totals.closed_tickets + totals.rejected;
 
+  const embedAppTitle = useMemo(() => {
+    if (!embed) return undefined;
+    if (selectedAppId !== 'all') {
+      const match = displayApplications.find((a) => `${a.environment}-${a.application_id}` === selectedAppId);
+      return match?.application_name || 'Engagement overview';
+    }
+    return 'Engagement overview';
+  }, [embed, selectedAppId, displayApplications]);
+
   if (!backendMode) {
     return (
-      <Layout breadcrumbs={[{ label: 'Dashboard' }]}>
+      <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
         <EmptyState
           variant="activity"
           title="Dashboard requires backend mode"
@@ -582,38 +636,63 @@ export default function DashboardPage() {
   }
 
   return (
-    <Layout breadcrumbs={[{ label: 'Dashboard' }]}>
+    <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
       <div
-        className="overflow-hidden rounded-3xl border bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-[0_12px_40px_rgba(15,23,42,0.06)]"
+        className="relative rounded-3xl border bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-[0_12px_40px_rgba(15,23,42,0.06)]"
         style={{ borderColor: CARD_BORDER }}
       >
-        <div className="relative overflow-hidden border-b bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 px-5 py-5">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.18),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(129,140,248,0.22),transparent_40%)]" />
+        <DashboardLoadingOverlay
+          show={Boolean(refreshing || filterLoading || (loading && applications.length === 0))}
+          mode="fixed"
+          label={
+            refreshing
+              ? 'Refreshing live metrics…'
+              : filterLoading
+                ? 'Applying date filters…'
+                : 'Loading dashboard…'
+          }
+        />
+        <div className="relative overflow-hidden rounded-t-3xl border-b border-[#D7E2EF] bg-[#EEF3FF] px-5 py-5">
+          {embed ? (
+            <div className="mb-4 border-b border-[#D7E2EF] pb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3977BE]">
+                {personalGreeting()}
+              </p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800 sm:text-base">
+                {EMBED_EXECUTIVE.name} · {EMBED_EXECUTIVE.title}
+              </p>
+            </div>
+          ) : null}
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/25">
-                <BarChart3 className="h-6 w-6 text-sky-200" />
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white ring-1 ring-[#D7E2EF]">
+                <BarChart3 className="h-6 w-6 text-[#3977BE]" />
               </div>
               <div className="min-w-0">
-                <div className="mb-1 flex items-center gap-2">
-                  <Sparkles className="h-3.5 w-3.5 text-sky-300" />
-                  <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-300/90">
-                    Engagement dashboard
-                  </span>
-                </div>
-                <h1 className="truncate text-xl font-bold tracking-tight text-white">Engagement overview</h1>
-                <p className="truncate text-xs text-slate-300">
-                  {refreshMode === 'live' ? 'Live Kissflow overlay' : 'PostgreSQL snapshot'} · fast landing
-                  {generatedAt ? ` · Updated ${formatWhen(generatedAt)}` : ''}
-                  {refreshing ? ' · refreshing…' : ''}
-                </p>
+                {!embed ? (
+                  <div className="mb-1 flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 text-[#3977BE]" />
+                    <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#3977BE]/80">
+                      Engagement dashboard
+                    </span>
+                  </div>
+                ) : null}
+                {!embed ? (
+                  <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">Engagement overview</h1>
+                ) : null}
+                {!embed ? (
+                  <p className="truncate text-xs text-slate-500">
+                    {refreshMode === 'live' ? 'Live overlay' : 'PostgreSQL snapshot'} · fast landing
+                    {generatedAt ? ` · Updated ${formatWhen(generatedAt)}` : ''}
+                    {refreshing ? ' · refreshing…' : ''}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button
                 variant="secondary"
                 size="sm"
-                className="border-white/20 bg-white/10 text-white hover:bg-white/20"
                 onClick={() => void load(true)}
                 disabled={loading || refreshing}
               >
@@ -625,35 +704,6 @@ export default function DashboardPage() {
         </div>
 
         <div className="relative space-y-6 p-5 md:p-6">
-          {refreshing ? (
-            <div className="pointer-events-none absolute inset-x-5 top-5 z-10 overflow-hidden rounded-2xl border border-sky-200/80 bg-white/90 p-4 shadow-lg backdrop-blur-sm md:inset-x-6 md:top-6">
-              <div className="flex items-center gap-3">
-                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600">
-                  <div className="absolute inset-0 animate-pulse bg-white/20" />
-                  <RefreshCw className="absolute inset-0 m-auto h-5 w-5 animate-spin text-white" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-slate-900">Refreshing live Kissflow overlay…</p>
-                  <p className="text-xs text-slate-500">Updating adoption, open/closed, and per-app workload for executives</p>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full w-2/5 animate-[pulse_1.1s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500" />
-                  </div>
-                </div>
-                <img
-                  src="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
-                  alt=""
-                  className="hidden h-2 w-28 rounded-full sm:block"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {refreshing && (
-            <div className="h-0.5 overflow-hidden rounded-full bg-slate-200">
-              <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" />
-            </div>
-          )}
-
           {refreshWarnings.length > 0 && (
             <div className="space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
               {refreshWarnings.map((w) => (
@@ -671,25 +721,119 @@ export default function DashboardPage() {
               onPrimary={() => void load()}
             />
           ) : loading && applications.length === 0 ? (
-            <DashboardSkeleton />
+            <div className="min-h-[280px]" />
           ) : (
             <div className="space-y-6">
-              <ExecutiveDateFilterBar
-                period={period}
-                onPeriodChange={setPeriod}
-                calendarYear={calendarYear}
-                onCalendarYearChange={setCalendarYear}
-                calendarMonth={calendarMonth}
-                onCalendarMonthChange={setCalendarMonth}
-                dateFrom={dateFrom}
-                dateTo={dateTo}
-                onDateFromChange={setDateFrom}
-                onDateToChange={setDateTo}
-                refreshing={refreshing || filterLoading}
-                compact
-              />
+              <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-md sm:p-4">
+                <ExecutiveDateFilterBar
+                  period={period}
+                  onPeriodChange={setPeriod}
+                  calendarYear={calendarYear}
+                  onCalendarYearChange={setCalendarYear}
+                  calendarMonth={calendarMonth}
+                  onCalendarMonthChange={setCalendarMonth}
+                  dateFrom={dateFrom}
+                  dateTo={dateTo}
+                  onDateFromChange={setDateFrom}
+                  onDateToChange={setDateTo}
+                  application={selectedAppId}
+                  onApplicationChange={(id) => {
+                    const next = id === 'all' ? 'all' : id;
+                    setSelectedAppId(next);
+                    if (embed) {
+                      setSearchParams(
+                        withEmbedParams(searchParams, { app: next === 'all' ? null : next }),
+                        { replace: true },
+                      );
+                    }
+                  }}
+                  applicationOptions={[
+                    { id: 'all', label: 'All apps' },
+                    ...displayApplications.map((a) => ({
+                      id: `${a.environment}-${a.application_id}`,
+                      label: a.application_name,
+                    })),
+                  ]}
+                  refreshing={refreshing || filterLoading}
+                  hideHints={embed}
+                />
+                {period !== 'fy' || selectedAppId !== 'all' ? (
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPeriod('fy');
+                        setSelectedAppId('all');
+                        setDateFrom('');
+                        setDateTo('');
+                        if (embed) {
+                          setSearchParams(withEmbedParams(searchParams, { app: null }), { replace: true });
+                        }
+                      }}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-700"
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                ) : null}
+              </div>
 
-              <AppSlicer apps={displayApplications} selectedId={selectedAppId} onSelect={setSelectedAppId} />
+              {selectedAppId !== 'all' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const appId = filteredApps[0]?.application_id || selectedAppId;
+                    navigate(
+                      buildAppOpenPath({
+                        environment: filteredApps[0]?.environment,
+                        applicationId: appId,
+                        tab: 'dashboard',
+                        embed,
+                      }),
+                    );
+                  }}
+                  className="group flex w-full items-center justify-between gap-3 rounded-2xl border border-[#D0E0F5] bg-[#EEF3FF] px-4 py-3.5 text-left text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] transition hover:bg-[#EAF2FF] sm:px-5"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5B7A9D]">
+                      {embed ? 'Open project dashboard' : 'Go to application'}
+                    </p>
+                    <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
+                      {filteredApps[0]?.application_name || 'Open dashboard'}
+                    </p>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] group-hover:bg-[#EAF2FF]">
+                    Open
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </span>
+                </button>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {displayApplications.map((app) => {
+                    const id = `${app.environment}-${app.application_id}`;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() =>
+                          navigate(
+                            buildAppOpenPath({
+                              environment: app.environment,
+                              applicationId: app.application_id,
+                              tab: 'dashboard',
+                              embed,
+                            }),
+                          )
+                        }
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800"
+                      >
+                        <span className="truncate">{app.application_name}</span>
+                        <ArrowRight className="h-3 w-3 shrink-0 opacity-60" />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="space-y-6">
                 <div className="space-y-4">
@@ -698,47 +842,60 @@ export default function DashboardPage() {
                       label="Total items"
                       value={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       sub={
-                        period === 'all'
-                          ? selectedAppId === 'all'
-                            ? 'All applications · open + closed + rejected'
-                            : 'Selected application'
-                          : 'Filtered by created date'
+                        embed
+                          ? undefined
+                          : period === 'all'
+                            ? selectedAppId === 'all'
+                              ? 'All applications · open + closed + rejected'
+                              : 'Selected application'
+                            : 'Filtered by created date'
                       }
                       styleIndex={0}
                     />
                     <KpiCard
                       label="Total users"
                       value={totals.total_users}
-                      sub={`${totals.sign_in_today} of ${totals.total_users} today`}
+                      sub={embed ? undefined : `${totals.sign_in_today} of ${totals.total_users} today`}
                       styleIndex={1}
                     />
                     <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={2} />
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <div className="relative min-w-0 overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-700 p-5 text-white shadow-lg shadow-violet-500/25">
-                      <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/15" />
+                    <div className="relative min-w-0 overflow-hidden rounded-2xl bg-[#F0EDFF] p-5 text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E0D9F5]">
                       <div className="relative flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-violet-100">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5B4B9A]">
                             Adoption today
                           </p>
-                          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums">
+                          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums text-slate-900">
                             {totals.total_users
                               ? Math.round((totals.sign_in_today / totals.total_users) * 100)
                               : 0}
                             %
                           </p>
-                          <p className="mt-2 text-sm font-semibold text-white/95">
-                            Signed in today ÷ total users · not affected by date filter
-                          </p>
+                          {!embed ? (
+                            <p className="mt-2 text-sm font-semibold text-slate-500">
+                              Signed in today ÷ total users · not affected by date filter
+                            </p>
+                          ) : null}
                         </div>
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 ring-1 ring-white/30">
-                          <Percent className="h-5 w-5 text-white" />
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 ring-1 ring-[#E0D9F5]">
+                          <Percent className="h-5 w-5 text-[#5B4B9A]" />
                         </div>
                       </div>
                     </div>
-                    <KpiCard label="Open items" value={totals.open_tickets} sub={`${totals.opened_today} today`} styleIndex={2} />
-                    <KpiCard label="Closed items" value={totals.closed_tickets} sub={`${totals.closed_today} today`} styleIndex={3} />
+                    <KpiCard
+                      label="Open items"
+                      value={totals.open_tickets}
+                      sub={embed ? undefined : `${totals.opened_today} today`}
+                      styleIndex={2}
+                    />
+                    <KpiCard
+                      label="Closed items"
+                      value={totals.closed_tickets}
+                      sub={embed ? undefined : `${totals.closed_today} today`}
+                      styleIndex={3}
+                    />
                   </div>
                 </div>
 
@@ -746,7 +903,7 @@ export default function DashboardPage() {
                   <DashboardCard
                     className="lg:col-span-2"
                     title="Open vs closed by application"
-                    subtitle="Clustered column chart"
+                    subtitle={embed ? undefined : 'Clustered column chart'}
                     icon={TrendingUp}
                   >
                     {barChartData.length === 0 ? (
@@ -808,7 +965,7 @@ export default function DashboardPage() {
                     )}
                   </DashboardCard>
 
-                  <DashboardCard title="Work item mix" subtitle="Donut · selected scope" icon={PieChartIcon}>
+                  <DashboardCard title="Work item mix" subtitle={embed ? undefined : 'Donut · selected scope'} icon={PieChartIcon}>
                     {donutData.length === 0 ? (
                       <p className="flex h-full min-h-[180px] items-center justify-center text-sm text-slate-500">
                         No ticket data
@@ -846,7 +1003,7 @@ export default function DashboardPage() {
 
                 <DashboardCard
                   title="Executive workload share"
-                  subtitle="Per-app open vs closed mix"
+                  subtitle={embed ? undefined : 'Per-app open vs closed mix'}
                   icon={BarChart3}
                 >
                   {workloadShareData.length === 0 ? (
@@ -918,7 +1075,9 @@ export default function DashboardPage() {
                               {row.fullName}
                             </p>
                             <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{row.closedPct}%</p>
-                            <p className="text-[11px] text-slate-500">Closed share · {row.openPct}% open</p>
+                            {!embed ? (
+                              <p className="text-[11px] text-slate-500">Closed share · {row.openPct}% open</p>
+                            ) : null}
                             <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-200">
                               <div className="h-full" style={{ width: `${row.openPct}%`, background: OPEN_COLOR }} />
                               <div className="h-full" style={{ width: `${row.closedPct}%`, background: CLOSED_COLOR }} />
@@ -949,7 +1108,17 @@ export default function DashboardPage() {
                         key={`${app.environment}-${app.application_id}`}
                         app={app}
                         accentIndex={index}
-                        onOpen={() => navigate(`/applications/${app.environment}-${app.application_id}`)}
+                        embed={embed}
+                        onOpen={() =>
+                          navigate(
+                            buildAppOpenPath({
+                              environment: app.environment,
+                              applicationId: app.application_id,
+                              tab: 'dashboard',
+                              embed,
+                            }),
+                          )
+                        }
                       />
                     ))
                   )}

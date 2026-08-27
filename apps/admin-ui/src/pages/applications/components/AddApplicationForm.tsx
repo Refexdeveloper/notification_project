@@ -28,7 +28,7 @@ const emptyAccount: AccountForm = {
   name: '',
   description: '',
   region: 'com',
-  environment: 'Development',
+  environment: 'Production',
   accessKeyId: '',
   accessKeySecret: '',
 };
@@ -303,10 +303,7 @@ export default function AddApplicationForm({ open, onClose, onCreated }: AddAppl
                     }
                     className="field"
                   >
-                    <option value="Development">Development</option>
-                    <option value="UAT">UAT</option>
                     <option value="Production">Production</option>
-                    <option value="Staging">Staging</option>
                   </select>
                 </Field>
               </div>

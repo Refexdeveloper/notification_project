@@ -88,13 +88,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 collapsed ? 'justify-center h-11' : 'gap-3 px-3 py-2.5 min-h-[44px]'
               } ${
                 active
-                  ? 'bg-[#E8F3FC] text-[#0A5A9E]'
+                  ? 'bg-[#EEF5FF] text-[#3977BE]'
                   : 'text-[#64748B] hover:text-[#1E293B] hover:bg-[#F8FAFC]'
               }`}
             >
               {active && (
                 <span
-                  className={`absolute w-[3px] rounded-r-full bg-[#0F6CBD] ${
+                  className={`absolute w-[3px] rounded-r-full bg-[#3977BE] ${
                     collapsed
                       ? 'left-0 top-[10px] bottom-[10px]'
                       : 'left-0 top-2 bottom-2'

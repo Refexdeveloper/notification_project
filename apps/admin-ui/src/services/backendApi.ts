@@ -28,7 +28,17 @@ function resolveV1Url(path: string): string {
   return `/api/v1${normalized}`;
 }
 
-/** Fetch backend-api v1 with standard envelope and correlation header. */
+function looksLikeHtml(body: string, contentType: string | null): boolean {
+  const ct = (contentType || '').toLowerCase();
+  if (ct.includes('text/html')) return true;
+  const trimmed = body.trimStart().slice(0, 32).toLowerCase();
+  return trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<pre>');
+}
+
+/**
+ * Fetch backend-api v1 with standard envelope and correlation header.
+ * Never throws on HTML/404 proxy mistakes — returns a clear error instead of JSON parse failures.
+ */
 export async function apiV1Fetch<T>(
   path: string,
   init: RequestInit = {},
@@ -54,7 +64,33 @@ export async function apiV1Fetch<T>(
 
   try {
     const res = await fetch(resolveV1Url(path), { ...init, headers, credentials: 'include', signal });
-    const json = (await res.json()) as ApiEnvelope<T>;
+    const raw = await res.text();
+    const contentType = res.headers.get('content-type');
+
+    if (looksLikeHtml(raw, contentType)) {
+      return {
+        ok: false,
+        status: res.status || 502,
+        data: null,
+        error:
+          'Backend API returned HTML instead of JSON — the API service may be down or pointing at the wrong Cloud Run image. Try Refresh, or redeploy refex-backend-api.',
+        errorCode: 'API_HTML_RESPONSE',
+      };
+    }
+
+    let json: ApiEnvelope<T>;
+    try {
+      json = JSON.parse(raw) as ApiEnvelope<T>;
+    } catch {
+      return {
+        ok: false,
+        status: res.status || 0,
+        data: null,
+        error: `Backend returned non-JSON (HTTP ${res.status}). Check backend-api health.`,
+        errorCode: 'API_INVALID_JSON',
+      };
+    }
+
     const cid = json.correlation_id;
     if (!res.ok || !json.success) {
       return {
@@ -68,16 +104,19 @@ export async function apiV1Fetch<T>(
     }
     return { ok: true, status: res.status, data: (json.data ?? null) as T, correlationId: cid };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = /abort|timeout/i.test(message);
     return {
       ok: false,
       status: 0,
       data: null,
       error:
-        err instanceof Error && err.message === 'Failed to fetch'
+        message === 'Failed to fetch'
           ? 'Network error — check API URL and CORS (Admin UI must reach backend-api).'
-          : err instanceof Error
-            ? err.message
-            : String(err),
+          : isTimeout
+            ? 'Request timed out — backend may be cold-starting. Retry in a few seconds.'
+            : message,
+      errorCode: isTimeout ? 'API_TIMEOUT' : undefined,
     };
   }
 }

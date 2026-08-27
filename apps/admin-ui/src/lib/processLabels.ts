@@ -23,10 +23,10 @@ export function processLabel(processId: string): string {
     return `${pid} · Travel Request (combined into entity report)`;
   }
   if (pid === 'Travel_Management_A02') {
-    return `${pid} · Travel Management (combined with Advance Payment + Expense)`;
+    return `${pid} · Travel Management (combined with Payment Request + Expense)`;
   }
   if (pid === 'Advance_Payment_Request_Process_A01') {
-    return `${pid} · Advance Payment (combined into Travel entity report)`;
+    return `${pid} · Payment Request (combined into Travel entity report)`;
   }
   if (pid === 'Expense_Management_A03') {
     return `${pid} · Expense Management (combined into Travel entity report)`;

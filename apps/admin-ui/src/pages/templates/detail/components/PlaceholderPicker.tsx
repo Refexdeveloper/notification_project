@@ -18,12 +18,33 @@ function placeholderTitle(appKind: TemplateAppKind, key: string): string {
   if (appKind === 'pm' && PM_PLACEHOLDER_LABELS[key]) {
     return `${PM_PLACEHOLDER_LABELS[key]} — {{${key}}}`;
   }
+  if (appKind === 'travel') {
+    const travelLabels: Record<string, string> = {
+      ProcessSectionsHtml: 'Per-process KPI rows (Payment Request / Expense / Travel)',
+      UserTableSectionHtml: 'MIS · Pending & Completed users',
+      EntityName: 'Entity name (Venwind or Refex)',
+      EntityScope: 'Entity scope label',
+      PendingRequests: 'In Progress (overall)',
+      CompletedRequests: 'Completed (overall)',
+    };
+    if (travelLabels[key]) return `${travelLabels[key]} — {{${key}}}`;
+  }
   return `Insert {{${key}}}`;
 }
 
 function placeholderChipLabel(appKind: TemplateAppKind, key: string): string {
   if (appKind === 'pm' && PM_PLACEHOLDER_LABELS[key]) {
     return PM_PLACEHOLDER_LABELS[key];
+  }
+  if (appKind === 'travel') {
+    const travelLabels: Record<string, string> = {
+      ProcessSectionsHtml: 'Process KPI rows',
+      UserTableSectionHtml: 'MIS table',
+      EntityName: 'Entity',
+      PendingRequests: 'In Progress',
+      CompletedRequests: 'Completed',
+    };
+    if (travelLabels[key]) return travelLabels[key];
   }
   return `{{${key}}}`;
 }

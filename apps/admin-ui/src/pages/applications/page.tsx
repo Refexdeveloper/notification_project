@@ -9,37 +9,32 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { REFEXONE_LOGO_URL } from '@/constants/branding';
-import {
-  REFEX_ENV_CONFIG,
-  type RefexEnvironment,
-} from '@/seeds/refexAppCatalog';
-import { springSnappy, staggerContainer } from '@/lib/motion';
+import { REFEX_ENV_CONFIG } from '@/seeds/refexAppCatalog';
+import { staggerContainer } from '@/lib/motion';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationsFromBackend } from '@/services/applicationsApi';
 import { useAuth } from '@/hooks/AuthContext';
 
-const ENV_STORAGE_KEY = 'ne_apps_environment';
-
-function readEnvPreference(): RefexEnvironment {
-  try {
-    const v = localStorage.getItem(ENV_STORAGE_KEY);
-    if (v === 'Production' || v === 'Development') return v;
-  } catch {
-    /* ignore */
-  }
-  return 'Development';
-}
+/** Production-only surface for executive review — Development env is not shown. */
+const PRODUCTION_ENV = 'Production' as const;
 
 export default function ApplicationsPage() {
   const { isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [tick, setTick] = useState(0);
-  const [environment, setEnvironment] = useState<RefexEnvironment>(readEnvPreference);
   const [loading, setLoading] = useState(isBackendApiMode());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [backendApps, setBackendApps] = useState<ReturnType<typeof getApplications>>([]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('ne_apps_environment', PRODUCTION_ENV);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     if (!isBackendApiMode()) return;
@@ -63,12 +58,12 @@ export default function ApplicationsPage() {
   }, [backendApps, tick]);
 
   const envApps = useMemo(
-    () => applications.filter((a) => a.environment === environment),
-    [applications, environment],
+    () => applications.filter((a) => a.environment === PRODUCTION_ENV),
+    [applications],
   );
 
   const connectedCount = envApps.filter((a) => a.connected).length;
-  const envMeta = REFEX_ENV_CONFIG[environment];
+  const envMeta = REFEX_ENV_CONFIG[PRODUCTION_ENV];
 
   const filteredApps = useMemo(() => {
     if (!searchQuery.trim()) return envApps;
@@ -85,15 +80,6 @@ export default function ApplicationsPage() {
     );
   }, [envApps, searchQuery]);
 
-  const selectEnvironment = (env: RefexEnvironment) => {
-    setEnvironment(env);
-    try {
-      localStorage.setItem(ENV_STORAGE_KEY, env);
-    } catch {
-      /* ignore */
-    }
-  };
-
   return (
     <Layout
       breadcrumbs={[
@@ -109,13 +95,12 @@ export default function ApplicationsPage() {
               Applications
             </h1>
             <p className="text-xs text-[#64748B] mt-0.5 truncate">
-              {envMeta.subdomain}.kissflow.com · {envMeta.accountId}
+              {envMeta.subdomain}.kissflow.com · Production
             </p>
           </div>
         </div>
 
         <div className="flex flex-1 flex-col sm:flex-row sm:items-center gap-3 lg:justify-end">
-          <EnvToggle value={environment} onChange={selectEnvironment} />
           {isAdmin && (
             <Button onClick={() => setFormOpen(true)} leftIcon={<Plus className="w-4 h-4" />}>
               Connect
@@ -151,7 +136,7 @@ export default function ApplicationsPage() {
         <p className="text-xs text-foreground-400 font-medium sm:ml-auto">
           {loading ? 'Loading…' : `${filteredApps.length} app${filteredApps.length === 1 ? '' : 's'}`}
           {envApps.length > 0 ? ` · ${connectedCount} connected` : ''}
-          {isBackendApiMode() ? ' · backend-api' : ''}
+          {isBackendApiMode() ? ' · production' : ''}
         </p>
       </div>
 
@@ -163,7 +148,6 @@ export default function ApplicationsPage() {
         />
       ) : filteredApps.length > 0 ? (
         <motion.div
-          key={environment}
           className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
           variants={staggerContainer}
           initial="initial"
@@ -184,11 +168,11 @@ export default function ApplicationsPage() {
       ) : (
         <EmptyState
           variant="apps"
-          title={`No ${environment.toLowerCase()} applications`}
+          title="No production applications"
           description={
             isBackendApiMode()
-              ? 'Connect a Kissflow application for this environment. Registration stores account metadata and credential refs in PostgreSQL (secrets are not stored in the database).'
-              : 'Connect a Kissflow account for this environment to sync fields and schedule reports.'
+              ? 'Connect a Kissflow application for production. Registration stores account metadata and credential refs in PostgreSQL (secrets are not stored in the database).'
+              : 'Connect a Kissflow account for production to sync fields and schedule reports.'
           }
           primaryLabel={isAdmin ? 'Connect Application' : undefined}
           onPrimary={isAdmin ? () => setFormOpen(true) : undefined}
@@ -201,50 +185,5 @@ export default function ApplicationsPage() {
         onCreated={() => setTick((t) => t + 1)}
       />
     </Layout>
-  );
-}
-
-function EnvToggle({
-  value,
-  onChange,
-}: {
-  value: RefexEnvironment;
-  onChange: (env: RefexEnvironment) => void;
-}) {
-  const options: { id: RefexEnvironment; label: string }[] = [
-    { id: 'Development', label: 'Dev' },
-    { id: 'Production', label: 'Prod' },
-  ];
-
-  return (
-    <div
-      className="relative inline-flex p-1 rounded-xl bg-[#EEF4FA] border border-[#D7E6F4]"
-      role="group"
-      aria-label="Environment"
-    >
-      {options.map((opt) => {
-        const active = value === opt.id;
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => onChange(opt.id)}
-            className={`relative min-w-[76px] h-9 px-4 rounded-[10px] text-sm font-semibold transition-colors duration-150 cursor-pointer ${
-              active ? 'text-[#0F6CBD]' : 'text-[#64748B] hover:text-[#1E293B]'
-            }`}
-            aria-pressed={active}
-          >
-            {active && (
-              <motion.span
-                layoutId="env-toggle-pill"
-                className="absolute inset-0 rounded-[10px] bg-white shadow-[var(--shadow-soft)]"
-                transition={springSnappy}
-              />
-            )}
-            <span className="relative z-10">{opt.label}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }

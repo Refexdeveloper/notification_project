@@ -9,17 +9,17 @@
   --brand-teal: #14b8a6;
   --brand-success: #22c55e;
   --brand-warning: #f59e0b;
-  --brand-bg: #f8fbff;
+  --brand-bg: #f7f9fc;
   --brand-text: #1e293b;
   --brand-muted: #64748b;
-  --brand-soft: #e8f3fc;
-  --brand-border: #d7e6f4;
+  --brand-soft: #eef3ff;
+  --brand-border: #e6ebf2;
 
-  /* OKLCH scale tuned to #0F6CBD */
-  --background-50: 0.985 0.006 240;
-  --background-100: 0.97 0.01 240;
-  --background-200: 0.94 0.014 240;
-  --background-300: 0.90 0.02 240;
+  /* OKLCH scale tuned softer (pastel primary) */
+  --background-50: 0.99 0.004 240;
+  --background-100: 0.98 0.008 240;
+  --background-200: 0.95 0.012 240;
+  --background-300: 0.92 0.016 240;
   --background-400: 0.82 0.025 240;
   --background-500: 0.70 0.03 240;
   --background-600: 0.55 0.035 240;
@@ -85,14 +85,14 @@
   --radius-lg: 14px;
   --radius-xl: 16px;
 
-  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-lift: 0 6px 18px rgba(15, 108, 189, 0.08);
-  --shadow-glow: 0 0 0 1px rgba(15, 108, 189, 0.16), 0 8px 24px rgba(15, 108, 189, 0.14);
+  --shadow-soft: 0 2px 8px rgba(40, 60, 90, 0.04);
+  --shadow-lift: 0 4px 14px rgba(57, 119, 190, 0.08);
+  --shadow-glow: 0 0 0 1px rgba(57, 119, 190, 0.12), 0 6px 18px rgba(57, 119, 190, 0.08);
 
   --sidebar-w: 264px;
   --sidebar-w-collapsed: 72px;
-  --color-primary: #0f6cbd;
-  --color-bg: #f8fbff;
+  --color-primary: #3977be;
+  --color-bg: #f7f9fc;
 }
 
 @layer base {
@@ -126,17 +126,17 @@
     min-height: 100vh;
     background-color: var(--brand-bg);
     background-image:
-      radial-gradient(ellipse 55% 45% at 12% 8%, rgba(15, 108, 189, 0.1), transparent 58%),
-      radial-gradient(ellipse 40% 35% at 92% 12%, rgba(20, 184, 166, 0.09), transparent 55%),
-      radial-gradient(ellipse 35% 30% at 70% 90%, rgba(15, 108, 189, 0.06), transparent 50%),
+      radial-gradient(ellipse 55% 45% at 12% 8%, rgba(57, 119, 190, 0.06), transparent 58%),
+      radial-gradient(ellipse 40% 35% at 92% 12%, rgba(40, 160, 140, 0.05), transparent 55%),
+      radial-gradient(ellipse 35% 30% at 70% 90%, rgba(57, 119, 190, 0.04), transparent 50%),
       linear-gradient(
         to right,
-        rgba(15, 108, 189, 0.035) 1px,
+        rgba(57, 119, 190, 0.025) 1px,
         transparent 1px
       ),
       linear-gradient(
         to bottom,
-        rgba(15, 108, 189, 0.035) 1px,
+        rgba(57, 119, 190, 0.025) 1px,
         transparent 1px
       );
     background-size: auto, auto, auto, 48px 48px, 48px 48px;

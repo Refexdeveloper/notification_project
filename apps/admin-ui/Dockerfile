@@ -20,8 +20,8 @@ RUN echo "build cache bust: ${CACHEBUST}" && npm run build
 # Serve on Cloud Run port 8080
 FROM nginx:1.27-alpine
 
-ARG BACKEND_UPSTREAM=https://refex-backend-api-645830234926.asia-south1.run.app
-ARG BACKEND_HOST=refex-backend-api-645830234926.asia-south1.run.app
+ARG BACKEND_UPSTREAM=https://refex-backend-api-dhwffeu7pq-el.a.run.app
+ARG BACKEND_HOST=refex-backend-api-dhwffeu7pq-el.a.run.app
 ENV BACKEND_UPSTREAM=${BACKEND_UPSTREAM}
 ENV BACKEND_HOST=${BACKEND_HOST}
 

@@ -128,8 +128,9 @@ export type AppDashboardData = {
   warning?: string;
 };
 
-const APP_DASHBOARD_CACHE_PREFIX = 'ne_app_dashboard_v8';
-const APP_DASHBOARD_CACHE_STALE_MS = 15 * 60 * 1000;
+const APP_DASHBOARD_CACHE_PREFIX = 'ne_app_dashboard_v9';
+/** Match main dashboard — reuse scoped filter results for 5 minutes. */
+const APP_DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
 
 type AppDashboardCacheEntry = {
   ts: number;

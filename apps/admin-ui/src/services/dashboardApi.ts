@@ -53,8 +53,9 @@ export type DashboardData = {
   warning?: string;
 };
 
-const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v2';
-const DASHBOARD_CACHE_STALE_MS = 15 * 60 * 1000;
+const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v4';
+/** Landing reuse window — skip network if fresher than this (user request: 5 min). */
+export const DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
 
 type DashboardCacheEntry = {
   ts: number;
@@ -75,12 +76,40 @@ export function readDashboardCache(environment: 'production' | 'development'): D
       return null;
     }
     if (Date.now() - parsed.ts > DASHBOARD_CACHE_STALE_MS) {
-      sessionStorage.removeItem(cacheKey(environment));
       return null;
     }
     return parsed.data;
   } catch {
     return null;
+  }
+}
+
+/** Soft paint — returns last snapshot even when older than 5 minutes. */
+export function readDashboardCacheSoft(environment: 'production' | 'development'): DashboardData | null {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(environment));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DashboardCacheEntry;
+    if (!parsed?.data || !Array.isArray(parsed.data.applications) || parsed.data.applications.length === 0) {
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+export function isDashboardCacheFresh(
+  environment: 'production' | 'development',
+  maxAgeMs = DASHBOARD_CACHE_STALE_MS,
+): boolean {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(environment));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as DashboardCacheEntry;
+    return Boolean(parsed?.ts && Date.now() - parsed.ts <= maxAgeMs);
+  } catch {
+    return false;
   }
 }
 

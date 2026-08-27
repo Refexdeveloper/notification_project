@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { applicationDetailTabs, defaultApplicationTab, type AppDetailTabId } from '@/config/backendSurface';
+import {
+  applicationDetailTabs,
+  applicationDetailTabsForEmbed,
+  defaultApplicationTab,
+  type AppDetailTabId,
+} from '@/config/backendSurface';
 import Layout from '@/components/feature/Layout';
 import { getApplicationById, saveDiscoveredFields } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
@@ -19,11 +24,14 @@ import SchedulersTab from './components/SchedulersTab';
 import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
 import EngagementTab from './components/EngagementTab';
+import RecordsTab from './components/RecordsTab';
 import { Button } from '@/components/ui/Button';
 import { duration, easeOutSoft, springSnappy } from '@/lib/motion';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { RefreshCw, AlertCircle, Pencil } from 'lucide-react';
+import { RefreshCw, AlertCircle, Pencil, LayoutDashboard } from 'lucide-react';
 import { catalogEntryForApp } from '@/seeds/refexAppCatalog';
+import { buildEmbedDashboardPath, readEmbedFromSearch, withEmbedParams } from '@/lib/embedMode';
+import { EMBED_EXECUTIVE, personalGreeting } from '@/lib/timeGreeting';
 
 type TabId = AppDetailTabId;
 
@@ -31,6 +39,7 @@ export default function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const embed = readEmbedFromSearch(searchParams);
   const [appRevision, setAppRevision] = useState(0);
   const [headerSyncing, setHeaderSyncing] = useState(false);
   const [headerSyncError, setHeaderSyncError] = useState('');
@@ -63,7 +72,10 @@ export default function ApplicationDetail() {
     return getApplicationById(id);
   }, [id, appRevision, backendApp]);
 
-  const tabs = useMemo(() => applicationDetailTabs(), []);
+  const tabs = useMemo(() => {
+    const appKey = app?.appId || id || '';
+    return embed ? applicationDetailTabsForEmbed(appKey) : applicationDetailTabs();
+  }, [embed, app?.appId, id]);
 
   const activeTab = useMemo(() => {
     const t = searchParams.get('tab') as TabId | null;
@@ -74,12 +86,12 @@ export default function ApplicationDetail() {
   useEffect(() => {
     const requested = searchParams.get('tab') as TabId | null;
     if (requested && !tabs.some((tab) => tab.id === requested)) {
-      setSearchParams({ tab: defaultApplicationTab() }, { replace: true });
+      setSearchParams(withEmbedParams(searchParams, { tab: defaultApplicationTab() }), { replace: true });
     }
   }, [searchParams, setSearchParams, tabs]);
 
   const setTab = (tab: string) => {
-    setSearchParams({ tab }, { replace: true });
+    setSearchParams(withEmbedParams(searchParams, { tab }), { replace: true });
   };
 
   const runTabRefresh = () => {
@@ -167,47 +179,79 @@ export default function ApplicationDetail() {
 
   return (
     <Layout
-      breadcrumbs={[
-        { label: 'Applications', path: '/applications' },
-        { label: app.displayName || app.name },
-      ]}
+      embed={embed}
+      embedAppTitle={embed ? app.displayName || app.name : undefined}
+      breadcrumbs={
+        embed
+          ? undefined
+          : [
+              { label: 'Applications', path: '/applications' },
+              { label: app.displayName || app.name },
+            ]
+      }
     >
-      {/* Same dark header on every tab (dashboard pattern). */}
-      <div className="relative mb-4 overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 p-5 text-white shadow-lg">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.25),transparent_40%),radial-gradient(circle_at_80%_0%,rgba(99,102,241,0.3),transparent_35%)]" />
+      {/* App header card — embed uses executive row; normal keeps full metadata. */}
+      <div className="relative mb-4 overflow-hidden rounded-2xl bg-[#EEF3FF] p-5 text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#D7E2EF]">
+        {embed ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#D7E2EF] pb-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3977BE]">
+                {personalGreeting()}
+              </p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800 sm:text-base">
+                {EMBED_EXECUTIVE.name} · {EMBED_EXECUTIVE.title}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(buildEmbedDashboardPath(id))}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#EAF2FF] px-3 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
+            >
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              Full Engagement report
+            </button>
+          </div>
+        ) : null}
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-4">
-            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${tint} ring-1 ring-white/20`}>
-              <i className={`${iconClass} text-2xl`} aria-hidden />
+            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white ring-1 ring-[#D7E2EF] ${tint}`}>
+              <i className={`${iconClass} text-2xl text-[#3977BE]`} aria-hidden />
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-xl font-semibold tracking-tight">{app.displayName || app.name}</h1>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-400/30">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                {!embed ? (
+                  <h1 className="truncate text-xl font-semibold tracking-tight text-slate-900">{app.displayName || app.name}</h1>
+                ) : null}
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#E8F7F0] px-2 py-0.5 text-[11px] font-semibold text-[#287B5D] ring-1 ring-[#CDEBD9]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#287B5D]" />
                   {app.status || 'Active'}
                 </span>
-                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white/85 ring-1 ring-white/15">
-                  Last synced{' '}
-                  {app.lastSync && app.lastSync !== '—'
-                    ? app.lastSync
-                    : app.lastFieldSyncAt
-                      ? new Date(app.lastFieldSyncAt).toLocaleString('en-IN', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : '—'}
-                </span>
+                {!embed ? (
+                  <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-[#D7E2EF]">
+                    Last synced{' '}
+                    {app.lastSync && app.lastSync !== '—'
+                      ? app.lastSync
+                      : app.lastFieldSyncAt
+                        ? new Date(app.lastFieldSyncAt).toLocaleString('en-IN', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                  </span>
+                ) : null}
               </div>
-              <p className="mt-1 truncate text-sm text-white/65">
-                {app.subdomain}.kissflow.{app.region}
-                {app.appId ? ` · ${app.appId}` : ''}
-              </p>
+              {!embed ? (
+                <p className="mt-1 truncate text-sm text-slate-500">
+                  {/procurement|p2p/i.test(app.appId || app.name || '')
+                    ? 'Cloud SQL · purchase requests & orders'
+                    : `${app.subdomain}.kissflow.${app.region}${app.appId ? ` · ${app.appId}` : ''}`}
+                </p>
+              ) : null}
               {headerSyncError ? (
-                <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-200">
+                <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#B24E66]">
                   <AlertCircle className="h-3.5 w-3.5" />
                   {headerSyncError}
                 </p>
@@ -215,13 +259,13 @@ export default function ApplicationDetail() {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {!isBackendApiMode() && (
+            {!embed && !isBackendApiMode() && (
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => setTab('settings')}
                 leftIcon={<Pencil className="h-3.5 w-3.5" />}
-                className="border-white/20 bg-white/10 text-white hover:bg-white/20"
+                className="border-[#D7E2EF] bg-white text-slate-700 hover:bg-[#EAF2FF]"
               >
                 Edit
               </Button>
@@ -233,19 +277,19 @@ export default function ApplicationDetail() {
                 onClick={runTabRefresh}
                 loading={headerRefreshing}
                 leftIcon={!headerRefreshing ? <RefreshCw className="h-3.5 w-3.5" /> : undefined}
-                className="border-white/20 bg-sky-500/30 text-white hover:bg-sky-500/40"
+                className="border-[#D0E0F5] bg-[#EAF2FF] text-[#3977BE] hover:bg-[#DCE8FA]"
               >
                 Refresh dashboard
               </Button>
             ) : null}
-            {activeTab === 'discovery' ? (
+            {!embed && activeTab === 'discovery' ? (
               <Button
                 size="sm"
                 variant="secondary"
                 onClick={runHeaderSync}
                 loading={headerSyncing}
                 leftIcon={!headerSyncing ? <RefreshCw className="h-3.5 w-3.5" /> : undefined}
-                className="border-white/20 bg-emerald-500/30 text-white hover:bg-emerald-500/40"
+                className="border-[#CDEBD9] bg-[#E8F7F0] text-[#287B5D] hover:bg-[#DDF3E9]"
               >
                 Sync fields
               </Button>
@@ -295,6 +339,7 @@ export default function ApplicationDetail() {
           {activeTab === 'dashboard' && (
             <AppDashboardTab
               app={app}
+              embed={embed}
               refreshNonce={tabRefreshNonce}
               onRefreshingChange={setHeaderRefreshing}
             />
@@ -309,6 +354,7 @@ export default function ApplicationDetail() {
             <ResourcesTab app={app} onSynced={() => setAppRevision((n) => n + 1)} />
           )}
           {activeTab === 'engagement' && <EngagementTab app={app} />}
+          {activeTab === 'records' && <RecordsTab app={app} />}
           {activeTab === 'templates' && <TemplatesTab app={app} />}
           {activeTab === 'schedulers' && <SchedulersTab app={app} />}
           {activeTab === 'history' && <HistoryTab app={app} />}
