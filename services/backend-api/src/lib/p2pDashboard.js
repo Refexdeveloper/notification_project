@@ -27,10 +27,6 @@ const P2P_PR_TABLE = 'purchase_requests';
 const P2P_PO_TABLE = 'purchase_orders';
 
 /** PR statuses are uppercase varchar; PO statuses are lowercase enum. */
-const P2P_PR_REJECTED_SQL = "UPPER(`{{status}}`) = 'REJECTED'";
-const P2P_PR_CLOSED_SQL = "UPPER(`{{status}}`) = 'APPROVED'";
-const P2P_PR_OPEN_SQL = "UPPER(`{{status}}`) NOT IN ('REJECTED', 'APPROVED')";
-
 const P2P_PO_REJECTED_STATUSES = ['rejected', 'cancelled'];
 const P2P_PO_CLOSED_STATUSES = [
   'approved',
@@ -53,20 +49,25 @@ function sqlInList(values) {
   return values.map((v) => `'${String(v).replace(/'/g, "''")}'`).join(', ');
 }
 
+function knownP2pColumns(tableName) {
+  const t = String(tableName || '').toLowerCase();
+  if (t === P2P_PR_TABLE) return { statusCol: 'status', amountCol: 'total_amount' };
+  if (t === P2P_PO_TABLE) return { statusCol: 'status', amountCol: 'grand_total' };
+  return null;
+}
+
 function buildP2pStatusSql(tableName, statusCol, amountCol) {
   const t = String(tableName || '').toLowerCase();
   const status = `\`${statusCol}\``;
   const amount = amountCol ? `\`${amountCol}\`` : null;
 
   if (t === P2P_PR_TABLE) {
-    const rejected = P2P_PR_REJECTED_SQL.replace(/\{\{status\}\}/g, statusCol);
-    const closed = P2P_PR_CLOSED_SQL.replace(/\{\{status\}\}/g, statusCol);
-    const open = P2P_PR_OPEN_SQL.replace(/\{\{status\}\}/g, statusCol);
+    const st = `UPPER(TRIM(CAST(${status} AS CHAR)))`;
     return {
-      rejectedExpr: `CASE WHEN ${rejected} THEN 1 ELSE 0 END`,
-      closedExpr: `CASE WHEN ${closed} THEN 1 ELSE 0 END`,
-      openExpr: `CASE WHEN ${open} THEN 1 ELSE 0 END`,
-      amountOpenExpr: amount ? `CASE WHEN ${open} THEN ${amount} ELSE 0 END` : '0',
+      rejectedExpr: `CASE WHEN ${st} = 'REJECTED' THEN 1 ELSE 0 END`,
+      closedExpr: `CASE WHEN ${st} = 'APPROVED' THEN 1 ELSE 0 END`,
+      openExpr: `CASE WHEN ${st} NOT IN ('REJECTED', 'APPROVED') AND ${st} != '' THEN 1 ELSE 0 END`,
+      amountOpenExpr: amount ? `CASE WHEN ${st} NOT IN ('REJECTED', 'APPROVED') AND ${st} != '' THEN ${amount} ELSE 0 END` : '0',
       amountTotalExpr: amount ? amount : '0',
     };
   }
@@ -274,6 +275,8 @@ async function loadP2pDashboard(opts = {}) {
   }
 
   async function loadTableColumns(tableName) {
+    const known = knownP2pColumns(tableName);
+    if (known) return known;
     const cols = await p2pQuery(
       `SELECT column_name, data_type
        FROM information_schema.columns
@@ -295,8 +298,8 @@ async function loadP2pDashboard(opts = {}) {
 
     async function pickPreferred(kind, preferredName) {
       if (!tableSet.has(preferredName)) return null;
-      const { statusCol, amountCol } = await loadTableColumns(preferredName);
-      return { kind, name: preferredName, statusCol, amountCol, score: 100 };
+      const cols = knownP2pColumns(preferredName) || await loadTableColumns(preferredName);
+      return { kind, name: preferredName, ...cols, score: 100 };
     }
 
     let prPick = await pickPreferred('PR', envPr);
@@ -321,8 +324,9 @@ async function loadP2pDashboard(opts = {}) {
 
   async function loadDocMetrics(tableName, statusCol, amountCol) {
     if (!tableName) return null;
-    let status = statusCol;
-    let amount = amountCol;
+    const known = knownP2pColumns(tableName);
+    let status = statusCol || known?.statusCol;
+    let amount = amountCol || known?.amountCol;
     if (!status || !amount) {
       const cols = await loadTableColumns(tableName);
       status = status || cols.statusCol;
@@ -351,9 +355,9 @@ async function loadP2pDashboard(opts = {}) {
       rows = await p2pQuery(
         `SELECT
            COUNT(*) AS total,
-           SUM(${p2pStatusSql.rejectedExpr}) AS rejected,
-           SUM(${p2pStatusSql.closedExpr}) AS closed,
-           SUM(${p2pStatusSql.openExpr}) AS open,
+           COALESCE(SUM(${p2pStatusSql.rejectedExpr}), 0) AS rejected,
+           COALESCE(SUM(${p2pStatusSql.closedExpr}), 0) AS closed,
+           COALESCE(SUM(${p2pStatusSql.openExpr}), 0) AS open,
            ${amountTotalExpr} AS amount_total,
            COALESCE(SUM(${p2pStatusSql.amountOpenExpr}), 0) AS amount_open
          FROM \`${tableName}\``,
