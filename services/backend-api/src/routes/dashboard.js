@@ -3,18 +3,14 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
-const { APP_ENGAGEMENT_QUERY, buildEngagementTotals, loadItemTodayCounts } = require('../lib/engagementSummary');
-const { fetchLiveAppMetrics } = require('../lib/kissflowLiveMetrics');
-const { snapshotAgeHours, DEFAULT_REPORT_TIMEZONE, isSameCalendarDay } = require('../lib/reportTimezone');
+const { DEFAULT_REPORT_TIMEZONE } = require('../lib/reportTimezone');
+const { loadApplicationDashboard } = require('../lib/appDashboard');
+const { loadDashboardOverview } = require('../lib/dashboardOverview');
+const { refreshDashboardLive } = require('../lib/dashboardRefresh');
+const { resolveSession } = require('../lib/session');
+const { isP2pApplication, loadP2pDashboard } = require('../lib/p2pDashboard');
 
 const router = express.Router();
-
-const APPLICATIONS_QUERY = `
-SELECT environment, application_id, application_name
-FROM engagement_reporting.application
-WHERE is_current = true AND environment = $1
-ORDER BY application_name
-`;
 
 function normalizeEnvironment(value) {
   const lower = String(value || 'production').toLowerCase();
@@ -23,12 +19,10 @@ function normalizeEnvironment(value) {
   return lower;
 }
 
-function isItsmLikeApplication(applicationId, applicationName) {
-  const id = String(applicationId || '').toLowerCase();
-  const name = String(applicationName || '').toLowerCase();
-  return id.includes('itsm') || id.includes('service') || name.includes('itsm') || name.includes('service');
-}
-
+/**
+ * Main dashboard — PostgreSQL snapshot + engagement_cache overlay when fresher.
+ * POST /refresh triggers related-user live pull (not full directory / not full email ingest).
+ */
 router.get('/', async (req, res) => {
   if (!isDatabaseConfigured()) {
     return ok(res, req.correlationId, {
@@ -39,113 +33,157 @@ router.get('/', async (req, res) => {
   }
 
   const environment = normalizeEnvironment(req.query.environment);
-  const liveRefresh = String(req.query.refresh || '').toLowerCase() === 'live';
+  const askedLive = String(req.query.refresh || '').toLowerCase() === 'live';
 
   try {
     const pool = getPool();
-    const { rows: apps } = await pool.query(APPLICATIONS_QUERY, [environment]);
-    const refreshWarnings = [];
-
-    const appResults = await Promise.all(
-      apps.map(async (app) => {
-        if (liveRefresh) {
-          try {
-            const live = await fetchLiveAppMetrics(environment, app.application_id);
-            return {
-              environment: app.environment,
-              application_id: app.application_id,
-              application_name: app.application_name,
-              snapshot_at: live.snapshot_at,
-              fetched_at: live.fetched_at,
-              data_source: 'live',
-              metrics: live.metrics,
-              metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
-                ? {
-                    sign_in_today: 'Signed in today',
-                    sign_in_rate_overall: 'Sign-in rate (overall)',
-                    sign_in_rate_today: 'Sign-in rate today',
-                    open_tickets: 'Open tickets',
-                    closed_tickets: 'Closed tickets',
-                  }
-                : {
-                    sign_in_today: 'Active today',
-                    sign_in_rate_overall: 'Login rate (overall)',
-                    sign_in_rate_today: 'Login rate today',
-                    open_tickets: 'Open items',
-                    closed_tickets: 'Completed items',
-                  },
-            };
-          } catch (liveErr) {
-            refreshWarnings.push(
-              `${app.application_name}: live refresh failed (${liveErr.message || liveErr.code || 'error'}) — showing cached snapshot`,
-            );
-          }
-        }
-
-        const { rows } = await pool.query(APP_ENGAGEMENT_QUERY, [environment, app.application_id]);
-        const totals = buildEngagementTotals(rows);
-        const todayCounts = await loadItemTodayCounts(pool, environment, app.application_id);
-        totals.opened_today = todayCounts.opened_today;
-        totals.closed_today = todayCounts.closed_today;
-        const snapshotAt = rows[0]?.snapshot_at || null;
-        const ageHours = snapshotAgeHours(snapshotAt);
-        const snapshotStale =
-          !snapshotAt ||
-          !isSameCalendarDay(new Date(snapshotAt), new Date(), DEFAULT_REPORT_TIMEZONE) ||
-          (ageHours != null && ageHours > 24);
-        return {
-          environment: app.environment,
-          application_id: app.application_id,
-          application_name: app.application_name,
-          snapshot_at: snapshotAt,
-          fetched_at: null,
-          data_source: 'snapshot',
-          snapshot_stale: snapshotStale,
-          metrics: {
-            total_users: totals.total_users,
-            sign_in_today: totals.active_today,
-            sign_in_rate_overall: totals.sign_in_rate_overall,
-            sign_in_rate_today: totals.sign_in_rate_today,
-            open_tickets: totals.open_tickets,
-            closed_tickets: totals.closed_tickets,
-            opened_today: totals.opened_today,
-            closed_today: totals.closed_today,
-          },
-          metric_labels: isItsmLikeApplication(app.application_id, app.application_name)
-            ? {
-                sign_in_today: 'Signed in today',
-                sign_in_rate_overall: 'Sign-in rate (overall)',
-                sign_in_rate_today: 'Sign-in rate today',
-                open_tickets: 'Open tickets',
-                closed_tickets: 'Closed tickets',
-              }
-            : {
-                sign_in_today: 'Active today',
-                sign_in_rate_overall: 'Login rate (overall)',
-                sign_in_rate_today: 'Login rate today',
-                open_tickets: 'Open items',
-                closed_tickets: 'Completed items',
-              },
-        };
-      }),
-    );
-
-    const applications = appResults.filter(Boolean);
+    const applications = await loadDashboardOverview(pool, environment);
+    const warnings = [];
+    if (askedLive) {
+      warnings.push(
+        'Use POST /api/v1/dashboard/refresh for live overlay (related app users + item counts). GET stays fast from PostgreSQL.',
+      );
+    }
 
     return ok(res, req.correlationId, {
       environment,
       applications,
       recent_sends: [],
       generated_at: new Date().toISOString(),
-      refresh_mode: liveRefresh ? 'live' : 'snapshot',
+      refresh_mode: applications.some((a) => a.data_source === 'live_overlay') ? 'live_overlay' : 'snapshot',
       timezone: DEFAULT_REPORT_TIMEZONE,
-      warnings: refreshWarnings.length ? refreshWarnings : undefined,
+      warnings: warnings.length ? warnings : undefined,
     });
   } catch (err) {
     if (err.code === '42P01') {
       return ok(res, req.correlationId, { applications: [], recent_sends: [], warning: 'SCHEMA_NOT_MIGRATED' });
     }
+    if (err.code === '57014' || /statement timeout/i.test(String(err.message || ''))) {
+      return fail(
+        res,
+        req.correlationId,
+        'DASHBOARD_TIMEOUT',
+        'Dashboard query timed out — try again in a moment',
+        504,
+        true,
+      );
+    }
     return fail(res, req.correlationId, 'DASHBOARD_FAILED', err.message, 500, true);
+  }
+});
+
+/**
+ * Soft live refresh — related application users + live item counts.
+ * Persists engagement_cache; updates last_sign_in on existing user rows.
+ */
+router.post('/refresh', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL is required', 503);
+  }
+
+  try {
+    const session = await resolveSession(req);
+    if (!session) {
+      return fail(res, req.correlationId, 'UNAUTHENTICATED', 'Session required', 401);
+    }
+  } catch (err) {
+    return fail(res, req.correlationId, 'UNAUTHENTICATED', err.message, 401);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment || req.body?.environment);
+  const applicationId = String(
+    req.query.application_id || req.query.applicationId || req.body?.application_id || req.body?.applicationId || '',
+  ).trim();
+
+  try {
+    const payload = await refreshDashboardLive({
+      environment,
+      applicationId: applicationId || undefined,
+      persist: true,
+    });
+    return ok(res, req.correlationId, {
+      ...payload,
+      timezone: DEFAULT_REPORT_TIMEZONE,
+    });
+  } catch (err) {
+    if (err.code === '57014' || /statement timeout/i.test(String(err.message || ''))) {
+      return fail(res, req.correlationId, 'DASHBOARD_REFRESH_TIMEOUT', 'Live refresh timed out', 504, true);
+    }
+    return fail(res, req.correlationId, 'DASHBOARD_REFRESH_FAILED', err.message, 500, true);
+  }
+});
+
+/** Per-application report-style dashboard with optional entity / process / resource filters. */
+router.get('/application/:applicationId', async (req, res) => {
+  const environment = normalizeEnvironment(req.query.environment);
+  const applicationId = String(req.params.applicationId || '').trim();
+  if (!applicationId) {
+    return fail(res, req.correlationId, 'APP_ID_REQUIRED', 'applicationId is required', 400);
+  }
+
+  // Procurement to Pay — direct MySQL read-only (never Kissflow / never writes).
+  if (isP2pApplication(applicationId)) {
+    try {
+      const payload = await loadP2pDashboard({
+        environment,
+        period: req.query.period,
+      });
+      return ok(res, req.correlationId, {
+        ...payload,
+        generated_at: new Date().toISOString(),
+        timezone: DEFAULT_REPORT_TIMEZONE,
+      });
+    } catch (err) {
+      return fail(res, req.correlationId, err.code || 'P2P_DASHBOARD_FAILED', err.message, 500, true);
+    }
+  }
+
+  if (!isDatabaseConfigured()) {
+    return ok(res, req.correlationId, {
+      warning: 'DATABASE_NOT_CONFIGURED',
+      metrics: { total: 0, pending: 0, completed: 0, rejected: 0 },
+      by_process: [],
+      users: [],
+      entities: [],
+    });
+  }
+
+  try {
+    const pool = getPool();
+    const client = await pool.connect();
+    let payload;
+    try {
+      await client.query('SET LOCAL statement_timeout = 15000');
+      payload = await loadApplicationDashboard(client, {
+        environment,
+        applicationId,
+        entity: req.query.entity,
+        processId: req.query.process_id || req.query.processId,
+        resourceType: req.query.resource_type || req.query.resourceType,
+        resourceId: req.query.resource_id || req.query.resourceId,
+        period: req.query.period,
+        dateFrom: req.query.date_from || req.query.dateFrom || req.query.from,
+        dateTo: req.query.date_to || req.query.dateTo || req.query.to,
+      });
+    } finally {
+      client.release();
+    }
+    return ok(res, req.correlationId, {
+      ...payload,
+      generated_at: new Date().toISOString(),
+      timezone: DEFAULT_REPORT_TIMEZONE,
+    });
+  } catch (err) {
+    if (err.code === 'APP_NOT_FOUND') {
+      return fail(res, req.correlationId, 'APP_NOT_FOUND', err.message, 404);
+    }
+    if (err.code === '42P01') {
+      return ok(res, req.correlationId, { warning: 'SCHEMA_NOT_MIGRATED', by_process: [], users: [], entities: [] });
+    }
+    if (err.code === '57014' || /statement timeout/i.test(String(err.message || ''))) {
+      return fail(res, req.correlationId, 'APP_DASHBOARD_TIMEOUT', 'App dashboard timed out', 504, true);
+    }
+    return fail(res, req.correlationId, 'APP_DASHBOARD_FAILED', err.message, 500, true);
   }
 });
 

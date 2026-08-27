@@ -21,6 +21,7 @@ const {
 const { bootstrapApplication } = require('../lib/applicationBootstrap');
 const { normalizeEnvironment, resolveKissflowCredentials } = require('../lib/kissflowClient');
 const { syncProcessFields } = require('../lib/fieldSyncService');
+const { ensureP2pApplication } = require('../lib/p2pDashboard');
 
 const router = express.Router();
 
@@ -57,6 +58,15 @@ router.get('/', async (req, res) => {
     return dbNotConfigured(res, req.correlationId);
   }
   try {
+    // Non-Kissflow P2P must exist in PG or Admin UI never lists it.
+    try {
+      await ensureP2pApplication(getPool(), { environment: 'production' });
+    } catch (ensureErr) {
+      // Listing still works if ensure fails (permissions / schema); log via response hint below.
+      if (ensureErr.code === '42P01') {
+        /* schema not migrated */
+      }
+    }
     const { rows } = await getPool().query(APPLICATIONS_QUERY);
     ok(res, req.correlationId, { items: rows, count: rows.length });
   } catch (err) {
