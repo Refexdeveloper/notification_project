@@ -1,6 +1,16 @@
 # Embed Admin UI dashboards in Refexone (super-app)
 
-**Status:** Phase 1 implemented (`?embed=1`). SSO / embed-token (Phase 2) still future work.
+**Status:** Phase 1 implemented locally on branch `feature/refexone-embed-dashboard` (`?embed=1`). Deploy admin-ui to production to go live. SSO / embed-token (Phase 2) still future work.
+
+## Embed layout (`?embed=1` only — normal Admin UI unchanged)
+
+| Zone | Content |
+|------|---------|
+| **Top header** | Application name only (e.g. “IT Service Management”) |
+| **Second container (pastel card)** | Time greeting (Good morning / afternoon / evening) + **Dinesh Agarwal · Group CEO** + Full Engagement report + icon + Active badge + Refresh dashboard |
+| **Below** | Same KPI charts/tables; all explanatory/filter/technical copy hidden (no Last synced, no kissflow domain, no filter hints) |
+
+Original application URLs are unchanged — append `&embed=1` to get the embed shell.
 
 ## Goal
 
@@ -27,8 +37,34 @@ Keep using the **same** application detail / dashboard pages — embed only hide
 
 Base: `https://refex-admin-ui-dhwffeu7pq-el.a.run.app`
 
-| Refexone card | `application_id` | Embed URL |
-|---------------|------------------|-----------|
+### Full engagement dashboard (all apps)
+
+`https://refex-admin-ui-dhwffeu7pq-el.a.run.app/dashboard?embed=1`
+
+### Per-app embedded dashboards (final Refexone URLs)
+
+| Refexone card | Embed dashboard URL |
+|---------------|---------------------|
+| IT Service Management | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
+| Project Tracker | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Project_Management_Tracker_A00?tab=dashboard&embed=1` |
+| Procurement / P2P | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Procurement_to_Pay_A00?tab=dashboard&embed=1` |
+| Travel | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Expense_and_Travel_Management_A00?tab=dashboard&embed=1` |
+| Solar | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Solar_Site_Expense_Governance_Syst_A00?tab=dashboard&embed=1` |
+| Lead Tracker | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Lead_Trcaker_A00?tab=dashboard&embed=1` |
+| Expense (EMS) | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-EMS_001_A00?tab=dashboard&embed=1` |
+
+Records tab: same paths with `tab=records`.
+
+**Full Engagement report** (button in embed card → filtered overview):
+
+`/dashboard?embed=1&app=production-{application_id}`
+
+Example ITSM: `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/dashboard?embed=1&app=production-IT_Service_Management_A00`
+
+### Path reference (relative)
+
+| Refexone card | `application_id` | Path |
+|---------------|------------------|------|
 | IT Management / ITSM | `IT_Service_Management_A00` | `/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
 | Project Tracker | `Project_Management_Tracker_A00` | `/applications/production-Project_Management_Tracker_A00?tab=dashboard&embed=1` |
 | Procurement / P2P | `Procurement_to_Pay_A00` | `/applications/production-Procurement_to_Pay_A00?tab=dashboard&embed=1` |
@@ -36,12 +72,6 @@ Base: `https://refex-admin-ui-dhwffeu7pq-el.a.run.app`
 | Solar | `Solar_Site_Expense_Governance_Syst_A00` | `/applications/production-Solar_Site_Expense_Governance_Syst_A00?tab=dashboard&embed=1` |
 | Lead Tracker | `Lead_Trcaker_A00` | `/applications/production-Lead_Trcaker_A00?tab=dashboard&embed=1` |
 | Expense (EMS) | `EMS_001_A00` | `/applications/production-EMS_001_A00?tab=dashboard&embed=1` |
-
-Records tab: same path with `tab=records`.
-
-**Full Engagement report** (from embed header):
-
-`/dashboard?embed=1&app=production-{application_id}`
 
 ## What already exists
 
@@ -119,6 +149,19 @@ Pick one:
 - [x] CEO/CTO opens ITSM with `embed=1` → Dashboard loads without sidebar; only Dashboard + Records.  
 - [x] Project Tracker / P2P / Travel / Solar / etc. use the same pattern with different `application_id`.  
 - [x] **Full Engagement report** returns to `/dashboard?embed=1&app=…` without sidebar.  
-- [x] Greeting reflects time of day (+ CTO/CEO when role matches).  
+- [x] Greeting + Dinesh Agarwal · Group CEO in second container; app name in top header only.  
 - [ ] Unauthenticated user cannot land on live KPIs (existing auth; Phase 2 for cross-product).  
 - [ ] Deep link works on mobile viewport (Phase 1 shell is responsive; verify in WebView).
+
+## Deploy embed shell (admin-ui only)
+
+```bash
+export CLOUDSDK_PYTHON=/path/to/python3.12   # gcloud needs Python 3.10+
+export DEPLOY_APPROVED=true
+export DEPLOY_LIVE_TRAFFIC=true
+export COMMIT_SHA="embed4-$(date -u +%Y%m%dT%H%M%SZ)"
+bash ops/runbooks/28-deploy-backend-api-and-admin-ui-shadow.sh build
+bash ops/runbooks/28-deploy-backend-api-and-admin-ui-shadow.sh deploy-admin
+```
+
+Branch: `feature/refexone-embed-dashboard` (commit `9aefb9f` — push requires GitHub access as `Refexdeveloper`).
