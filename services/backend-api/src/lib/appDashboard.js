@@ -234,9 +234,12 @@ function periodSqlClause(period, createdAtExpr, dateFrom, dateTo, completedAtExp
     case 'quarterly':
       return `${createdAtExpr} IS NOT NULL AND date_trunc('quarter', ${day}) = date_trunc('quarter', ${today})`;
     case 'ytd':
-      return `${createdAtExpr} IS NOT NULL
+      // Include undated tickets in YTD so CEO inventory is not understated when Kissflow
+      // payloads omit _created_at (still exclude them from last_year / custom windows).
+      return `((${createdAtExpr} IS NOT NULL
         AND ${day} >= make_date(EXTRACT(YEAR FROM ${today})::int, 1, 1)
-        AND ${day} <= ${today}`;
+        AND ${day} <= ${today})
+        OR ${createdAtExpr} IS NULL)`;
     case 'last_year': {
       const y = `EXTRACT(YEAR FROM ${today})::int - 1`;
       return `${createdAtExpr} IS NOT NULL
@@ -245,7 +248,8 @@ function periodSqlClause(period, createdAtExpr, dateFrom, dateTo, completedAtExp
     }
     case 'fy': {
       const fy = indianFyBoundsSql();
-      return `${createdAtExpr} IS NOT NULL AND ${day} BETWEEN ${fy.from} AND ${fy.to}`;
+      return `((${createdAtExpr} IS NOT NULL AND ${day} BETWEEN ${fy.from} AND ${fy.to})
+        OR ${createdAtExpr} IS NULL)`;
     }
     case 'prev_fy': {
       // Previous Indian FY (Apr 1 → Mar 31), full year window.

@@ -563,7 +563,41 @@ async function loadP2pDashboard(opts = {}) {
     entities = [{ id: 'all', label: 'All entities', count: 0 }];
   }
 
-  // Users MIS — P2P app users with optional last_login.
+  // Fallback entity list from PR/PO entity_id when masters table is incomplete.
+  if (entities.length <= 1) {
+    try {
+      const fallback = await p2pQuery(
+        `SELECT entity_id, COUNT(*) AS total FROM (
+           SELECT entity_id FROM \`${P2P_PR_TABLE}\` WHERE entity_id IS NOT NULL
+           UNION ALL
+           SELECT entity_id FROM \`${P2P_PO_TABLE}\` WHERE entity_id IS NOT NULL
+         ) x
+         GROUP BY entity_id
+         ORDER BY total DESC
+         LIMIT 40`,
+      );
+      if (fallback?.length) {
+        entities = [
+          { id: 'all', label: 'All entities', count: 0 },
+          ...fallback.map((r) => ({
+            id: String(r.entity_id),
+            label: `Entity ${r.entity_id}`,
+            count: Number(r.total || 0),
+          })),
+        ];
+        by_entity = fallback.map((r) => ({
+          entity_id: String(r.entity_id),
+          entity_label: `Entity ${r.entity_id}`,
+          total: Number(r.total || 0),
+          open: 0,
+          closed: 0,
+          rejected: 0,
+        }));
+      }
+    } catch {
+      /* keep All only */
+    }
+  }
   let users = [];
   let totalUsers = 0;
   let signedInToday = 0;
@@ -573,15 +607,26 @@ async function loadP2pDashboard(opts = {}) {
        WHERE table_schema = DATABASE() AND table_name = 'users'`,
     );
     const uc = new Set((userCols || []).map((c) => String(c.column_name || '').toLowerCase()));
-    const nameCol = ['name', 'full_name', 'display_name', 'username', 'email'].find((c) => uc.has(c)) || 'id';
+    const nameCol = ['full_name', 'display_name', 'name', 'username', 'email'].find((c) => uc.has(c));
+    const firstCol = uc.has('first_name') ? 'first_name' : (uc.has('firstname') ? 'firstname' : null);
+    const lastCol = uc.has('last_name') ? 'last_name' : (uc.has('lastname') ? 'lastname' : null);
     const loginCol = ['last_login', 'last_sign_in', 'last_login_at', 'updated_at'].find((c) => uc.has(c)) || null;
-    const idCol = uc.has('id') ? 'id' : nameCol;
+    const idCol = uc.has('id') ? 'id' : (nameCol || 'id');
     const loginSelect = loginCol ? `u.\`${loginCol}\`` : 'NULL';
+    let nameExpr;
+    if (firstCol || lastCol) {
+      nameExpr = `NULLIF(TRIM(CONCAT_WS(' ', ${firstCol ? `u.\`${firstCol}\`` : 'NULL'}, ${lastCol ? `u.\`${lastCol}\`` : 'NULL'})), '')`;
+    } else if (nameCol) {
+      nameExpr = `NULLIF(TRIM(u.\`${nameCol}\`), '')`;
+    } else {
+      nameExpr = 'NULL';
+    }
+    const emailExpr = uc.has('email') ? `NULLIF(TRIM(u.email), '')` : 'NULL';
     const rows = await p2pQuery(
       `SELECT * FROM (
          SELECT
            u.\`${idCol}\` AS user_id,
-           COALESCE(NULLIF(TRIM(u.\`${nameCol}\`), ''), CONCAT('User ', u.\`${idCol}\`)) AS user_name,
+           COALESCE(${nameExpr}, ${emailExpr}, CONCAT('User ', u.\`${idCol}\`)) AS user_name,
            ${loginSelect} AS last_sign_in,
            (
              (SELECT COUNT(*) FROM \`${P2P_PR_TABLE}\` pr
