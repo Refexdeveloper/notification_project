@@ -155,7 +155,7 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
   );
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 w-full max-w-none">
       <div className="bg-white border border-background-300/60 rounded-xl p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>

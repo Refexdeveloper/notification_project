@@ -1,10 +1,25 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowRight,
+  BarChart3,
+  CheckCircle2,
+  FolderOpen,
+  LayoutGrid,
+  Percent,
+  PieChart as PieChartIcon,
+  RefreshCw,
+  Sparkles,
+  TrendingUp,
+  UserCheck,
+  Users,
+} from 'lucide-react';
+import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Pie,
   PieChart,
@@ -13,19 +28,6 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import {
-  ArrowRight,
-  BarChart3,
-  CheckCircle2,
-  FolderOpen,
-  LayoutGrid,
-  PieChart as PieChartIcon,
-  RefreshCw,
-  Sparkles,
-  TrendingUp,
-  UserCheck,
-  Users,
-} from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -33,8 +35,16 @@ import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadDashboard,
   readDashboardCache,
+  refreshDashboardLive,
   type DashboardApplication,
 } from '@/services/dashboardApi';
+import { loadApplicationDashboard } from '@/services/appDashboardApi';
+import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
+import {
+  currentIstYear,
+  resolveDateScope,
+  type DatePresetId,
+} from '@/lib/executiveDateFilters';
 
 const CARD_BORDER = 'rgba(226, 232, 240, 0.9)';
 const MUTED = '#64748b';
@@ -76,11 +86,17 @@ function aggregateMetrics(apps: DashboardApplication[]) {
       sign_in_today: acc.sign_in_today + app.metrics.sign_in_today,
       open_tickets: acc.open_tickets + app.metrics.open_tickets,
       closed_tickets: acc.closed_tickets + app.metrics.closed_tickets,
+      rejected: acc.rejected + (app.metrics.rejected || 0),
       opened_today: acc.opened_today + (app.metrics.opened_today || 0),
       closed_today: acc.closed_today + (app.metrics.closed_today || 0),
     }),
-    { total_users: 0, sign_in_today: 0, open_tickets: 0, closed_tickets: 0, opened_today: 0, closed_today: 0 },
+    { total_users: 0, sign_in_today: 0, open_tickets: 0, closed_tickets: 0, rejected: 0, opened_today: 0, closed_today: 0 },
   );
+}
+
+function appTotalItems(m: DashboardApplication['metrics']): number {
+  if (m.total_items != null && m.total_items > 0) return m.total_items;
+  return (m.open_tickets || 0) + (m.closed_tickets || 0) + (m.rejected || 0);
 }
 
 function SectionHeader({
@@ -310,6 +326,7 @@ function AppDetailCard({
   const labels = app.metric_labels;
   const accent = APP_CARD_ACCENTS[accentIndex % APP_CARD_ACCENTS.length];
   const rows = [
+    { metric: 'Total items', value: appTotalItems(m) },
     { metric: labels.sign_in_today, value: m.sign_in_today },
     { metric: labels.sign_in_rate_overall, value: `${m.sign_in_rate_overall}%` },
     { metric: labels.sign_in_rate_today, value: `${m.sign_in_rate_today}%` },
@@ -364,6 +381,18 @@ export default function DashboardPage() {
   const [refreshWarnings, setRefreshWarnings] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState<string | 'all'>('all');
+  const [period, setPeriod] = useState<DatePresetId>('all');
+  const [calendarYear, setCalendarYear] = useState(() => currentIstYear());
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth() + 1);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [filteredApplications, setFilteredApplications] = useState<DashboardApplication[] | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+
+  const resolvedDates = useMemo(
+    () => resolveDateScope({ period, calendarYear, calendarMonth, dateFrom, dateTo }),
+    [period, calendarYear, calendarMonth, dateFrom, dateTo],
+  );
 
   const applyDashboardData = useCallback((data: NonNullable<Awaited<ReturnType<typeof loadDashboard>>['data']>) => {
     setApplications(data.applications);
@@ -372,10 +401,10 @@ export default function DashboardPage() {
     setRefreshWarnings(data.warnings || []);
   }, []);
 
-  const load = useCallback(async (live = false) => {
+  const load = useCallback(async (forceRefresh = false) => {
     let hadCachedSnapshot = false;
 
-    if (live) {
+    if (forceRefresh) {
       setRefreshing(true);
     } else {
       const cached = readDashboardCache('production');
@@ -389,7 +418,27 @@ export default function DashboardPage() {
     }
 
     setError('');
-    const result = await loadDashboard('production', { live, skipCache: live || hadCachedSnapshot });
+    // Soft landing: paint from cache/snapshot first. Explicit Refresh runs related-user live overlay.
+    if (forceRefresh) {
+      const live = await refreshDashboardLive('production');
+      if (live.ok && live.data?.applications) {
+        applyDashboardData(live.data);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      if (live.error) {
+        setRefreshWarnings((prev) => {
+          const msg = `Live refresh: ${live.error} — falling back to snapshot`;
+          return prev.includes(msg) ? prev : [...prev, msg];
+        });
+      }
+    }
+
+    const result = await loadDashboard('production', {
+      live: false,
+      skipCache: forceRefresh || hadCachedSnapshot,
+    });
 
     if (!result.ok || !result.data) {
       if (!hadCachedSnapshot) {
@@ -413,10 +462,63 @@ export default function DashboardPage() {
     void load(false);
   }, [load]);
 
+  useEffect(() => {
+    if (period === 'all') {
+      setFilteredApplications(null);
+      return;
+    }
+    if (!applications.length) return;
+    let cancelled = false;
+    setFilterLoading(true);
+    void (async () => {
+      const scoped = await Promise.all(
+        applications.map(async (app) => {
+          try {
+            const result = await loadApplicationDashboard({
+              applicationId: app.application_id,
+              environment: 'production',
+              period: resolvedDates.period,
+              dateFrom: resolvedDates.from,
+              dateTo: resolvedDates.to,
+              entity: 'all',
+              skipCache: true,
+            });
+            const dash = result.data;
+            if (!dash) return app;
+            const m = dash.metrics;
+            return {
+              ...app,
+              snapshot_at: dash.snapshot_at,
+              data_source: dash.data_source === 'live_overlay' ? 'live' : 'snapshot',
+              metrics: {
+                ...app.metrics,
+                open_tickets: Number(m.open ?? m.pending ?? 0),
+                closed_tickets: Number(m.closed ?? m.completed ?? 0),
+                rejected: Number(m.rejected || 0),
+                total_items: Number(m.total || 0),
+              },
+            } satisfies DashboardApplication;
+          } catch {
+            return app;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setFilteredApplications(scoped);
+        setFilterLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applications, period, resolvedDates]);
+
+  const displayApplications = filteredApplications ?? applications;
+
   const filteredApps = useMemo(() => {
-    if (selectedAppId === 'all') return applications;
-    return applications.filter((a) => `${a.environment}-${a.application_id}` === selectedAppId);
-  }, [applications, selectedAppId]);
+    if (selectedAppId === 'all') return displayApplications;
+    return displayApplications.filter((a) => `${a.environment}-${a.application_id}` === selectedAppId);
+  }, [displayApplications, selectedAppId]);
 
   const totals = useMemo(() => aggregateMetrics(filteredApps), [filteredApps]);
 
@@ -432,6 +534,28 @@ export default function DashboardPage() {
     [filteredApps],
   );
 
+  /** Precomputed open/closed % so tooltip/axis show 80% not raw ticket counts. */
+  const workloadShareData = useMemo(
+    () =>
+      filteredApps.map((app) => {
+        const open = Number(app.metrics.open_tickets || 0);
+        const closed = Number(app.metrics.closed_tickets || 0);
+        const total = open + closed;
+        const openPct = total > 0 ? Math.round((open / total) * 1000) / 10 : 0;
+        const closedPct = total > 0 ? Math.round((closed / total) * 1000) / 10 : 0;
+        return {
+          name: app.application_name.length > 14 ? `${app.application_name.slice(0, 12)}…` : app.application_name,
+          fullName: app.application_name,
+          openPct,
+          closedPct,
+          open,
+          closed,
+          total,
+        };
+      }),
+    [filteredApps],
+  );
+
   const donutData = useMemo(
     () =>
       [
@@ -441,7 +565,7 @@ export default function DashboardPage() {
     [totals],
   );
 
-  const donutTotal = totals.open_tickets + totals.closed_tickets;
+  const donutTotal = totals.open_tickets + totals.closed_tickets + totals.rejected;
 
   if (!backendMode) {
     return (
@@ -479,17 +603,13 @@ export default function DashboardPage() {
                 </div>
                 <h1 className="truncate text-xl font-bold tracking-tight text-white">Engagement overview</h1>
                 <p className="truncate text-xs text-slate-300">
-                  Kissflow metrics · {refreshMode === 'live' ? 'Live data' : 'Cached snapshot'}
+                  {refreshMode === 'live' ? 'Live Kissflow overlay' : 'PostgreSQL snapshot'} · fast landing
                   {generatedAt ? ` · Updated ${formatWhen(generatedAt)}` : ''}
+                  {refreshing ? ' · refreshing…' : ''}
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {refreshMode === 'live' && (
-                <span className="rounded-full bg-emerald-400/20 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-200 ring-1 ring-emerald-400/30">
-                  Live
-                </span>
-              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -498,13 +618,36 @@ export default function DashboardPage() {
                 disabled={loading || refreshing}
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                {refreshing ? 'Refreshing…' : 'Refresh'}
+                {refreshing ? 'Refreshing live…' : 'Refresh live'}
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="space-y-6 p-5 md:p-6">
+        <div className="relative space-y-6 p-5 md:p-6">
+          {refreshing ? (
+            <div className="pointer-events-none absolute inset-x-5 top-5 z-10 overflow-hidden rounded-2xl border border-sky-200/80 bg-white/90 p-4 shadow-lg backdrop-blur-sm md:inset-x-6 md:top-6">
+              <div className="flex items-center gap-3">
+                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600">
+                  <div className="absolute inset-0 animate-pulse bg-white/20" />
+                  <RefreshCw className="absolute inset-0 m-auto h-5 w-5 animate-spin text-white" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-900">Refreshing live Kissflow overlay…</p>
+                  <p className="text-xs text-slate-500">Updating adoption, open/closed, and per-app workload for executives</p>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full w-2/5 animate-[pulse_1.1s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500" />
+                  </div>
+                </div>
+                <img
+                  src="https://storage.googleapis.com/aasik-refex-report-assets/refex-shimmer-divider-green.gif"
+                  alt=""
+                  className="hidden h-2 w-28 rounded-full sm:block"
+                />
+              </div>
+            </div>
+          ) : null}
+
           {refreshing && (
             <div className="h-0.5 overflow-hidden rounded-full bg-slate-200">
               <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-blue-500 to-indigo-500" />
@@ -531,19 +674,72 @@ export default function DashboardPage() {
             <DashboardSkeleton />
           ) : (
             <div className="space-y-6">
-              <AppSlicer apps={applications} selectedId={selectedAppId} onSelect={setSelectedAppId} />
+              <ExecutiveDateFilterBar
+                period={period}
+                onPeriodChange={setPeriod}
+                calendarYear={calendarYear}
+                onCalendarYearChange={setCalendarYear}
+                calendarMonth={calendarMonth}
+                onCalendarMonthChange={setCalendarMonth}
+                dateFrom={dateFrom}
+                dateTo={dateTo}
+                onDateFromChange={setDateFrom}
+                onDateToChange={setDateTo}
+                refreshing={refreshing || filterLoading}
+                compact
+              />
+
+              <AppSlicer apps={displayApplications} selectedId={selectedAppId} onSelect={setSelectedAppId} />
 
               <div className="space-y-6">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <KpiCard
-                    label="Total users"
-                    value={totals.total_users}
-                    sub={`${totals.sign_in_today} of ${totals.total_users} today`}
-                    styleIndex={0}
-                  />
-                  <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={1} />
-                  <KpiCard label="Open items" value={totals.open_tickets} sub={`${totals.opened_today} today`} styleIndex={2} />
-                  <KpiCard label="Closed items" value={totals.closed_tickets} sub={`${totals.closed_today} today`} styleIndex={3} />
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <KpiCard
+                      label="Total items"
+                      value={totals.open_tickets + totals.closed_tickets + totals.rejected}
+                      sub={
+                        period === 'all'
+                          ? selectedAppId === 'all'
+                            ? 'All applications · open + closed + rejected'
+                            : 'Selected application'
+                          : 'Filtered by created date'
+                      }
+                      styleIndex={0}
+                    />
+                    <KpiCard
+                      label="Total users"
+                      value={totals.total_users}
+                      sub={`${totals.sign_in_today} of ${totals.total_users} today`}
+                      styleIndex={1}
+                    />
+                    <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={2} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="relative min-w-0 overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-700 p-5 text-white shadow-lg shadow-violet-500/25">
+                      <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-28 rounded-full bg-white/15" />
+                      <div className="relative flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-violet-100">
+                            Adoption today
+                          </p>
+                          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums">
+                            {totals.total_users
+                              ? Math.round((totals.sign_in_today / totals.total_users) * 100)
+                              : 0}
+                            %
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-white/95">
+                            Signed in today ÷ total users · not affected by date filter
+                          </p>
+                        </div>
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 ring-1 ring-white/30">
+                          <Percent className="h-5 w-5 text-white" />
+                        </div>
+                      </div>
+                    </div>
+                    <KpiCard label="Open items" value={totals.open_tickets} sub={`${totals.opened_today} today`} styleIndex={2} />
+                    <KpiCard label="Closed items" value={totals.closed_tickets} sub={`${totals.closed_today} today`} styleIndex={3} />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -647,6 +843,92 @@ export default function DashboardPage() {
                     )}
                   </DashboardCard>
                 </div>
+
+                <DashboardCard
+                  title="Executive workload share"
+                  subtitle="Per-app open vs closed mix"
+                  icon={BarChart3}
+                >
+                  {workloadShareData.length === 0 ? (
+                    <p className="flex h-full min-h-[160px] items-center justify-center text-sm text-slate-500">
+                      No application data
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="h-[220px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={workloadShareData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
+                            <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} />
+                            <YAxis
+                              domain={[0, 100]}
+                              tickFormatter={(v) => `${v}%`}
+                              tick={{ fontSize: 11, fill: MUTED }}
+                              width={40}
+                            />
+                            <Tooltip
+                              content={({ active, payload }) => {
+                                if (!active || !payload?.length) return null;
+                                const row = payload[0]?.payload as {
+                                  fullName?: string;
+                                  openPct?: number;
+                                  closedPct?: number;
+                                  open?: number;
+                                  closed?: number;
+                                };
+                                return (
+                                  <div
+                                    className="rounded-xl border bg-white px-3 py-2.5 shadow-lg"
+                                    style={{ borderColor: CARD_BORDER }}
+                                  >
+                                    <p className="mb-1.5 text-xs font-semibold text-slate-900">{row.fullName}</p>
+                                    <div className="space-y-1 text-xs">
+                                      <div className="flex items-center gap-2">
+                                        <span className="h-2 w-2 rounded-full" style={{ background: OPEN_COLOR }} />
+                                        <span className="text-slate-500">Open</span>
+                                        <span className="ml-auto font-bold tabular-nums text-slate-900">
+                                          {row.openPct}% ({Number(row.open || 0).toLocaleString('en-IN')})
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="h-2 w-2 rounded-full" style={{ background: CLOSED_COLOR }} />
+                                        <span className="text-slate-500">Closed</span>
+                                        <span className="ml-auto font-bold tabular-nums text-slate-900">
+                                          {row.closedPct}% ({Number(row.closed || 0).toLocaleString('en-IN')})
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            />
+                            <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+                            <Bar dataKey="openPct" name="Open %" fill={OPEN_COLOR} radius={[6, 6, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                            <Bar dataKey="closedPct" name="Closed %" fill={CLOSED_COLOR} radius={[6, 6, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+                        {workloadShareData.map((row) => (
+                          <div
+                            key={row.fullName}
+                            className="relative overflow-hidden rounded-xl border border-slate-100 bg-slate-50/80 p-3"
+                          >
+                            <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              {row.fullName}
+                            </p>
+                            <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{row.closedPct}%</p>
+                            <p className="text-[11px] text-slate-500">Closed share · {row.openPct}% open</p>
+                            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-200">
+                              <div className="h-full" style={{ width: `${row.openPct}%`, background: OPEN_COLOR }} />
+                              <div className="h-full" style={{ width: `${row.closedPct}%`, background: CLOSED_COLOR }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </DashboardCard>
 
                 <SectionHeader icon={LayoutGrid} title="Application detail" accent="from-blue-500 to-indigo-600" />
 

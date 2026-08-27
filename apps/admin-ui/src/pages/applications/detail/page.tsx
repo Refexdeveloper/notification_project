@@ -10,6 +10,7 @@ import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import { syncFieldsOnBackend } from '@/services/fieldsApi';
 import type { KissflowApplication } from '@/mocks/applications';
 import OverviewTab from './components/OverviewTab';
+import AppDashboardTab from './components/AppDashboardTab';
 import ConnectionTab from './components/ConnectionTab';
 import DiscoveryTab from './components/DiscoveryTab';
 import ResourcesTab from './components/ResourcesTab';
@@ -21,7 +22,7 @@ import EngagementTab from './components/EngagementTab';
 import { Button } from '@/components/ui/Button';
 import { duration, easeOutSoft, springSnappy } from '@/lib/motion';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { RefreshCw, AlertCircle, Mail, Pencil } from 'lucide-react';
+import { RefreshCw, AlertCircle, Pencil } from 'lucide-react';
 import { catalogEntryForApp } from '@/seeds/refexAppCatalog';
 
 type TabId = AppDetailTabId;
@@ -33,6 +34,8 @@ export default function ApplicationDetail() {
   const [appRevision, setAppRevision] = useState(0);
   const [headerSyncing, setHeaderSyncing] = useState(false);
   const [headerSyncError, setHeaderSyncError] = useState('');
+  const [tabRefreshNonce, setTabRefreshNonce] = useState(0);
+  const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [loading, setLoading] = useState(isBackendApiMode());
   const [loadError, setLoadError] = useState<string | null>(null);
   const [backendApp, setBackendApp] = useState<KissflowApplication | undefined>();
@@ -77,6 +80,19 @@ export default function ApplicationDetail() {
 
   const setTab = (tab: string) => {
     setSearchParams({ tab }, { replace: true });
+  };
+
+  const runTabRefresh = () => {
+    if (activeTab === 'dashboard') {
+      setTabRefreshNonce((n) => n + 1);
+      return;
+    }
+    if (activeTab === 'discovery') {
+      void runHeaderSync();
+      return;
+    }
+    // Soft remount / reload for other tabs
+    setAppRevision((n) => n + 1);
   };
 
   const runHeaderSync = async () => {
@@ -156,64 +172,89 @@ export default function ApplicationDetail() {
         { label: app.displayName || app.name },
       ]}
     >
-      <div className="surface p-5 mb-5 relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_0%_0%,oklch(var(--primary-50)/0.9),transparent_55%)]" />
-        <div className="relative flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4 min-w-0">
-            <div
-              className={`w-14 h-14 rounded-[18px] flex items-center justify-center shrink-0 ${tint}`}
-            >
+      {/* Same dark header on every tab (dashboard pattern). */}
+      <div className="relative mb-4 overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 p-5 text-white shadow-lg">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.25),transparent_40%),radial-gradient(circle_at_80%_0%,rgba(99,102,241,0.3),transparent_35%)]" />
+        <div className="relative flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-4">
+            <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${tint} ring-1 ring-white/20`}>
               <i className={`${iconClass} text-2xl`} aria-hidden />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl font-semibold text-foreground-950 font-heading tracking-tight truncate">
-                  {app.displayName || app.name}
-                </h1>
-                <span className="chip-success">
-                  <span className="w-1.5 h-1.5 rounded-full bg-accent-500" />
-                  {app.status}
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="truncate text-xl font-semibold tracking-tight">{app.displayName || app.name}</h1>
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-400/30">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {app.status || 'Active'}
                 </span>
-                <span className="chip-primary">{app.environment}</span>
-                {app.discoveredFields && app.discoveredFields.length > 0 && (
-                  <span className="chip-muted">{app.discoveredFields.length} fields synced</span>
-                )}
+                <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white/85 ring-1 ring-white/15">
+                  Last synced{' '}
+                  {app.lastSync && app.lastSync !== '—'
+                    ? app.lastSync
+                    : app.lastFieldSyncAt
+                      ? new Date(app.lastFieldSyncAt).toLocaleString('en-IN', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                      : '—'}
+                </span>
               </div>
-              <p className="text-sm text-foreground-500 mt-1 truncate">
+              <p className="mt-1 truncate text-sm text-white/65">
                 {app.subdomain}.kissflow.{app.region}
                 {app.appId ? ` · ${app.appId}` : ''}
               </p>
-              {headerSyncError && (
-                <p className="text-xs text-red-700 font-medium mt-1.5 inline-flex items-center gap-1">
-                  <AlertCircle className="w-3.5 h-3.5" />
+              {headerSyncError ? (
+                <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-200">
+                  <AlertCircle className="h-3.5 w-3.5" />
                   {headerSyncError}
                 </p>
-              )}
+              ) : null}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             {!isBackendApiMode() && (
-              <Button variant="secondary" size="sm" onClick={() => setTab('settings')} leftIcon={<Pencil className="w-3.5 h-3.5" />}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setTab('settings')}
+                leftIcon={<Pencil className="h-3.5 w-3.5" />}
+                className="border-white/20 bg-white/10 text-white hover:bg-white/20"
+              >
                 Edit
               </Button>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={runHeaderSync}
-              loading={headerSyncing}
-              leftIcon={!headerSyncing ? <RefreshCw className="w-3.5 h-3.5" /> : undefined}
-            >
-              Sync fields
-            </Button>
-            <Button size="sm" onClick={() => setTab('templates')} leftIcon={<Mail className="w-3.5 h-3.5" />}>
-              New template
-            </Button>
+            {activeTab === 'dashboard' ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={runTabRefresh}
+                loading={headerRefreshing}
+                leftIcon={!headerRefreshing ? <RefreshCw className="h-3.5 w-3.5" /> : undefined}
+                className="border-white/20 bg-sky-500/30 text-white hover:bg-sky-500/40"
+              >
+                Refresh dashboard
+              </Button>
+            ) : null}
+            {activeTab === 'discovery' ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={runHeaderSync}
+                loading={headerSyncing}
+                leftIcon={!headerSyncing ? <RefreshCw className="h-3.5 w-3.5" /> : undefined}
+                className="border-white/20 bg-emerald-500/30 text-white hover:bg-emerald-500/40"
+              >
+                Sync fields
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
 
-      <div className="mb-5 overflow-x-auto pb-1">
+      <div className="mb-4 overflow-x-auto pb-1">
         <div className="flex items-center gap-1 glass rounded-[18px] p-1.5 w-max min-w-full sm:min-w-0">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -251,6 +292,13 @@ export default function ApplicationDetail() {
           transition={{ duration: duration.fast, ease: easeOutSoft }}
         >
           {activeTab === 'overview' && <OverviewTab app={app} onNavigateTab={setTab} />}
+          {activeTab === 'dashboard' && (
+            <AppDashboardTab
+              app={app}
+              refreshNonce={tabRefreshNonce}
+              onRefreshingChange={setHeaderRefreshing}
+            />
+          )}
           {activeTab === 'connection' && (
             <ConnectionTab app={app} onSaved={() => setAppRevision((n) => n + 1)} />
           )}

@@ -227,6 +227,56 @@ export default function TemplateDetailPage() {
     [appKind, html],
   );
 
+  const solarLayoutStale = useMemo(
+    () => appKind === 'solar' && Boolean(html) && !html.includes('{{CategorySectionsHtml}}'),
+    [appKind, html],
+  );
+
+  const travelLayoutStale = useMemo(
+    () =>
+      appKind === 'travel'
+      && Boolean(html)
+      && (!html.includes('{{ProcessSectionsHtml}}') || !html.includes('{{UserTableSectionHtml}}')),
+    [appKind, html],
+  );
+
+  const applyStarterLayout = useCallback(
+    async (starterId: string, confirmMsg: string, successMsg: string, desc?: string) => {
+      if (!backendMode || !id) return;
+      const appForSave =
+        backendApp || ({ id: appRouteId, environment: 'Production' } as KissflowApplication);
+      if (!appForSave.id && !appRouteId) {
+        setLoadError('Missing application context. Open the template from an application tab.');
+        return;
+      }
+      if (!window.confirm(confirmMsg)) return;
+      setLayoutBusy(true);
+      setLoadError(null);
+      setSaveMsg('');
+      const starter = await loadReportStarterHtmlFromBackend(appForSave, starterId);
+      if (!starter.ok || !starter.item?.html) {
+        setLoadError(starter.error || 'Could not load starter layout');
+        setLayoutBusy(false);
+        return;
+      }
+      const nextHtml = starter.item.html;
+      setHtml(nextHtml);
+      const updated = await updateTemplateOnBackend(appForSave, id, {
+        html: nextHtml,
+        description: desc || description,
+        status: status === 'published' ? 'published' : undefined,
+      });
+      setLayoutBusy(false);
+      if (!updated.ok) {
+        setLoadError(updated.error || 'Failed to save updated layout');
+        return;
+      }
+      setSaveMsg(successMsg);
+      setMode('preview');
+    },
+    [backendMode, id, backendApp, appRouteId, description, status],
+  );
+
   const applyLatestItsmLayout = useCallback(async () => {
     if (!backendMode || !id) return;
     const appForSave =
@@ -776,6 +826,42 @@ export default function TemplateDetailPage() {
               {layoutBusy ? 'Updating…' : 'Apply PM portfolio layout'}
             </Button>
           )}
+          {backendMode && appKind === 'solar' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() =>
+                void applyStarterLayout(
+                  'solar-reinvestment',
+                  'Replace this template with the latest Solar layout (Operation vs Finance sections)?',
+                  'Applied Solar layout with CategorySectionsHtml. Publish to update scheduled email.',
+                  'Solar reinvestment — Operation vs Finance category sections',
+                )
+              }
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy ? 'Updating…' : 'Apply Solar layout'}
+            </Button>
+          )}
+          {backendMode && appKind === 'travel' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() =>
+                void applyStarterLayout(
+                  name.toLowerCase().includes('refex') ? 'travel-refex' : name.toLowerCase().includes('venwind') ? 'travel-venwind' : 'travel',
+                  'Replace this template with the latest Travel layout (Payment Request / Expense / Travel process sections)?',
+                  'Applied Travel layout with ProcessSectionsHtml. Publish to update scheduled email.',
+                  'Travel — per-process KPI sections + MIS user table',
+                )
+              }
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy ? 'Updating…' : 'Apply Travel layout'}
+            </Button>
+          )}
           {backendMode && (
             <Button
               variant="secondary"
@@ -854,6 +940,60 @@ export default function TemplateDetailPage() {
               onClick={() => void applyLatestPmLayout()}
             >
               {layoutBusy ? 'Updating…' : 'Apply PM portfolio layout'}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {solarLayoutStale && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-amber-950">Solar layout outdated</p>
+            <p className="text-xs text-amber-900/90 mt-0.5">
+              Missing {'{{CategorySectionsHtml}}'} (Operation vs Finance). Apply the Solar layout, then Publish.
+            </p>
+          </div>
+          {backendMode && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={layoutBusy}
+              onClick={() =>
+                void applyStarterLayout(
+                  'solar-reinvestment',
+                  'Apply latest Solar layout?',
+                  'Applied Solar layout.',
+                )
+              }
+            >
+              {layoutBusy ? 'Updating…' : 'Apply Solar layout'}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {travelLayoutStale && (
+        <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-sky-950">Travel layout outdated</p>
+            <p className="text-xs text-sky-900/90 mt-0.5">
+              Missing {'{{ProcessSectionsHtml}}'} / {'{{UserTableSectionHtml}}'}. Apply Travel layout, then Publish.
+            </p>
+          </div>
+          {backendMode && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={layoutBusy}
+              onClick={() =>
+                void applyStarterLayout(
+                  'travel',
+                  'Apply latest Travel layout?',
+                  'Applied Travel layout.',
+                )
+              }
+            >
+              {layoutBusy ? 'Updating…' : 'Apply Travel layout'}
             </Button>
           )}
         </div>

@@ -11,6 +11,10 @@ steps:
       - --build-arg
       - VITE_USE_BACKEND_API=${_VITE_USE_BACKEND_API}
       - --build-arg
+      - BACKEND_UPSTREAM=${_BACKEND_UPSTREAM}
+      - --build-arg
+      - BACKEND_HOST=${_BACKEND_HOST}
+      - --build-arg
       - CACHEBUST=${COMMIT_SHA}
       - -f
       - apps/admin-ui/Dockerfile
@@ -20,8 +24,10 @@ images:
   - asia-south1-docker.pkg.dev/${PROJECT_ID}/refex-engagement-report/admin-ui:${COMMIT_SHA}
 
 substitutions:
-  _API_BASE_URL: https://backend-api-placeholder.run.app/api/v1
+  _API_BASE_URL: /api/v1
   _VITE_USE_BACKEND_API: "true"
+  _BACKEND_UPSTREAM: https://refex-backend-api-dhwffeu7pq-el.a.run.app
+  _BACKEND_HOST: refex-backend-api-dhwffeu7pq-el.a.run.app
 
 options:
   logging: CLOUD_LOGGING_ONLY
