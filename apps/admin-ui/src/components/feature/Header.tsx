@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Menu, Search, X } from 'lucide-react';
 import { useAuth } from '@/hooks/AuthContext';
+import { REFEXONE_LOGO_URL } from '@/constants/branding';
 
 interface BreadcrumbItem {
   label: string;
@@ -85,7 +86,12 @@ export default function Header({
             ))}
           </nav>
         ) : embed ? (
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-3">
+            <img
+              src={REFEXONE_LOGO_URL}
+              alt="RefexOne"
+              className="h-8 w-auto shrink-0 object-contain sm:h-9"
+            />
             <p className="truncate text-lg font-bold tracking-tight text-[#1E293B] sm:text-2xl">
               {title || 'Engagement overview'}
             </p>

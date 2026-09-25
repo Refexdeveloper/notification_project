@@ -43,10 +43,35 @@ export function isExtrovisProcess(processId: string | undefined | null): boolean
   return /extrovis/i.test(String(processId || ''));
 }
 
+export const ITSM_DISPLAY_NAME = 'IT Helpdesk';
+
+/** Kissflow app id stays IT_Service_Management_A00; UI label is IT Helpdesk. */
+export function friendlyApplicationName(
+  appId?: string | null,
+  appName?: string | null,
+): string {
+  const id = String(appId || '').trim();
+  const name = String(appName || '').trim();
+  if (
+    id === 'IT_Service_Management_A00' ||
+    /it[_-]?service[_-]?management/i.test(id) ||
+    /^it\s*service\s*management$/i.test(name)
+  ) {
+    return ITSM_DISPLAY_NAME;
+  }
+  return name || id;
+}
+
 export function isItsmApp(appId: string | undefined | null, appName?: string): boolean {
   const id = String(appId || '').toLowerCase();
   const name = String(appName || '').toLowerCase();
-  return id.includes('it_service') || id.includes('itsm') || name.includes('it service');
+  return (
+    id.includes('it_service') ||
+    id.includes('itsm') ||
+    name.includes('it service') ||
+    name.includes('helpdesk') ||
+    name.includes('help desk')
+  );
 }
 
 export function isPmApp(appId: string | undefined | null, appName?: string): boolean {

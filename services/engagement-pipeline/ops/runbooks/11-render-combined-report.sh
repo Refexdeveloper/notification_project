@@ -345,7 +345,7 @@ cat > "${OUTPUT_FILE}" <<HTML
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">Refex Kissflow Engagement Report</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">IT Service Management &middot; Project Management Tracker</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">IT Helpdesk &middot; Project Management Tracker</div>
 <div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated ${GENERATED_AT_DISPLAY}</div>
 </td>
 </tr></table>
@@ -391,7 +391,7 @@ cat > "${OUTPUT_FILE}" <<HTML
 <tr><td style="padding:22px 32px 4px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td>
-<span style="display:inline-block; background-color:#14503a !important; color:#ffffff !important; font-size:11px; font-weight:bold; padding:5px 12px; border-radius:20px; text-transform:uppercase; letter-spacing:0.4px;">IT Service Management</span>
+<span style="display:inline-block; background-color:#14503a !important; color:#ffffff !important; font-size:11px; font-weight:bold; padding:5px 12px; border-radius:20px; text-transform:uppercase; letter-spacing:0.4px;">IT Helpdesk</span>
 </td>
 </tr></table>
 </td></tr>

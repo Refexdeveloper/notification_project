@@ -32,7 +32,7 @@ function simpleMetricStarter(appName) {
 <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="background-color:#ffffff !important;border-radius:10px;overflow:hidden;" bgcolor="#ffffff">
 
 <tr><td style="padding:26px 32px;" bgcolor="#ffffff">
-<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="140" style="display:block;max-width:140px;height:auto;">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="140" height="27" style="display:block;max-width:140px;height:auto;">
 <div style="font-size:18px;font-weight:bold;color:#1a1a1a !important;margin-top:14px;">{{ReportTitle}}</div>
 <div style="font-size:12px;color:#6b6b6b !important;margin-top:4px;">${appName} · Generated {{ReportDate}}</div>
 </td></tr>
@@ -85,7 +85,7 @@ const STARTER_CATALOG = [
   {
     id: 'itsm',
     name: 'ITSM engagement report',
-    description: 'Same layout as the live IT Service Management email (sign-in + tickets + user table).',
+    description: 'Same layout as the live IT Helpdesk email (sign-in + tickets + user table).',
     seed_path: 'db/seeds/itsm-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -169,7 +169,7 @@ const STARTER_CATALOG = [
     id: 'solar-reinvestment',
     name: 'Solar Reinvestment Request report',
     description:
-      'Solar Expense Hub layout with Total / Sign-in Rate Today / Open / Closed Requests + MIS user table.',
+      'Solar Expense Hub layout with Total / Open / Closed + Operation vs Finance add-on (dashboard parity) + MIS user table.',
     seed_path: 'db/seeds/solar-reinvestment-template.html',
     placeholders: [
       'ReportTitle',
@@ -180,6 +180,7 @@ const STARTER_CATALOG = [
       'ClosedRequests',
       'OpenedToday',
       'ClosedToday',
+      'CategorySectionsHtml',
       'UserTableHtml',
       'ReportBody',
     ],
@@ -232,7 +233,7 @@ const STARTER_CATALOG = [
     id: 'travel',
     name: 'Travel Management usage report',
     description:
-      'ITSM-style Travel Management daily usage report. Combines Advance Payment, Expense Management, and Travel Management into one email per entity (Venwind or Refex).',
+      'Entity-scoped Travel report. Combines Payment Request, Expense Management, and Travel Management with per-process KPI rows + MIS pending/completed. Use Venwind or Refex starters for entity-specific templates.',
     seed_path: 'db/seeds/travel-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -251,6 +252,7 @@ const STARTER_CATALOG = [
       'SignedInToday',
       'OpenedToday',
       'ClosedToday',
+      'ProcessSectionsHtml',
       'UserTableHtml',
       'UserTableSectionHtml',
       'PendingDetailsHtml',
@@ -258,6 +260,118 @@ const STARTER_CATALOG = [
       'ReportBody',
     ],
     best_for: ['Expense_and_Travel_Management_A00', 'travel'],
+    recommended_resources: {
+      process_ids: [
+        'Advance_Payment_Request_Process_A01',
+        'Expense_Management_A03',
+        'Travel_Management_A02',
+      ],
+      board_ids: [],
+    },
+    default_entity: null,
+  },
+  {
+    id: 'travel-venwind',
+    name: 'Travel · Venwind entity report',
+    description:
+      'Venwind-only Travel Management email. KPI cards for Payment Request, Expense Management, and Travel Management + MIS pending/completed. Never mixes Refex.',
+    seed_path: 'db/seeds/travel-venwind-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'EntityScope',
+      'EntityName',
+      'TotalRequests',
+      'PendingRequests',
+      'CompletedRequests',
+      'RejectedRequests',
+      'UsersWithPending',
+      'SlaBreachedTotal',
+      'SlaBreachedOpen',
+      'SlaBreachedClosed',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'ProcessSectionsHtml',
+      'UserTableHtml',
+      'UserTableSectionHtml',
+      'PendingDetailsHtml',
+      'SlaAnalysisHtml',
+      'ReportBody',
+    ],
+    best_for: ['Expense_and_Travel_Management_A00', 'travel', 'venwind'],
+    recommended_resources: {
+      process_ids: [
+        'Advance_Payment_Request_Process_A01',
+        'Expense_Management_A03',
+        'Travel_Management_A02',
+      ],
+      board_ids: [],
+    },
+    default_entity: 'Venwind',
+  },
+  {
+    id: 'travel-refex',
+    name: 'Travel · Refex entity report',
+    description:
+      'Refex-only Travel Management email (includes blank Entity). KPI cards per process + MIS pending/completed. Never mixes Venwind.',
+    seed_path: 'db/seeds/travel-refex-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'EntityScope',
+      'EntityName',
+      'TotalRequests',
+      'PendingRequests',
+      'CompletedRequests',
+      'RejectedRequests',
+      'UsersWithPending',
+      'SlaBreachedTotal',
+      'SlaBreachedOpen',
+      'SlaBreachedClosed',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'ProcessSectionsHtml',
+      'UserTableHtml',
+      'UserTableSectionHtml',
+      'PendingDetailsHtml',
+      'SlaAnalysisHtml',
+      'ReportBody',
+    ],
+    best_for: ['Expense_and_Travel_Management_A00', 'travel', 'refex'],
+    recommended_resources: {
+      process_ids: [
+        'Advance_Payment_Request_Process_A01',
+        'Expense_Management_A03',
+        'Travel_Management_A02',
+      ],
+      board_ids: [],
+    },
+    default_entity: 'Refex',
+  },
+  {
+    id: 'p2p',
+    name: 'Procurement to Pay report',
+    description:
+      'Non-Kissflow P2P email layout. Data comes from Cloud SQL MySQL p2p_system via a dedicated read-only user — never p2p_app, never writes.',
+    seed_path: 'db/seeds/p2p-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalRequests',
+      'OpenRequests',
+      'ClosedRequests',
+      'TotalUsers',
+      'SignedInToday',
+      'OpenedToday',
+      'ClosedToday',
+      'UserTableHtml',
+      'ReportBody',
+    ],
+    best_for: ['Procurement_to_Pay_A00', 'p2p', 'procurement'],
   },
   {
     id: 'simple',
@@ -301,6 +415,7 @@ function suggestStarterId(applicationId = '', context = {}) {
     return 'solar-reinvestment';
   }
   if (id.includes('lead')) return 'lead';
+  if (id.includes('procurement') || id === 'procurement_to_pay_a00' || id.includes('p2p')) return 'p2p';
   if (id.includes('ems_001') || (id.includes('expense') && !id.includes('travel') && !id.includes('solar'))) {
     return 'expense';
   }
@@ -361,6 +476,7 @@ function listStarters(applicationId = '') {
     placeholders: item.placeholders,
     recommended: item.id === suggested,
     recommended_resources: item.recommended_resources || null,
+    default_entity: item.default_entity || null,
   }));
 }
 

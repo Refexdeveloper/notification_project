@@ -126,7 +126,7 @@ report_cache_key() {
       ;;
     EMS_001_A00) echo "expense:${ENVIRONMENT:-production}" ;;
     Expense_and_Travel_Management_A00)
-      echo "travel:v3:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
+      echo "travel:v4:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
       ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
@@ -165,7 +165,12 @@ dispatch_pm_style_process() {
   local latest="${REPO_ROOT}/templates/generated/${slug}-report-latest.html"
   if [[ "${TEST_SEND}" == "true" ]]; then
     log "Test send: live Kissflow ingest for ${APPLICATION_ID}/${PROCESS_ID}"
-    export FULL_INGEST=true
+    # Prefer incremental when a snapshot exists (fast). Full only on first load.
+    if process_has_snapshot "${PROCESS_ID}"; then
+      export FULL_INGEST=false
+    else
+      export FULL_INGEST=true
+    fi
     if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
       log "Live ingest failed for ${app_name} — trying last cached HTML"
       if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
@@ -185,7 +190,13 @@ dispatch_pm_style_process() {
     log "${app_name} test send completed"
   else
     log "Step 1/3: Ingest latest Kissflow data for ${app_name}"
-    export FULL_INGEST=true
+    if process_has_snapshot "${PROCESS_ID}"; then
+      export FULL_INGEST=false
+      log "Incremental sync for ${PROCESS_ID} (delta since last watermark)"
+    else
+      export FULL_INGEST=true
+      log "No snapshot yet — FULL_INGEST for ${PROCESS_ID}"
+    fi
     bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
     log "Step 2/3: Rendering ${app_name} report"
     bash "${render_script}"
@@ -231,32 +242,34 @@ dispatch_travel_usage_report() {
   export APPLICATION_NAME="Travel Management"
   export PROCESS_NAME="Travel Management (combined)"
   export SUBJECT="${SUBJECT:-Kissflow - ${ENTITY_FILTER:-Venwind} Travel Management Daily Usage Report}"
-  export REPORT_BODY="${ENTITY_FILTER:-Venwind} only. Combines Advance Payment, Expense Management, and Travel Management."
+  export REPORT_BODY="${ENTITY_FILTER:-Venwind} only. Combines Travel Request, Travel Expense, and Travel Advance."
   export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-Advance_Payment_Request_Process_A01 Expense_Management_A03 Travel_Management_A02}"
   local latest="${REPO_ROOT}/templates/generated/travel-report-latest.html"
   local render_script="${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
   if [[ "${TEST_SEND}" == "true" ]]; then
-    log "Test send: ingesting ALL Travel processes (${TRAVEL_PROCESS_IDS}) then rendering entity=${ENTITY_FILTER}"
-    # Keep PROCESS_ID as Travel_Management_A02 for logging/cache labels only.
     export PROCESS_ID="Travel_Management_A02"
-    if ! ingest_travel_processes; then
-      log "Live Travel ingest failed — trying last cached HTML"
-      if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
-        || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${latest}" "travel:"; then
-        export REPORT_FILE_OVERRIDE="${latest}"
-        export DELIVERY_KIND="test"
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
-        log "Travel Management test send completed from last cache"
-        return 0
-      fi
-      stop "Live ingest failed for all Travel processes and no cached report exists. Fix ingest, then retry Test Send."
+    if [[ "${FULL_INGEST:-false}" == "true" ]]; then
+      log "Test send: FULL_INGEST — full Kissflow pull for all Travel processes (entity=${ENTITY_FILTER})"
+      ingest_travel_processes || true
+    else
+      export FULL_INGEST=false
+      log "Test send: incremental Travel sync (delta since watermark; same as PM/ITSM test send)"
+      ingest_travel_processes || true
     fi
-    send_test_report "${latest}" "$(report_cache_key)" "${render_script}"
+    log "Test send: render + cache Travel report (same path as scheduled send)"
+    bash "${render_script}"
+    [[ -f "${latest}" ]] || stop "Render did not produce ${latest}"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${latest}" "$(report_cache_key)" \
+      || log "Warning: failed to cache rendered report (non-fatal)"
+    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${latest}" "$(schedule_cache_key)" \
+      || true
+    export REPORT_FILE_OVERRIDE="${latest}"
+    export DELIVERY_KIND="test"
+    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
     log "Travel Management test send completed (${ENTITY_FILTER})"
   else
-    log "Step 1/3: Ingest latest Kissflow data for all Travel processes"
-    # Scheduled sends must full-ingest so entity usage KPIs match live Kissflow.
-    export FULL_INGEST=true
+    log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
+    export FULL_INGEST=false
     ingest_travel_processes || stop "Travel ingest failed for every process"
     log "Step 2/3: Rendering ${ENTITY_FILTER} Travel usage report"
     bash "${render_script}"
@@ -307,7 +320,7 @@ send_test_report() {
   # Prefer re-render so a newly published template is used. Cached HTML is only a
   # fallback when no render runbook is available (avoids sending stale schedule:* cache).
   if [[ -n "${render_runbook}" ]]; then
-    log "Test send: rendering with latest published template from PostgreSQL snapshot (no Kissflow ingest)"
+    log "Test send: rendering from PostgreSQL snapshot (after incremental ingest)"
     bash "${render_runbook}"
     [[ -f "${report_file}" ]] || stop "Render did not produce ${report_file}"
     bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${report_file}" "${cache_key}" \
@@ -412,13 +425,30 @@ case "${APPLICATION_ID}" in
       " 2>/dev/null | tr -d '[:space:]')"
       [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
     }
+    # Healthy = recent completed run with a non-trivial item count (avoids sparse deltas).
+    itsm_snapshot_healthy() {
+      local n
+      n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+        SELECT COALESCE(MAX(item_record_count), 0)::text
+        FROM engagement_reporting.snapshot_run
+        WHERE application_id = '${ITSM_APP_ID}'
+          AND process_id = '${ITSM_PROCESS_ID}'
+          AND environment = '${ENVIRONMENT:-production}'
+          AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+          AND COALESCE(load_completed_at, extraction_completed_at, created_at) > now() - interval '7 days'
+      " 2>/dev/null | tr -d '[:space:]')"
+      [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -ge 10 ]]
+    }
     if [[ "${TEST_SEND}" == "true" ]]; then
-      # Extrovis (and any new process) has no snapshot until the first ingest.
-      # Test send previously skipped Kissflow → empty KPIs / "No users" table.
-      if ! itsm_has_snapshot; then
-        log "No usable snapshot for process ${ITSM_PROCESS_ID} — running full Kissflow ingest before test send"
+      # Fast path: render from PostgreSQL. Kissflow only if snapshot missing/sparse.
+      # Live Today KPIs are still overlaid in 06-render from Kissflow Admin API (small).
+      if ! itsm_has_snapshot || ! itsm_snapshot_healthy; then
+        log "Test send: snapshot missing/sparse for ${ITSM_PROCESS_ID} — one-time FULL_INGEST"
         export FULL_INGEST=true
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh" \
+          || log "WARNING: ITSM ingest failed — rendering from existing snapshot"
+      else
+        log "Test send: using PostgreSQL snapshot for ${ITSM_PROCESS_ID} (no Kissflow pull — fast)"
       fi
       send_test_report \
         "${REPO_ROOT}/templates/generated/report-latest.html" \
@@ -426,9 +456,14 @@ case "${APPLICATION_ID}" in
         "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
       log "ITSM test send completed"
     else
-      log "Step 1/3: Ingest latest Kissflow data into PostgreSQL"
-      # Scheduled sends must full-ingest so Opened/Closed Today include tickets raised today.
-      export FULL_INGEST=true
+      log "Step 1/3: Incremental Kissflow sync (only items modified since last watermark)"
+      # Scheduled emails: incremental + carry-forward. FULL only if snapshot sparse/missing.
+      if itsm_snapshot_healthy; then
+        export FULL_INGEST=false
+      else
+        log "Snapshot sparse/missing — FULL_INGEST for ${ITSM_PROCESS_ID}"
+        export FULL_INGEST=true
+      fi
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
       log "Step 2/3: Rendering ITSM report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"

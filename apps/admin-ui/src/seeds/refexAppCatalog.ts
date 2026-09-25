@@ -94,7 +94,7 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
   },
   {
     slug: 'itsm',
-    applicationName: 'IT Service Management',
+    applicationName: 'IT Helpdesk',
     kissflowAppId: 'IT_Service_Management_A00',
     processName: 'Live IT Service Request',
     processId: 'Live_IT_Service_Request_A00',

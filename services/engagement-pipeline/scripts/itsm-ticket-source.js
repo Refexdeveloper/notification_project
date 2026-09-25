@@ -9,17 +9,16 @@ const SOURCE_FIELD_KEYS = [
   'Source',
   'Ticket_Source',
   'Channel',
-  'Raised_By',
-  'Entity_Source',
   // Refex All_tickets / process payload column id
   'Column_BDSZ_sAHys',
   // Extrovis All_tickets / process payload column id
   'Column_hFjGV8lRrn',
-  // Related Raised_By / Entity_Source column ids (profiles)
+  // Related source column ids (profiles) — not Raised_By (person)
   'Column_1XTRxinP7c',
   'Column_uSnNcJOfiS',
   'Column_nEM1x9oVe4',
   'Column_zugAS-mL2N',
+  'Entity_Source',
 ];
 
 function stringifyKfValue(val) {

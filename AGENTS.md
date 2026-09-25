@@ -43,3 +43,4 @@ Admin UI / backend-api deploys do **not** update scheduled email KPI logic.
 - `.cursor/rules/frontend-backend-report-parity.mdc` — Admin UI + seed + runner must change together
 - `.cursor/rules/engagement-report-kpis.mdc` — Closed Today / entity scope
 - `.cursor/rules/itsm-email-html-data.mdc` — Source panel, Today, Sign-in, Playwright
+- `.cursor/rules/project-tracker-kpi-cards.mdc` — KPI card size/palette from Project Tracker (`PremiumKPICard`, always 4-up). Reference: `/Users/mohamedaasik/Desktop/Cursor/ProjectTracker`

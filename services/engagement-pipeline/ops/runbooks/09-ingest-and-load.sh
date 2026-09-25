@@ -8,7 +8,7 @@ NORM_DIR="${DATA_DIR}/normalized"
 BASE_URL="https://refexgroup.kissflow.com"
 PROCESS_ID="${PROCESS_ID:-Live_IT_Service_Request_A00}"
 APPLICATION_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
-APPLICATION_NAME="IT Service Management"
+APPLICATION_NAME="IT Helpdesk"
 if [[ "${PROCESS_ID}" == *[Ee]xtrovis* ]]; then
   PROCESS_NAME="${PROCESS_NAME:-Live IT Service Request Extrovis}"
 else

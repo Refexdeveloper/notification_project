@@ -30,8 +30,9 @@ import { duration, easeOutSoft, springSnappy } from '@/lib/motion';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { RefreshCw, AlertCircle, Pencil, LayoutDashboard } from 'lucide-react';
 import { catalogEntryForApp } from '@/seeds/refexAppCatalog';
-import { buildEmbedDashboardPath, readEmbedFromSearch, withEmbedParams } from '@/lib/embedMode';
-import { EMBED_EXECUTIVE, personalGreeting } from '@/lib/timeGreeting';
+import { buildEmbedDashboardPath, readEmbedFromSearch, readEmbedReturnUrl, resolveDashboardIdentity, withEmbedParams } from '@/lib/embedMode';
+import { personalGreeting } from '@/lib/timeGreeting';
+import { useAuth } from '@/hooks/AuthContext';
 
 type TabId = AppDetailTabId;
 
@@ -39,7 +40,10 @@ export default function ApplicationDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
   const embed = readEmbedFromSearch(searchParams);
+  const embedReturnTo = readEmbedReturnUrl(searchParams);
+  const embedIdentity = resolveDashboardIdentity(searchParams, user);
   const [appRevision, setAppRevision] = useState(0);
   const [headerSyncing, setHeaderSyncing] = useState(false);
   const [headerSyncError, setHeaderSyncError] = useState('');
@@ -54,7 +58,9 @@ export default function ApplicationDetail() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    loadApplicationFromBackend(id).then((result) => {
+    const tab = searchParams.get('tab') || defaultApplicationTab;
+    const needsFields = tab === 'discovery' || tab === 'resources';
+    loadApplicationFromBackend(id, { includeFields: needsFields }).then((result) => {
       if (cancelled) return;
       setBackendApp(result.application ?? undefined);
       setLoadError(result.error || null);
@@ -63,7 +69,7 @@ export default function ApplicationDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id, appRevision]);
+  }, [id, appRevision, searchParams]);
 
   const app = useMemo(() => {
     void appRevision;
@@ -150,7 +156,11 @@ export default function ApplicationDetail() {
 
   if (loading) {
     return (
-      <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Loading…' }]}>
+      <Layout
+        breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Loading…' }]}
+        embed={embed}
+        embedAppTitle={embed ? 'Engagement overview' : undefined}
+      >
         <div className="surface p-8 text-center text-sm text-foreground-500">Loading application…</div>
       </Layout>
     );
@@ -158,7 +168,7 @@ export default function ApplicationDetail() {
 
   if (!app) {
     return (
-      <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Not found' }]}>
+      <Layout breadcrumbs={[{ label: 'Applications', path: '/applications' }, { label: 'Not found' }]} embed={embed}>
         <EmptyState
           variant="apps"
           title="Application not found"
@@ -190,21 +200,29 @@ export default function ApplicationDetail() {
             ]
       }
     >
-      {/* App header card — embed uses executive row; normal keeps full metadata. */}
-      <div className="relative mb-4 overflow-hidden rounded-2xl bg-[#EEF3FF] p-5 text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#D7E2EF]">
+      {/* App header card — hidden in embed dashboard (hero lives in AppDashboardTab). */}
+      {!(embed && (activeTab === 'dashboard' || activeTab === 'records')) ? (
+      <div
+        className={`relative mb-4 overflow-hidden rounded-2xl p-5 text-slate-800 ${
+          embed
+            ? 'bg-white shadow-[0_4px_18px_rgba(112,144,176,0.12)] ring-1 ring-slate-100'
+            : 'bg-[#EEF3FF] shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#D7E2EF]'
+        }`}
+      >
         {embed ? (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#D7E2EF] pb-4">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3977BE]">
                 {personalGreeting()}
               </p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800 sm:text-base">
-                {EMBED_EXECUTIVE.name} · {EMBED_EXECUTIVE.title}
+                {embedIdentity.name}
+                {embedIdentity.title ? ` · ${embedIdentity.title}` : ''}
               </p>
             </div>
             <button
               type="button"
-              onClick={() => navigate(buildEmbedDashboardPath(id))}
+              onClick={() => navigate(buildEmbedDashboardPath(id, embedReturnTo, searchParams), { replace: true })}
               className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#EAF2FF] px-3 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
             >
               <LayoutDashboard className="h-3.5 w-3.5" />
@@ -297,6 +315,7 @@ export default function ApplicationDetail() {
           </div>
         </div>
       </div>
+      ) : null}
 
       <div className="mb-4 overflow-x-auto pb-1">
         <div className="flex items-center gap-1 glass rounded-[18px] p-1.5 w-max min-w-full sm:min-w-0">
@@ -354,7 +373,7 @@ export default function ApplicationDetail() {
             <ResourcesTab app={app} onSynced={() => setAppRevision((n) => n + 1)} />
           )}
           {activeTab === 'engagement' && <EngagementTab app={app} />}
-          {activeTab === 'records' && <RecordsTab app={app} />}
+          {activeTab === 'records' && <RecordsTab app={app} embed={embed} />}
           {activeTab === 'templates' && <TemplatesTab app={app} />}
           {activeTab === 'schedulers' && <SchedulersTab app={app} />}
           {activeTab === 'history' && <HistoryTab app={app} />}

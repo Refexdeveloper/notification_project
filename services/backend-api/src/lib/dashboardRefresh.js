@@ -12,6 +12,12 @@ const { getPool } = require('./db');
 const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
 const { loadDashboardOverview } = require('./dashboardOverview');
 const { loadApplicationDashboard } = require('./appDashboard');
+const { isP2pApplication, loadP2pDashboard } = require('./p2pDashboard');
+const {
+  isEngagementCacheFresh,
+  loadApplicationEngagementCache,
+  ttlForApplication,
+} = require('./engagementCache');
 
 async function upsertUserLastSignIns(pool, environment, users) {
   if (!Array.isArray(users) || !users.length) return 0;
@@ -23,6 +29,9 @@ async function upsertUserLastSignIns(pool, environment, users) {
     const ever = Boolean(row.ever_logged_in || lastSignIn);
     const email = row.email || null;
     const name = row.user_name || null;
+    const activeStatus = row.active_status || (row.is_active === false ? 'Inactive' : 'Active');
+    const company = row.company || null;
+    const companyKey = row.company_key || null;
     try {
       // Update the newest existing user row only (FK requires snapshot_run_id for inserts).
       const result = await pool.query(
@@ -34,7 +43,14 @@ async function upsertUserLastSignIns(pool, environment, users) {
              END,
              ever_logged_in = CASE WHEN $4 THEN true ELSE COALESCE(u.ever_logged_in, false) END,
              user_name = COALESCE(NULLIF($5, ''), u.user_name),
-             email = COALESCE(NULLIF(lower(trim($6)), ''), u.email)
+             email = COALESCE(NULLIF(lower(trim($6)), ''), u.email),
+             active_status = COALESCE(NULLIF($7, ''), u.active_status),
+             source_payload = COALESCE(u.source_payload, '{}'::jsonb)
+               || jsonb_strip_nulls(jsonb_build_object(
+                 'company', NULLIF($8, ''),
+                 'company_key', NULLIF($9, ''),
+                 'is_active', CASE WHEN $7 = 'Inactive' THEN false ELSE true END
+               ))
          WHERE u.environment = $1
            AND u.user_id = $2
            AND u.snapshot_at = (
@@ -42,7 +58,7 @@ async function upsertUserLastSignIns(pool, environment, users) {
              FROM engagement_reporting."user" u2
              WHERE u2.environment = $1 AND u2.user_id = $2
            )`,
-        [environment, userId, lastSignIn, ever, name, email],
+        [environment, userId, lastSignIn, ever, name, email, activeStatus, company, companyKey],
       );
       updated += result.rowCount || 0;
     } catch {
@@ -74,14 +90,70 @@ async function listCurrentApps(pool, environment, applicationId) {
 }
 
 /**
- * @param {{ environment?: string, applicationId?: string, persist?: boolean }} opts
+ * @param {{ environment?: string, applicationId?: string, persist?: boolean, live?: boolean }} opts
+ * Default is cache-first (incremental engagement_cache). Set live=true for Kissflow Get-all-items.
  */
 async function refreshDashboardLive(opts = {}) {
   const environment = opts.environment || 'production';
   const applicationId = opts.applicationId ? String(opts.applicationId).trim() : '';
   const persist = opts.persist !== false;
+  const liveKissflow = opts.live === true;
   const pool = getPool();
   const apps = await listCurrentApps(pool, environment, applicationId || null);
+
+  if (!liveKissflow) {
+    if (applicationId) {
+      try {
+        const cached = await loadApplicationEngagementCache(pool, environment, applicationId);
+        const ttl = ttlForApplication(applicationId);
+        if (!isEngagementCacheFresh(cached, ttl)) {
+          void fetchLiveAppMetrics(environment, applicationId, { persistCache: persist }).catch((err) => {
+            console.warn('[dashboard-refresh] background live overlay failed', applicationId, err.message || err);
+          });
+        }
+      } catch {
+        /* cache miss is fine — GET below still paints from SQL/cache */
+      }
+    }
+    let overview = null;
+    let appDashboard = null;
+    try {
+      overview = await loadDashboardOverview(pool, environment);
+    } catch (err) {
+      overview = { error: err.message };
+    }
+    if (applicationId) {
+      try {
+        if (isP2pApplication(applicationId)) {
+          appDashboard = await loadP2pDashboard({ environment, period: 'all', entity: 'all' });
+        } else {
+          appDashboard = await loadApplicationDashboard(pool, {
+            environment,
+            applicationId,
+            period: 'all',
+            preferCache: true,
+            allowStaleCache: true,
+          });
+        }
+      } catch (err) {
+        appDashboard = { error: err.message };
+      }
+    }
+    return {
+      environment,
+      refreshed_at: new Date().toISOString(),
+      mode: 'incremental_cache',
+      note: 'Served from incremental engagement_cache. Kissflow live overlay runs in the background only when cache is stale.',
+      application_count: apps.length,
+      results: [],
+      applications: Array.isArray(overview) ? overview : undefined,
+      application_dashboard: appDashboard && !appDashboard.error ? appDashboard : undefined,
+      warnings: [
+        ...(overview?.error ? [`overview: ${overview.error}`] : []),
+        ...(appDashboard?.error ? [`application: ${appDashboard.error}`] : []),
+      ],
+    };
+  }
 
   const results = [];
   // Limit concurrency so Cloud Run stays responsive.
@@ -130,11 +202,17 @@ async function refreshDashboardLive(opts = {}) {
   }
   if (applicationId) {
     try {
-      appDashboard = await loadApplicationDashboard(pool, {
-        environment,
-        applicationId,
-        period: 'all',
-      });
+      if (isP2pApplication(applicationId)) {
+        appDashboard = await loadP2pDashboard({ environment, period: 'all', entity: 'all' });
+      } else {
+        appDashboard = await loadApplicationDashboard(pool, {
+          environment,
+          applicationId,
+          period: 'all',
+          preferCache: true,
+          allowStaleCache: false,
+        });
+      }
     } catch (err) {
       appDashboard = { error: err.message };
     }

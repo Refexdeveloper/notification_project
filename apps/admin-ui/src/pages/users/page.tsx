@@ -5,7 +5,6 @@ import Layout from '@/components/feature/Layout';
 import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
 import UserWorkExpandPanel from '@/components/feature/UserWorkExpandPanel';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { REFEX_ENV_CONFIG } from '@/seeds/refexAppCatalog';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadUserManagement,
@@ -114,8 +113,6 @@ export default function UsersPage() {
     return den > 0 ? Math.round((closed / den) * 1000) / 10 : 0;
   };
 
-  const envMeta = REFEX_ENV_CONFIG.Production;
-
   const safeUserDisplayName = (u: UserManagementRow): string => {
     return resolvePersonDisplayName(u.user_name, u.email, u.user_id) || u.email || u.user_id || '—';
   };
@@ -142,9 +139,6 @@ export default function UsersPage() {
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#3977BE]/80">Directory</p>
                 <h1 className="text-lg font-bold tracking-tight text-slate-900">User management</h1>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Cross-app open / closed / rejected · {envMeta.subdomain} · Production
-                </p>
               </div>
             </div>
             <div className="rounded-2xl bg-white px-4 py-2.5 ring-1 ring-[#D7E2EF]">

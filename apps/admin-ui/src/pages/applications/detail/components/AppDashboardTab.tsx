@@ -1,31 +1,19 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Line,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
+import { resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
+import EmbedAppRecordsTable from '@/components/feature/EmbedAppRecordsTable';
+import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
+import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
+import { LayoutDashboard, RefreshCw } from 'lucide-react';
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
   FolderKanban,
-  Globe2,
-  IndianRupee,
   Layers,
   Loader2,
-  Mail,
-  MessageCircle,
   Percent,
-  Smartphone,
   Sparkles,
   Users,
   UserCheck,
@@ -34,15 +22,48 @@ import {
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   appDashboardQueryKey,
+  loadApplicationAppUsers,
   loadApplicationDashboard,
   readAppDashboardCache,
+  readAppDashboardCacheSoft,
   refreshApplicationDashboardLive,
   type AppDashboardData,
+  type AppDashboardUser,
 } from '@/services/appDashboardApi';
 import type { KissflowApplication } from '@/mocks/applications';
+import { resolveBackendApplicationId } from '@/services/applicationsApi';
+import {
+  buildMisUsersFromRecords,
+  companyCountsFromRecords,
+  countPmPortfolio,
+  countTodayActivity,
+  entityCountsFromRecords,
+  filterAppRecords,
+  ensureFilterOption,
+  filterOptionMatches,
+  isUsableUserFilterLabel,
+  mergeRosterWithTicketCounts,
+  overlayRosterSignIn,
+  unionRosterWithTicketUsers,
+  stampRecordsWithAssigneeCompany,
+  summarizeAppRecords,
+  type RecordKpiFocus,
+} from '@/lib/appDashboardClientFilter';
+import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
+import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
+import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel } from '@/lib/personName';
+import {
+  buildEntityBucketOptions,
+  buildRefexCompanyOptions,
+  sortCompanyFilterOptions,
+} from '@/lib/refexCompanies';
+import {
+  loadApplicationRecordInventory,
+  type AppRecordColumn,
+  type AppRecordRow,
+} from '@/services/appRecordsApi';
 import ExecutiveDateFilterBar, { CARD_BORDER, MUTED } from '@/components/feature/ExecutiveDateFilterBar';
 import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
-import UserWorkExpandPanel from '@/components/feature/UserWorkExpandPanel';
 import {
   currentIstYear,
   istTodayYmd,
@@ -50,16 +71,55 @@ import {
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
 
+function isSignedInTodayIst(lastSignIn: string | null | undefined): boolean {
+  if (!lastSignIn) return false;
+  try {
+    const day = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(lastSignIn));
+    return day === istTodayYmd();
+  } catch {
+    return false;
+  }
+}
+
+function misUserLoginDisplay(
+  user: {
+    last_sign_in?: string | null;
+    ever_logged_in?: boolean;
+    is_active?: boolean;
+    active_status?: string | null;
+  },
+  formatWhen: (v: string) => string,
+) {
+  const last = user.last_sign_in;
+  if (last) {
+    const signedToday = isSignedInTodayIst(last);
+    return {
+      inactive: !signedToday,
+      text: formatWhen(last),
+      signedToday,
+    };
+  }
+  return { inactive: true, text: '-', signedToday: false };
+}
+
+function isSolarApplicationId(id: string) {
+  return /solar|technician_reimbursement|reinvestment|site_expense/i.test(String(id || ''));
+}
+
 type Props = {
   app: KissflowApplication;
   /** Refexone embed shell — hide hints and extra metadata */
   embed?: boolean;
-  /** Bumped by parent header Refresh — forces live refresh for this tab. */
+  /** Bumped by parent header Refresh — reloads incremental cache (does not wait on Kissflow). */
   refreshNonce?: number;
   onRefreshingChange?: (busy: boolean) => void;
 };
 
-const CHART_GRID = '#e2e8f0';
 const OPEN_COLOR = '#D4A574';
 const CLOSED_COLOR = '#5BA88A';
 const REJECTED_COLOR = '#C97B8C';
@@ -71,25 +131,89 @@ const KPI_STYLES = [
   { bg: '#FDECEF', text: '#7A3044', muted: '#B24E66', iconBg: '#F8D9E0', iconColor: '#B24E66', icon: XCircle },
 ] as const;
 
-const SOURCE_META: Record<
-  string,
-  { color: string; bg: string; icon: typeof Mail; hint: string }
-> = {
-  Email: { color: '#3977BE', bg: 'from-[#EAF3FF] to-[#EEF3FA]', icon: Mail, hint: 'Inbox / mail' },
-  WhatsApp: { color: '#287B5D', bg: 'from-[#E8F7F1] to-[#EDF8F3]', icon: MessageCircle, hint: 'WhatsApp' },
-  Mobile: { color: '#5B4B9A', bg: 'from-[#F0EDFF] to-[#F3EFFC]', icon: Smartphone, hint: 'Mobile app' },
-  Web: { color: '#2A7A8A', bg: 'from-[#E8F6F8] to-[#EEF8FA]', icon: Globe2, hint: 'Web portal' },
-  Other: { color: '#64748b', bg: 'from-slate-100 to-slate-50', icon: Layers, hint: 'Other' },
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  Operation: '#5B9BD5',
-  Finance: '#D4A574',
-};
-
 function closureRatioPct(open: number, closed: number): number {
   const den = open + closed;
   return den > 0 ? Math.round((closed / den) * 1000) / 10 : 0;
+}
+
+function currentIstMonth(): number {
+  try {
+    return Number(
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', month: 'numeric' }).format(new Date()),
+    );
+  } catch {
+    return new Date().getMonth() + 1;
+  }
+}
+
+function misPersonKey(u: AppDashboardUser): string {
+  const mail = String(u.email || '').trim().toLowerCase();
+  if (mail.includes('@')) return `email:${mail}`;
+  const parts = String(u.user_name || u.user_id || '').trim().toLowerCase()
+    .replace(/\./g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  while (parts.length > 1 && parts[parts.length - 1].length === 1) parts.pop();
+  const compact = parts.join('');
+  return compact.length >= 3 ? `name:${compact}` : `raw:${compact}`;
+}
+
+function mergeDashboardUsers(rows: AppDashboardUser[]): AppDashboardUser[] {
+  const map = new Map<string, AppDashboardUser>();
+  for (const u of rows) {
+    const key = misPersonKey(u);
+    const open = Number(u.open ?? u.pending ?? 0);
+    const closed = Number(u.closed ?? u.completed ?? 0);
+    const rejected = Number(u.rejected ?? 0);
+    const hit = map.get(key);
+    if (!hit) {
+      map.set(key, { ...u, open, closed, rejected, total: open + closed + rejected });
+      continue;
+    }
+    hit.open = Number(hit.open ?? 0) + open;
+    hit.closed = Number(hit.closed ?? 0) + closed;
+    hit.rejected = Number(hit.rejected ?? 0) + rejected;
+    hit.total = Number(hit.open) + Number(hit.closed) + Number(hit.rejected);
+    const name = String(u.user_name || '').trim();
+    if (name.length > String(hit.user_name || '').length) hit.user_name = name;
+    if (u.email && !hit.email) hit.email = u.email;
+    if (u.user_id && !hit.user_id) hit.user_id = u.user_id;
+    if (u.last_sign_in && (!hit.last_sign_in || new Date(u.last_sign_in) > new Date(hit.last_sign_in))) {
+      hit.last_sign_in = u.last_sign_in;
+    }
+    if (u.ever_logged_in) hit.ever_logged_in = true;
+    if (u.is_active != null) hit.is_active = u.is_active;
+    if (u.active_status) hit.active_status = u.active_status;
+  }
+  return [...map.values()].map((u) => ({
+    ...u,
+    user_name: normalizeItsmPersonLabel(u.user_name),
+  }));
+}
+
+function userMatchesFilter(u: AppDashboardUser, userFilter: string): boolean {
+  if (!userFilter || userFilter === 'all') return true;
+  const sel = userFilter.toLowerCase();
+  const id = String(u.user_id || u.user_name).toLowerCase();
+  const name = String(u.user_name || '').trim().toLowerCase()
+    .replace(/\./g, '').replace(/\s+/g, '').replace(/m$/, '');
+  const selName = sel.replace(/\./g, '').replace(/\s+/g, '').replace(/m$/, '');
+  return id === sel || name === selName || id.includes(sel) || sel.includes(id);
+}
+
+function sumUserKpis(users: AppDashboardUser[]) {
+  let open = 0;
+  let closed = 0;
+  let rejected = 0;
+  for (const u of users) {
+    open += Number(u.open ?? u.pending ?? 0);
+    closed += Number(u.closed ?? u.completed ?? 0);
+    rejected += Number(u.rejected ?? 0);
+  }
+  return { total: open + closed + rejected, open, closed, rejected };
 }
 
 function sortByClosedDesc<T extends { open?: number; closed?: number; pending?: number; completed?: number; total?: number }>(
@@ -122,30 +246,7 @@ function sortByClosureRatio<T extends { open?: number; closed?: number; pending?
 }
 
 function formatWhen(value: string | null | undefined): string {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-IN', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatInr(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '₹0';
-  if (value >= 1_00_00_000) {
-    return `₹${(value / 1_00_00_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`;
-  }
-  if (value >= 1_00_000) {
-    return `₹${(value / 1_00_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} L`;
-  }
-  return `₹${Math.round(value).toLocaleString('en-IN')}`;
-}
-
-function formatInrFull(value: number): string {
-  if (!Number.isFinite(value)) return '₹0';
-  return `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return displayWhen(value);
 }
 
 function DashboardCard({
@@ -153,16 +254,22 @@ function DashboardCard({
   children,
   className = '',
   right,
+  embed = false,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
   right?: ReactNode;
+  embed?: boolean;
 }) {
   return (
     <div
-      className={`flex h-full flex-col rounded-2xl bg-white p-5 shadow-sm ${className}`}
-      style={{ border: `1px solid ${CARD_BORDER}` }}
+      className={`flex h-full flex-col p-5 ${
+        embed
+          ? 'rounded-xl border border-slate-100 bg-white shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
+          : `rounded-2xl bg-white shadow-sm ${className}`
+      } ${embed ? className : ''}`}
+      style={embed ? undefined : { border: `1px solid ${CARD_BORDER}` }}
     >
       <div className="mb-4 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
@@ -179,13 +286,38 @@ function KpiCard({
   sub,
   styleIndex = 0,
   delta,
+  embed = false,
+  active = false,
+  onClick,
+  appKind,
+  iconContext,
 }: {
   label: string;
   value: number;
   sub?: string;
   styleIndex?: number;
   delta?: number | null;
+  embed?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+  appKind?: NeAppKind;
+  iconContext?: string;
 }) {
+  if (embed) {
+    return (
+      <EmbedKpiCard
+        label={label}
+        value={value}
+        sub={sub}
+        styleIndex={styleIndex}
+        appKind={appKind}
+        iconContext={iconContext}
+        active={active}
+        onClick={onClick}
+      />
+    );
+  }
+
   const style = KPI_STYLES[styleIndex % KPI_STYLES.length];
   const Icon = style.icon;
   const deltaText =
@@ -232,289 +364,91 @@ function KpiCard({
   );
 }
 
-function SourceIconReport({
-  rows,
-  total,
-}: {
-  rows: Array<{ name: string; value: number }>;
-  total: number;
-}) {
-  if (!rows.length) {
-    return <div className="flex h-full min-h-[120px] items-center justify-center text-sm text-slate-400">No source data</div>;
-  }
-  const max = Math.max(...rows.map((r) => r.value), 1);
-  return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-      {rows.map((row) => {
-        const meta = SOURCE_META[row.name] || SOURCE_META.Other;
-        const Icon = meta.icon;
-        const pct = total > 0 ? Math.round((row.value / total) * 100) : 0;
-        return (
-          <div
-            key={row.name}
-            className="relative overflow-hidden rounded-xl border border-slate-100 bg-slate-50/80 p-3"
-          >
-            <div
-              className={`mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br ${meta.bg} shadow-sm ring-1 ring-[#E6EBF2]`}
-              style={{ color: meta.color }}
-            >
-              <Icon className="h-4 w-4" />
-            </div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{row.name}</p>
-            <p className="mt-0.5 text-xl font-bold tabular-nums text-slate-900">{row.value.toLocaleString('en-IN')}</p>
-            <p className="text-[11px] text-slate-500">{pct}%</p>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full"
-                style={{ width: `${Math.max(6, (row.value / max) * 100)}%`, background: meta.color }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function SourceComposedChart({ rows }: { rows: Array<{ name: string; value: number }> }) {
-  if (!rows.length) {
-    return <div className="flex h-full min-h-[140px] items-center justify-center text-sm text-slate-400">No source data</div>;
-  }
-  const chartData = rows.map((r) => ({
-    name: r.name,
-    tickets: r.value,
-    fill: (SOURCE_META[r.name] || SOURCE_META.Other).color,
-  }));
-  return (
-    <div className="h-[168px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-          <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} />
-          <YAxis tick={{ fontSize: 11, fill: MUTED }} allowDecimals={false} width={36} />
-          <Tooltip
-            formatter={(v) => [Number(v).toLocaleString('en-IN'), 'Tickets']}
-            contentStyle={{ borderRadius: 12, border: `1px solid ${CARD_BORDER}`, fontSize: 12 }}
-          />
-          <Bar dataKey="tickets" name="Tickets" radius={[6, 6, 0, 0]} maxBarSize={36} isAnimationActive={false}>
-            {chartData.map((entry) => (
-              <Cell key={entry.name} fill={entry.fill} fillOpacity={0.85} />
-            ))}
-          </Bar>
-          <Line
-            type="monotone"
-            dataKey="tickets"
-            name="Trend"
-            stroke="#1e293b"
-            strokeWidth={2}
-            dot={{ r: 3.5, strokeWidth: 2, fill: '#fff', stroke: '#1e293b' }}
-            activeDot={{ r: 5 }}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function PortfolioBand({
-  title,
-  hint,
-  total,
-  open,
-  closed,
-  totalLabel = 'Total',
-  openLabel = 'In Progress',
-  closedLabel = 'Completed',
-}: {
-  title: string;
-  hint: string;
-  total: number;
-  open: number;
-  closed: number;
-  totalLabel?: string;
-  openLabel?: string;
-  closedLabel?: string;
-}) {
-  const cells = [
-    { label: totalLabel, value: total, tone: 'text-slate-900 bg-slate-50 border-slate-200' },
-    { label: openLabel, value: open, tone: 'text-amber-900 bg-amber-50 border-amber-200' },
-    { label: closedLabel, value: closed, tone: 'text-emerald-900 bg-emerald-50 border-emerald-200' },
-  ];
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3">
-        <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
-        {hint ? <p className="mt-0.5 text-[11px] text-slate-500">{hint}</p> : null}
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {cells.map((c) => (
-          <div key={c.label} className={`rounded-xl border px-3 py-3 text-center ${c.tone}`}>
-            <p className="text-xl font-bold tabular-nums">{c.value.toLocaleString('en-IN')}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide opacity-80">{c.label}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 type P2pDocRow = {
   key: string;
   title: string;
-  hint: string;
+  short: 'PO' | 'PR';
   total: number;
   open: number;
   closed: number;
   rejected: number;
-  amountTotal: number;
-  amountOpen: number;
 };
 
-function P2pDocBand({ row }: { row: P2pDocRow }) {
-  const amountClosed = Math.max(0, row.amountTotal - row.amountOpen);
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h4 className="text-sm font-semibold text-slate-900">{row.title}</h4>
-          {row.hint ? <p className="mt-0.5 text-[11px] text-slate-500">{row.hint}</p> : null}
-        </div>
-        <div className="rounded-xl bg-[#EEF3FF] px-3 py-2 text-right text-slate-800 ring-1 ring-[#D7E2EF]">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#5B7A9D]">Total value</p>
-          <p className="text-lg font-bold tabular-nums text-slate-900">{formatInr(row.amountTotal)}</p>
-          <p className="text-[10px] text-slate-500">{formatInrFull(row.amountTotal)}</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[
-          { label: 'Documents', value: row.total, tone: 'text-slate-900 bg-[#EAF3FF] border-[#D7E2EF]' },
-          { label: 'Open', value: row.open, tone: 'text-[#A96A20] bg-[#FFF3DF] border-[#F5E0C0]' },
-          { label: 'Closed', value: row.closed, tone: 'text-[#287B5D] bg-[#E8F7F0] border-[#CDEBD9]' },
-          { label: 'Rejected', value: row.rejected, tone: 'text-[#B24E66] bg-[#FCECEF] border-[#F0D4DB]' },
-        ].map((c) => (
-          <div key={c.label} className={`rounded-xl border px-3 py-3 text-center ${c.tone}`}>
-            <p className="text-xl font-bold tabular-nums">{c.value.toLocaleString('en-IN')}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide opacity-80">{c.label}</p>
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <div className="rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800">Open pipeline</p>
-          <p className="mt-0.5 text-base font-bold tabular-nums text-amber-950">{formatInr(row.amountOpen)}</p>
-        </div>
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-800">Closed / approved value</p>
-          <p className="mt-0.5 text-base font-bold tabular-nums text-emerald-950">{formatInr(amountClosed)}</p>
-        </div>
-      </div>
-    </div>
-  );
+function p2pDocShort(row: { key: string; title: string }): 'PO' | 'PR' {
+  const hay = `${row.key} ${row.title}`.toLowerCase();
+  if (hay.includes('purchase_order') || hay.includes('purchase order') || /\bpo\b/.test(hay)) return 'PO';
+  return 'PR';
 }
 
-function P2pDocStatusChart({ row }: { row: P2pDocRow }) {
-  const chart = [
-    { name: 'Open', value: row.open, color: OPEN_COLOR },
-    { name: 'Closed', value: row.closed, color: CLOSED_COLOR },
-    { name: 'Rejected', value: row.rejected, color: REJECTED_COLOR },
-  ].filter((entry) => entry.value > 0);
-
-  return (
-    <DashboardCard title={`${row.title} · status`}>
-      <div className="relative h-[220px]">
-        {chart.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-slate-400">No status data</div>
-        ) : (
-          <>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={chart} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={2}>
-                  {chart.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => Number(v).toLocaleString('en-IN')} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Total</p>
-              <p className="text-xl font-bold tabular-nums text-slate-900">{row.total.toLocaleString('en-IN')}</p>
-              <p className="text-[10px] font-medium text-slate-500">{formatInr(row.amountTotal)}</p>
-            </div>
-          </>
-        )}
-      </div>
-    </DashboardCard>
-  );
-}
-
-function P2pAmountKpiCard({
-  label,
-  value,
-  sub,
-  styleIndex = 0,
+function PmSection({
+  title,
+  hint,
+  cards,
+  appKind,
 }: {
-  label: string;
-  value: number;
-  sub?: string;
-  styleIndex?: number;
+  title: string;
+  hint?: string;
+  cards: Array<{
+    label: string;
+    value: number;
+    styleIndex: number;
+    active?: boolean;
+    onClick?: () => void;
+  }>;
+  appKind?: NeAppKind;
 }) {
-  const accents = ['#EEF3FA', '#FFF2E4', '#E8F7F1'] as const;
-  const texts = ['#1E3A5F', '#7A4A1A', '#1F5C45'] as const;
-  const muted = ['#5B7A9D', '#A96A20', '#287B5D'] as const;
-  const bg = accents[styleIndex % accents.length];
-  const text = texts[styleIndex % texts.length];
-  const mute = muted[styleIndex % muted.length];
   return (
-    <div
-      className="relative overflow-hidden rounded-2xl p-5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]"
-      style={{ background: bg }}
-    >
-      <div className="relative flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider" style={{ color: mute }}>
-            {label}
-          </p>
-          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums" style={{ color: text }}>
-            {formatInr(value)}
-          </p>
-          {sub ? (
-            <p className="mt-2 text-sm font-semibold" style={{ color: mute }}>
-              {sub}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/70 ring-1 ring-[#E6EBF2]">
-          <IndianRupee className="h-5 w-5" style={{ color: text }} />
-        </div>
+    <div className="space-y-2">
+      <div>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">{title}</p>
+        {hint ? <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p> : null}
+      </div>
+      <div className={NE_KPI_GRID_CLASS}>
+        {cards.map((card) => (
+          <KpiCard
+            key={card.label}
+            label={card.label}
+            value={displayDashCount(card.value)}
+            styleIndex={card.styleIndex}
+            embed
+            appKind={appKind}
+            iconContext={title}
+            active={card.active}
+            onClick={card.onClick}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
 export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, onRefreshingChange }: Props) {
-  const appId = app.appId || app.id;
+  const appId = resolveBackendApplicationId(app);
+  const appKind = resolveNeAppKind(appId, app?.displayName || app?.name);
+  const navigate = useNavigate();
+  const { id: routeAppId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const embedReturnTo = readEmbedReturnUrl(searchParams);
   const [entity, setEntity] = useState('all');
-  const [entityCatalog, setEntityCatalog] = useState<Array<{ id: string; label: string; count?: number }>>([]);
+  const [company, setCompany] = useState('all');
+  const [userFilter, setUserFilter] = useState('all');
   const [period, setPeriod] = useState<DatePresetId>('fy');
   const [calendarYear, setCalendarYear] = useState(() => currentIstYear());
-  const [calendarMonth, setCalendarMonth] = useState(() => {
-    try {
-      return Number(
-        new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', month: 'numeric' }).format(new Date()),
-      );
-    } catch {
-      return new Date().getMonth() + 1;
-    }
-  });
+  const [calendarMonth, setCalendarMonth] = useState(() => currentIstMonth());
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [kpiFocus, setKpiFocus] = useState<RecordKpiFocus | null>(null);
+  const [recordsStatus, setRecordsStatus] = useState('all');
+  const misSectionRef = useRef<HTMLDivElement>(null);
+  const refreshGenRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AppDashboardData | null>(null);
+  const [recordInventory, setRecordInventory] = useState<AppRecordRow[]>([]);
+  const [recordsColumns, setRecordsColumns] = useState<AppRecordColumn[]>([]);
+  const [recordsDataSource, setRecordsDataSource] = useState<string | undefined>();
+  const [fallbackAppUsers, setFallbackAppUsers] = useState<AppDashboardUser[]>([]);
 
   const resolvedDates = useMemo(
     () => resolveDateScope({ period, calendarYear, calendarMonth, dateFrom, dateTo }),
@@ -528,244 +462,519 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         return;
       }
 
-      const loadOpts = {
-        applicationId: appId,
-        environment: (app.environment as 'production' | 'development') || 'production',
-        entity,
-        processId: 'all',
-        resourceType: 'all',
-        resourceId: 'all',
-        period: resolvedDates.period,
-        dateFrom: resolvedDates.from || undefined,
-        dateTo: resolvedDates.to || undefined,
-      };
+      const gen = ++refreshGenRef.current;
+      const environment = (app.environment as 'production' | 'development') || 'production';
 
-      const queryKey = appDashboardQueryKey(loadOpts);
-
-      let hadCachedSnapshot = false;
-      if (!forceRefresh) {
-        const cached = readAppDashboardCache(appId, queryKey);
-        if (cached) {
-          hadCachedSnapshot = true;
-          setData(cached);
-          setLoading(false);
-          // Soft revalidate — keep KPIs visible under the center overlay.
-          setRefreshing(true);
-        } else {
-          // Drop previous filter's KPIs immediately so the UI never looks "stuck" on old data.
-          setData(null);
-          setLoading(true);
-        }
-      } else {
+      if (forceRefresh) {
         setRefreshing(true);
         onRefreshingChange?.(true);
+        setError('');
       }
 
-      setError(null);
       try {
-        if (forceRefresh) {
-          try {
-            const liveDash = await refreshApplicationDashboardLive({
-              applicationId: appId,
-              environment: loadOpts.environment,
-            });
-            // Paint unfiltered live immediately when filters are all/all/all.
-            if (
-              entity === 'all'
-              && period === 'all'
-              && liveDash
-            ) {
-              setData(liveDash);
+        const baseKey = appDashboardQueryKey({
+          environment,
+          period: 'all',
+        });
+        const painted = readAppDashboardCache(appId, baseKey, { allowStale: true })
+          ?? readAppDashboardCacheSoft(appId);
+        if (painted) {
+          setData(painted);
+          setLoading(false);
+        } else if (!forceRefresh) {
+          setLoading(true);
+        }
+
+        const isSolarApp = isSolarApplicationId(appId);
+        const isPmApp = /project_management|project_tracker/i.test(appId || '');
+        const cachedPmEmpty = Boolean(
+          isPmApp
+          && painted
+          && !(Number(painted?.portfolio?.tasks_total || 0) + Number(painted?.portfolio?.projects_total || 0)
+            + Number(painted?.portfolio?.subtasks_total || 0)),
+        );
+
+        let result;
+        try {
+          result = await loadApplicationDashboard({
+            applicationId: appId,
+            environment,
+            period: 'all',
+            skipCache: Boolean(forceRefresh),
+            preferCache: true,
+          });
+          if (forceRefresh && !isSolarApp) {
+            void refreshApplicationDashboardLive({ applicationId: appId, environment }).catch(() => undefined);
+          }
+        } catch (firstErr) {
+          if (isSolarApp) {
+            if (painted) {
+              result = { data: painted };
+            } else {
+              throw firstErr;
             }
-          } catch (liveErr) {
-            setError(liveErr instanceof Error ? liveErr.message : String(liveErr));
+          } else {
+            result = await loadApplicationDashboard({
+              applicationId: appId,
+              environment,
+              period: 'all',
+              skipCache: true,
+              preferCache: false,
+            }).catch(() => {
+              throw firstErr;
+            });
           }
         }
-        const result = await loadApplicationDashboard({
-          ...loadOpts,
-          skipCache: true,
-        });
-        if (result.data) setData(result.data);
-      } catch (err) {
-        if (!hadCachedSnapshot) {
-          setError(err instanceof Error ? err.message : String(err));
+        if (gen !== refreshGenRef.current) return;
+        let base = result.data;
+        const incomingPmEmpty = !Number(base?.portfolio?.tasks_total || 0)
+          && !Number(base?.portfolio?.projects_total || 0)
+          && !Number(base?.portfolio?.subtasks_total || 0);
+        if (isPmApp && incomingPmEmpty && (!painted || cachedPmEmpty)) {
+          const retry = await loadApplicationDashboard({
+            applicationId: appId,
+            environment,
+            period: 'all',
+            skipCache: true,
+            preferCache: false,
+          });
+          if (gen !== refreshGenRef.current) return;
+          if (retry.data) base = retry.data;
         }
-      } finally {
+
+        if (base) setData(base);
         setLoading(false);
         setRefreshing(false);
         onRefreshingChange?.(false);
+
+        if (!base?.app_users?.length) {
+          void loadApplicationAppUsers({ applicationId: appId, environment }).then((roster) => {
+            if (gen !== refreshGenRef.current) return;
+            setFallbackAppUsers(roster);
+          });
+        } else {
+          setFallbackAppUsers([]);
+        }
+      } catch (err) {
+        if (gen === refreshGenRef.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (gen === refreshGenRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+          onRefreshingChange?.(false);
+        }
       }
     },
-    [app.environment, appId, entity, onRefreshingChange, period, resolvedDates],
+    [app, appId, onRefreshingChange],
+  );
+
+  const loadInventory = useCallback(
+    async (forceRefresh = false) => {
+      if (!isBackendApiMode() || !appId) return;
+      const environment = (app.environment as 'production' | 'development') || 'production';
+      const inv = await loadApplicationRecordInventory({
+        applicationId: appId,
+        environment,
+        skipCache: forceRefresh && !isSolarApplicationId(appId),
+        forceLive: false,
+      });
+      if (inv.ok) {
+        setRecordInventory(inv.items);
+        setRecordsColumns(inv.columns);
+        setRecordsDataSource(inv.dataSource);
+      }
+    },
+    [app, appId],
   );
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void refresh(false);
+    void loadInventory(false);
+  }, [appId]); // eslint-disable-line react-hooks/exhaustive-deps -- load dashboard + inventory once per app
 
   useEffect(() => {
     if (!refreshNonce) return;
     void refresh(true);
-  }, [refreshNonce]); // eslint-disable-line react-hooks/exhaustive-deps -- only fire on header Refresh
-
-  const entityOptions = useMemo(() => {
-    const rows = data?.entities || [];
-    // Always keep the full catalog once seen, so selecting Refex never drops Extrovis (etc.).
-    const map = new Map<string, { id: string; label: string; count?: number }>();
-    for (const o of entityCatalog) map.set(o.id, o);
-    for (const e of rows) {
-      map.set(e.id, {
-        id: e.id,
-        label: e.label || e.id,
-        count: e.count,
-      });
-    }
-    if (entity !== 'all' && !map.has(entity)) {
-      map.set(entity, { id: entity, label: entity.replace(/_/g, ' '), count: 0 });
-    }
-    const merged = [{ id: 'all', label: 'All entities', count: 0 }, ...map.values()];
-    return merged;
-  }, [data?.entities, entity, entityCatalog]);
+    void loadInventory(true);
+  }, [refreshNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const rows = data?.entities || [];
-    if (!rows.length) return;
-    setEntityCatalog((prev) => {
-      const map = new Map(prev.map((e) => [e.id, e]));
-      for (const e of rows) {
-        const prevRow = map.get(e.id);
-        // Prefer larger inventory counts so a filtered response doesn't zero out siblings.
-        if (!prevRow || Number(e.count || 0) >= Number(prevRow.count || 0)) {
-          map.set(e.id, { id: e.id, label: e.label || e.id, count: e.count });
-        } else if (prevRow && !map.has(e.id)) {
-          map.set(e.id, prevRow);
-        }
-      }
-      return [...map.values()];
+    setKpiFocus(null);
+  }, [entity, company, userFilter, period, resolvedDates.from, resolvedDates.to]);
+
+  const handleEntityChange = useCallback(
+    (next: string) => {
+      setEntity(next);
+      setCompany('all');
+      setUserFilter('all');
+      setRecordsStatus('all');
+      setKpiFocus(null);
+    },
+    [],
+  );
+
+  const handleCompanyChange = useCallback((next: string) => {
+    setCompany(next);
+    setUserFilter('all');
+    setRecordsStatus('all');
+    setKpiFocus(null);
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setEntity('all');
+    setCompany('all');
+    setUserFilter('all');
+    setPeriod('fy');
+    setDateFrom('');
+    setDateTo('');
+    setRecordsStatus('all');
+    setKpiFocus(null);
+  }, []);
+
+  const itsmCompanyMode = Boolean(
+    data?.report_layout?.kind === 'itsm'
+    || /itsm|service_management/i.test(appId || ''),
+  );
+  const travelMode = Boolean(
+    data?.report_layout?.kind === 'travel'
+    || /travel|expense_and_travel/i.test(appId || ''),
+  );
+  const hasInventory = recordInventory.length > 0;
+  const dropdownFiltersActive = entity !== 'all' || company !== 'all' || userFilter !== 'all';
+  const periodFiltersKpis = period !== 'all';
+  const useClientKpis = hasInventory && (dropdownFiltersActive || periodFiltersKpis);
+  const useClientInventory = hasInventory;
+  const isPmLayout = data?.report_layout?.kind === 'pm'
+    || /project_management|project_tracker/i.test(appId || '');
+  const isP2pLayout = data?.report_layout?.kind === 'p2p'
+    || /procurement|p2p/i.test(appId || '');
+
+  const appRoster = useMemo(() => {
+    const fromPayload = mergeDashboardUsers(data?.app_users || []);
+    if (fromPayload.length) return fromPayload;
+    const fromMgmt = mergeDashboardUsers(fallbackAppUsers);
+    if (fromMgmt.length) return fromMgmt;
+    // Do not fall back to data.users — that list is ticket activity (often Extrovis-only).
+    return [];
+  }, [data?.app_users, fallbackAppUsers]);
+
+  const userRoster = useMemo(
+    () => mergeDashboardUsers([...(appRoster || []), ...(data?.users || [])]),
+    [appRoster, data?.users],
+  );
+
+  const stampedInventory = useMemo(
+    () => stampRecordsWithAssigneeCompany(recordInventory, userRoster, { itsmCompanyMode }),
+    [itsmCompanyMode, recordInventory, userRoster],
+  );
+
+  const assignedFilterName = useMemo(() => {
+    if (userFilter === 'all') return undefined;
+    const hit = userRoster.find((u) => {
+      const id = String(u.user_id || '').trim();
+      const name = String(u.user_name || '').trim();
+      return userFilter === id
+        || userFilter === name
+        || compactMisName(name) === userFilter
+        || compactMisName(name) === compactMisName(userFilter);
     });
-  }, [data?.entities]);
+    return hit?.user_name || userFilter;
+  }, [userFilter, userRoster]);
+
+  const assignedFilterId = useMemo(() => {
+    if (userFilter === 'all') return undefined;
+    const hit = userRoster.find((u) => {
+      const id = String(u.user_id || '').trim();
+      const name = String(u.user_name || '').trim();
+      return userFilter === id
+        || userFilter === name
+        || compactMisName(name) === userFilter;
+    });
+    return hit?.user_id || (looksLikeKissflowUserId(userFilter) ? userFilter : undefined);
+  }, [userFilter, userRoster]);
+
+  const activityDates = period === 'daily';
+
+  const periodScopedInventory = useMemo(() => {
+    if (!stampedInventory.length) return [] as AppRecordRow[];
+    return filterAppRecords(stampedInventory, {
+      dateFrom: resolvedDates.from,
+      dateTo: resolvedDates.to,
+      itsmCompanyMode,
+      travelMode,
+      activityDates,
+    });
+  }, [activityDates, itsmCompanyMode, resolvedDates.from, resolvedDates.to, stampedInventory, travelMode]);
+
+  const filterInventory = useMemo(() => {
+    if (!periodScopedInventory.length) return [] as AppRecordRow[];
+    return filterAppRecords(periodScopedInventory, {
+      entity,
+      itsmCompanyMode,
+      travelMode,
+    });
+  }, [entity, itsmCompanyMode, periodScopedInventory, travelMode]);
+
+  const scopeRecords = useMemo(() => {
+    if (!useClientInventory) return [] as AppRecordRow[];
+    return filterAppRecords(filterInventory, {
+      company,
+      itsmCompanyMode,
+      travelMode,
+    });
+  }, [company, filterInventory, itsmCompanyMode, travelMode, useClientInventory]);
+
+  const kpiRecords = useMemo(() => {
+    if (!useClientInventory) return [] as AppRecordRow[];
+    return filterAppRecords(scopeRecords, {
+      assigned: assignedFilterName,
+      assignedId: assignedFilterId,
+      itsmCompanyMode,
+    });
+  }, [
+    assignedFilterId,
+    assignedFilterName,
+    itsmCompanyMode,
+    scopeRecords,
+    useClientInventory,
+  ]);
+
+  const todayKind = kpiFocus === 'opened_today' ? 'opened' : kpiFocus === 'closed_today' ? 'closed' : undefined;
+
+  const scopedRecords = useMemo(() => {
+    if (!useClientInventory) return [] as AppRecordRow[];
+    if (recordsStatus === 'all' && !todayKind) return kpiRecords;
+    return filterAppRecords(kpiRecords, {
+      status: recordsStatus,
+      todayKind,
+    });
+  }, [kpiRecords, recordsStatus, todayKind, useClientInventory]);
+
+  const misOwnerMode = isP2pLayout ? 'assignee_or_requester' as const : 'assignee' as const;
+
+  const identityAssignees = useMemo(() => {
+    if (!itsmCompanyMode || !stampedInventory.length) return [] as AppDashboardUser[];
+    return buildMisUsersFromRecords(stampedInventory, userRoster, { ownerMode: misOwnerMode });
+  }, [itsmCompanyMode, misOwnerMode, stampedInventory, userRoster]);
+
+  const identityRoster = useMemo(
+    () => (itsmCompanyMode ? unionRosterWithTicketUsers(appRoster, identityAssignees) : appRoster),
+    [appRoster, identityAssignees, itsmCompanyMode],
+  );
+
+  const clientMisUsers = useMemo(() => {
+    if (!useClientInventory) {
+      return sortByClosedDesc(mergeRosterWithTicketCounts(identityRoster, data?.users || []));
+    }
+    const ticketUsers = buildMisUsersFromRecords(scopedRecords, userRoster, { ownerMode: misOwnerMode });
+    // Entity / Company / User filters: MIS must mirror scoped tickets — not the full APP_ROLE
+    // roster with zeros, and not drop assignees who are outside the roster.
+    if (dropdownFiltersActive) {
+      const scoped = ticketUsers.filter((u) => Number(u.total || 0) > 0);
+      return sortByClosedDesc(overlayRosterSignIn(scoped, userRoster));
+    }
+    const merged = mergeRosterWithTicketCounts(identityRoster, ticketUsers);
+    const focused = Boolean(kpiFocus && kpiFocus !== 'total');
+    const rows = focused
+      ? merged.filter((u) => Number(u.total || 0) > 0)
+      : merged;
+    return sortByClosedDesc(overlayRosterSignIn(rows, userRoster));
+  }, [
+    data?.users,
+    dropdownFiltersActive,
+    identityRoster,
+    kpiFocus,
+    misOwnerMode,
+    scopedRecords,
+    useClientInventory,
+    userRoster,
+  ]);
+
+  const workUsers = useMemo(
+    () => overlayRosterSignIn(identityRoster, userRoster),
+    [identityRoster, userRoster],
+  );
+
+  const userFilterOptions = useMemo(() => {
+    // Entity/Company/Period may narrow the list. Never rebuild from the User-filtered
+    // set — that dropped the selected id and the native <select> snapped back to All.
+    const scopedUsers = (entity !== 'all' || company !== 'all')
+      ? buildMisUsersFromRecords(scopeRecords, userRoster, { ownerMode: misOwnerMode })
+        .filter((u) => Number(u.total || 0) > 0)
+      : workUsers;
+    const options = scopedUsers
+      .filter((u) => {
+        const name = String(u.user_name || '').trim();
+        return isUsableUserFilterLabel(name, u.user_id);
+      })
+      .map((u) => ({
+        id: String(u.user_id || '').trim() || compactMisName(u.user_name) || String(u.user_name),
+        label: u.user_name || String(u.user_id),
+        email: String(u.email || '').trim().toLowerCase(),
+      }));
+    const deduped = new Map<string, { id: string; label: string }>();
+    for (const o of options) {
+      const key = o.email.includes('@')
+        ? `email:${o.email}`
+        : (o.id ? `id:${o.id.toLowerCase()}` : `name:${o.label.trim().toLowerCase()}`);
+      if (!deduped.has(key)) deduped.set(key, { id: o.id, label: o.label });
+    }
+    const unique = [...deduped.values()];
+    return ensureFilterOption(
+      [
+        { id: 'all', label: unique.length ? `All Users (${unique.length})` : 'All Users' },
+        ...unique,
+      ],
+      userFilter,
+      assignedFilterName,
+    );
+  }, [assignedFilterName, company, entity, misOwnerMode, scopeRecords, userFilter, userRoster, workUsers]);
+
+  useEffect(() => {
+    if (userFilter === 'all') return;
+    const valid = userFilterOptions.some((o) => filterOptionMatches(o, userFilter));
+    if (!valid) setUserFilter('all');
+  }, [userFilter, userFilterOptions]);
+
+  const displayedMisUsers = useMemo(() => {
+    let rows = clientMisUsers;
+    if (userFilter !== 'all') rows = rows.filter((u) => userMatchesFilter(u, userFilter));
+    return rows;
+  }, [clientMisUsers, userFilter]);
+
+  const entityOptions = useMemo(() => {
+    // Always keep Refex/Extrovis (or Venwind) in the list, even at count 0, so the
+    // native select cannot snap back to All when a period has no rows for one entity.
+    const source = periodScopedInventory.length ? periodScopedInventory : recordInventory;
+    const mode = travelMode ? 'refex_venwind' : itsmCompanyMode ? 'refex_extrovis' : 'all_buckets';
+    const rows = entityCountsFromRecords(source, { itsmCompanyMode, travelMode });
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.id] = r.count;
+    return ensureFilterOption(
+      buildEntityBucketOptions(counts, { mode, allLabel: 'All entities' }),
+      entity,
+    );
+  }, [entity, itsmCompanyMode, periodScopedInventory, recordInventory, travelMode]);
+
+  const companyOptions = useMemo(() => {
+    const source = filterInventory.length ? filterInventory : stampedInventory;
+    const rows = companyCountsFromRecords(source, { itsmCompanyMode, entity });
+    if (itsmCompanyMode) {
+      const counts: Record<string, number> = {};
+      for (const r of rows) counts[r.id] = r.count;
+      const catalog = buildRefexCompanyOptions(counts, {
+        includeAll: true,
+        allLabel: 'All companies',
+        entity,
+      });
+      const extras = rows.filter(
+        (r) => String(r.id).startsWith('raw:') && !catalog.some((c) => c.id === r.id),
+      );
+      return sortCompanyFilterOptions(ensureFilterOption([...catalog, ...extras], company));
+    }
+    return sortCompanyFilterOptions(ensureFilterOption(
+      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      company,
+    ));
+  }, [company, entity, filterInventory, itsmCompanyMode, stampedInventory]);
 
   const openVal = Number(data?.metrics.open ?? data?.metrics.pending ?? 0);
   const closedVal = Number(data?.metrics.closed ?? data?.metrics.completed ?? 0);
   const rejectedVal = Number(data?.metrics.rejected || 0);
+
+  const clientKpis = useMemo(() => {
+    if (useClientKpis) return summarizeAppRecords(kpiRecords);
+    if (userFilter !== 'all' && displayedMisUsers.length) return sumUserKpis(displayedMisUsers);
+    return { total: Number(data?.metrics.total ?? 0), open: openVal, closed: closedVal, rejected: rejectedVal };
+  }, [closedVal, data?.metrics.total, displayedMisUsers, kpiRecords, openVal, rejectedVal, useClientKpis, userFilter]);
+
+  const kpiTotal = clientKpis.total;
+  const kpiOpen = clientKpis.open;
+  const kpiClosed = clientKpis.closed;
+  const kpiRejected = clientKpis.rejected;
+
+  const showCompanyFilter = !itsmCompanyMode || entity === 'refex' || entity === 'all';
+  // Extrovis entity has no legal-entity companies in the 29-list — hide Company until Refex/All.
+
   const adoptionOverall = Number(data?.metrics.sign_in_rate_overall ?? data?.metrics.user_adoption_pct ?? 0);
   const adoptionToday = Number(data?.metrics.sign_in_rate_today || 0);
-  const isPmLayout = data?.report_layout?.kind === 'pm';
-  const isP2pLayout = data?.report_layout?.kind === 'p2p';
-  const portfolio = data?.portfolio;
+  const usersCardCount = workUsers.length || Number(data?.metrics.total_users || 0);
 
   const p2pDocRows = useMemo((): P2pDocRow[] => {
     if (!isP2pLayout) return [];
-    return (data?.by_process || []).map((row) => ({
-      key: String(row.process_id || row.process_name || row.process_label),
-      title: String(row.process_label || row.process_name || row.process_id),
-      hint: embed
-        ? ''
-        : row.process_id === 'purchase_requests'
-          ? 'Purchase requisitions · total_amount'
-          : row.process_id === 'purchase_orders'
-            ? 'Purchase orders · grand_total'
-            : 'Procurement documents',
-      total: Number(row.total || 0),
-      open: Number(row.open_count ?? row.pending ?? row.open ?? 0),
-      closed: Number(row.closed ?? row.completed ?? 0),
-      rejected: Number(row.rejected || 0),
-      amountTotal: Number((row as { amount_total?: number }).amount_total || 0),
-      amountOpen: Number((row as { amount_open?: number }).amount_open || 0),
-    }));
-  }, [data?.by_process, isP2pLayout, embed]);
+    if (useClientKpis && kpiRecords.length) {
+      const buckets: Record<'PO' | 'PR', P2pDocRow> = {
+        PO: { key: 'purchase_orders', title: 'Purchase Order', short: 'PO', total: 0, open: 0, closed: 0, rejected: 0 },
+        PR: { key: 'purchase_requests', title: 'Purchase Requisition', short: 'PR', total: 0, open: 0, closed: 0, rejected: 0 },
+      };
+      for (const r of kpiRecords) {
+        const short = p2pDocShort({ key: String(r.process_id || ''), title: String(r.subject || '') });
+        const b = buckets[short];
+        b.total += 1;
+        const s = String(r.status || '').toLowerCase();
+        if (s === 'closed') b.closed += 1;
+        else if (s === 'rejected') b.rejected += 1;
+        else b.open += 1;
+      }
+      return [buckets.PO, buckets.PR];
+    }
+    const rows = (data?.by_process || []).map((row) => {
+      const key = String(row.process_id || row.process_name || row.process_label);
+      const title = String(row.process_label || row.process_name || row.process_id);
+      return {
+        key,
+        title,
+        short: p2pDocShort({ key, title }),
+        total: displayDashCount(row.total),
+        open: displayDashCount(row.open_count ?? row.pending),
+        closed: displayDashCount(row.closed ?? row.completed),
+        rejected: displayDashCount(row.rejected),
+      };
+    });
+    if (!rows.length) {
+      return [
+        { key: 'purchase_orders', title: 'Purchase Order', short: 'PO' as const, total: 0, open: 0, closed: 0, rejected: 0 },
+        { key: 'purchase_requests', title: 'Purchase Requisition', short: 'PR' as const, total: 0, open: 0, closed: 0, rejected: 0 },
+      ];
+    }
+    return [...rows].sort((a, b) => Number(a.short === 'PR') - Number(b.short === 'PR'));
+  }, [data?.by_process, isP2pLayout, kpiRecords, useClientKpis]);
 
-  const p2pAmountTotal = Number(data?.metrics.amount_total ?? data?.amounts?.total ?? 0);
-  const p2pAmountOpen = Number(data?.metrics.amount_open ?? data?.amounts?.open ?? 0);
-  const p2pAmountClosed = Math.max(0, p2pAmountTotal - p2pAmountOpen);
-
-  const statusChart = useMemo(() => {
-    if (!data) return [];
-    return [
-      { name: 'Open', value: openVal, color: OPEN_COLOR },
-      { name: 'Closed', value: closedVal, color: CLOSED_COLOR },
-      { name: 'Rejected', value: rejectedVal, color: REJECTED_COLOR },
-    ].filter((row) => row.value > 0);
-  }, [data, openVal, closedVal, rejectedVal]);
-
-  const entityRows = useMemo(() => {
-    const raw = data?.by_entity?.length
-      ? data.by_entity
-      : (data?.by_process || []).map((row) => ({
-          entity_id: row.process_id,
-          entity_label: row.process_label || row.process_name || row.process_id,
-          total: row.total,
-          open: Number(row.open_count ?? row.pending ?? 0),
-          closed: Number(row.closed ?? row.completed ?? 0),
-          rejected: Number(row.rejected || 0),
-        }));
-    return sortByClosureRatio(raw);
-  }, [data?.by_entity, data?.by_process]);
-
-  const entityChart = useMemo(
-    () =>
-      entityRows.map((row) => ({
-        name: String(row.entity_label || row.entity_id).slice(0, 14),
-        fullName: row.entity_label || row.entity_id,
-        open: Number(row.open || 0),
-        closed: Number(row.closed || 0),
-        rejected: Number(row.rejected || 0),
-      })),
-    [entityRows],
-  );
-
-  const misUsers = useMemo(() => sortByClosedDesc(data?.users || []), [data?.users]);
-  const isSolarLayout = data?.report_layout?.kind === 'solar'
-    || /solar|reinvestment|site_expense/i.test(appId || '');
-  const showEntityFilter = data?.filters?.supports_entity_filter !== false && !isSolarLayout;
+  const handleKpiClick = useCallback((focus: RecordKpiFocus) => {
+    setKpiFocus((prev) => {
+      const next = prev === focus ? null : focus;
+      if (!next || next === 'total' || next === 'opened_today' || next === 'closed_today') {
+        setRecordsStatus('all');
+      } else {
+        setRecordsStatus(next);
+      }
+      return next;
+    });
+    window.requestAnimationFrame(() => {
+      misSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
 
   const kpiLabels = data?.report_layout?.kpi_labels;
   const totalLabel = kpiLabels?.total || 'Total items';
   const openLabel = kpiLabels?.open || 'Open';
   const closedLabel = kpiLabels?.closed || 'Closed';
   const rejectedLabel = kpiLabels?.rejected || 'Rejected';
-
-  const sourceRows = useMemo(
-    () =>
-      (data?.by_source || []).map((row) => ({
-        name: row.name,
-        value: row.count,
-      })),
-    [data?.by_source],
+  const todayActivity = useMemo(
+    () => countTodayActivity(useClientInventory ? kpiRecords : recordInventory, istTodayYmd()),
+    [kpiRecords, recordInventory, useClientInventory],
   );
-
-  const sourceTotal = useMemo(() => sourceRows.reduce((s, r) => s + r.value, 0), [sourceRows]);
-  const isItsmLayout = data?.report_layout?.kind === 'itsm' || sourceRows.length > 0;
-
-  const categoryChart = useMemo(
-    () =>
-      (data?.by_category || []).map((row) => ({
-        name: row.name,
-        value: row.count,
-        color: CATEGORY_COLORS[row.name] || '#0ea5e9',
-      })),
-    [data?.by_category],
-  );
-
-  const processChart = useMemo(
-    () =>
-      (data?.by_process || [])
-        .filter((row) => Number(row.total || 0) > 0 || String(row.process_id || '').includes('Advance_Payment') || String(row.process_id || '').includes('Expense_Management') || String(row.process_id || '').includes('Travel_Management'))
-        .map((row) => ({
-          name: String(row.process_label || row.process_name || row.process_id).slice(0, 18),
-          fullName: row.process_label || row.process_name || row.process_id,
-          open: Number(row.open_count ?? row.pending ?? 0),
-          closed: Number(row.closed ?? row.completed ?? 0),
-          rejected: Number(row.rejected || 0),
-          total: Number(row.total || 0),
-        })),
-    [data?.by_process],
-  );
-
-  const isTravelLayout = Boolean(
-    processChart.length > 0
-      && (appId.includes('Expense_and_Travel') || data?.by_process?.some((p) => String(p.process_id).includes('Travel_Management') || String(p.process_id).includes('Advance_Payment'))),
-  );
+  const pmPortfolio = useMemo(() => {
+    if (!isPmLayout) return data?.portfolio;
+    const api = data?.portfolio;
+    if (!useClientKpis) return api;
+    const counted = countPmPortfolio(kpiRecords);
+    const countedSpan = counted.tasks_total + counted.subtasks_total;
+    if (countedSpan > 0) return counted;
+    return api;
+  }, [data?.portfolio, isPmLayout, kpiRecords, useClientKpis]);
 
   if (!isBackendApiMode()) {
     return (
@@ -775,58 +984,87 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     );
   }
 
-  const isP2pApp =
-    /procurement|p2p/i.test(appId || '')
-    || /procurement/i.test(app.applicationName || app.name || '');
+  const showEntityFilter = true;
+  const showCompanyDropdown = showCompanyFilter && entity !== 'extrovis';
+
+  const filterBar = (
+    <ExecutiveDateFilterBar
+      period={period}
+      onPeriodChange={setPeriod}
+      calendarYear={calendarYear}
+      onCalendarYearChange={setCalendarYear}
+      calendarMonth={calendarMonth}
+      onCalendarMonthChange={setCalendarMonth}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onDateFromChange={setDateFrom}
+      onDateToChange={setDateTo}
+      entity={entity}
+      onEntityChange={showEntityFilter ? handleEntityChange : undefined}
+      entityOptions={showEntityFilter ? entityOptions : undefined}
+      entityLabel="Entity"
+      company={company}
+      onCompanyChange={showCompanyDropdown ? handleCompanyChange : undefined}
+      companyOptions={showCompanyDropdown ? companyOptions : undefined}
+      companyLabel="Company"
+      user={userFilter}
+      onUserChange={setUserFilter}
+      userOptions={userFilterOptions}
+      onClearFilters={clearFilters}
+      embedLayout
+      refreshing={refreshing}
+      hideHints
+    />
+  );
+
+  const embedHeroActions = (
+    <>
+      <button
+        type="button"
+        onClick={() => navigate(buildEmbedDashboardPath(routeAppId || app.id, embedReturnTo, searchParams), { replace: true })}
+        className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#EAF2FF] px-3 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
+      >
+        <LayoutDashboard className="h-3.5 w-3.5" />
+        Full Engagement report
+      </button>
+      <button
+        type="button"
+        onClick={() => void refresh(true)}
+        disabled={refreshing}
+        className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#D0E0F5] bg-white px-3 text-xs font-semibold text-[#3977BE] hover:bg-[#F8FBFF] disabled:opacity-60"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+        Refresh dashboard
+      </button>
+    </>
+  );
 
   return (
-    <div className="relative rounded-3xl bg-gradient-to-br from-slate-50 via-white to-sky-50/40 p-1">
+    <div className="relative rounded-3xl p-1">
       <DashboardLoadingOverlay
-        show={(loading && !data) || refreshing}
+        show={(loading && !data) || (refreshing && !(isSolarApplicationId(appId) && data))}
         mode="fixed"
-        label={refreshing ? 'Refreshing live metrics…' : 'Loading dashboard…'}
+        label={refreshing ? 'Updating dashboard…' : 'Loading dashboard…'}
       />
       <div className="space-y-4">
-        <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] sm:p-4">
-          <ExecutiveDateFilterBar
-            period={period}
-            onPeriodChange={setPeriod}
-            calendarYear={calendarYear}
-            onCalendarYearChange={setCalendarYear}
-            calendarMonth={calendarMonth}
-            onCalendarMonthChange={setCalendarMonth}
-            dateFrom={dateFrom}
-            dateTo={dateTo}
-            onDateFromChange={setDateFrom}
-            onDateToChange={setDateTo}
-            entity={entity}
-            onEntityChange={showEntityFilter ? setEntity : undefined}
-            entityOptions={showEntityFilter ? entityOptions : undefined}
-            refreshing={refreshing}
-            hideHints={embed}
-          />
-          {(entity !== 'all' || period !== 'fy' || dateFrom || dateTo) && (
-            <div className="mt-3 flex justify-end">
+        <EmbedDashboardHero
+          actions={
+            embed ? (
+              embedHeroActions
+            ) : (
               <button
                 type="button"
-                onClick={() => {
-                  setEntity('all');
-                  setPeriod('fy');
-                  setDateFrom('');
-                  setDateTo('');
-                }}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-700"
+                onClick={() => void refresh(true)}
+                disabled={refreshing}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#D0E0F5] bg-white px-3 text-xs font-semibold text-[#3977BE] hover:bg-[#F8FBFF] disabled:opacity-60"
               >
-                Clear filters
+                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh dashboard
               </button>
-            </div>
-          )}
-        </div>
-        {data?.snapshot_at && !embed ? (
-          <p className="text-xs text-slate-500">
-            Last synced {formatWhen(data.snapshot_at)}
-          </p>
-        ) : null}
+            )
+          }
+          filters={filterBar}
+        />
 
         {error && (
           <div className="flex gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -838,480 +1076,276 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
           </div>
         )}
 
-        {loading && !data ? (
-          <div className="min-h-[240px]" />
-        ) : null}
-
         {data && (
           <>
-            <div
-              className={`grid grid-cols-2 gap-3 md:grid-cols-4 ${
-                !isPmLayout && !isP2pLayout && Number(data.metrics.projects || 0) > 0 ? 'xl:grid-cols-5' : ''
-              }`}
-            >
-              <KpiCard label={isPmLayout ? 'All work items' : totalLabel} value={data.metrics.total} styleIndex={0} />
-              <KpiCard label={openLabel} value={openVal} styleIndex={1} />
-              <KpiCard label={closedLabel} value={closedVal} styleIndex={2} />
-              <KpiCard label={rejectedLabel} value={rejectedVal} styleIndex={3} />
-              {!isPmLayout && !isP2pLayout && Number(data.metrics.projects || 0) > 0 ? (
+            {isPmLayout ? (
+              <div className="space-y-5">
+                <PmSection
+                  appKind={appKind}
+                  title="Today's task activity"
+                  cards={[
+                    {
+                      label: 'Opened today',
+                      value: todayActivity.opened,
+                      styleIndex: 0,
+                      active: kpiFocus === 'opened_today',
+                      onClick: () => handleKpiClick('opened_today'),
+                    },
+                    {
+                      label: 'Closed today',
+                      value: todayActivity.closed,
+                      styleIndex: 2,
+                      active: kpiFocus === 'closed_today',
+                      onClick: () => handleKpiClick('closed_today'),
+                    },
+                  ]}
+                />
+                <PmSection
+                  appKind={appKind}
+                  title="Projects"
+                  hint="In Progress = at least one pending task · Completed = all linked tasks done"
+                  cards={[
+                    { label: 'Total projects', value: displayDashCount(pmPortfolio?.projects_total), styleIndex: 0 },
+                    { label: 'In progress', value: displayDashCount(pmPortfolio?.projects_open), styleIndex: 1 },
+                    { label: 'Completed projects', value: displayDashCount(pmPortfolio?.projects_closed), styleIndex: 2 },
+                  ]}
+                />
+                <PmSection
+                  appKind={appKind}
+                  title="All tasks"
+                  hint="Every task on Project Task process (linked to a project or not)"
+                  cards={[
+                    { label: 'Total tasks', value: displayDashCount(pmPortfolio?.tasks_total), styleIndex: 0 },
+                    { label: 'In progress', value: displayDashCount(pmPortfolio?.tasks_open), styleIndex: 1 },
+                    { label: 'Completed', value: displayDashCount(pmPortfolio?.tasks_closed), styleIndex: 2 },
+                  ]}
+                />
+                <PmSection
+                  appKind={appKind}
+                  title="Individual tasks"
+                  hint="Tasks with no linked Project ID — stand-alone work"
+                  cards={[
+                    { label: 'Total individual', value: displayDashCount(pmPortfolio?.individual_total), styleIndex: 0 },
+                    { label: 'In progress', value: displayDashCount(pmPortfolio?.individual_open), styleIndex: 1 },
+                    { label: 'Completed', value: displayDashCount(pmPortfolio?.individual_closed), styleIndex: 2 },
+                  ]}
+                />
+                <PmSection
+                  appKind={appKind}
+                  title="Sub-tasks"
+                  hint="Child work under a parent task (Sub Task process)"
+                  cards={[
+                    { label: 'Total sub-tasks', value: displayDashCount(pmPortfolio?.subtasks_total), styleIndex: 0 },
+                    { label: 'In progress', value: displayDashCount(pmPortfolio?.subtasks_open), styleIndex: 1 },
+                    { label: 'Completed', value: displayDashCount(pmPortfolio?.subtasks_closed), styleIndex: 2 },
+                  ]}
+                />
+              </div>
+            ) : isP2pLayout ? (
+              <div className="space-y-5">
+                <PmSection
+                  appKind={appKind}
+                  title="Today"
+                  cards={[
+                    {
+                      label: 'Opened today',
+                      value: todayActivity.opened,
+                      styleIndex: 0,
+                      active: kpiFocus === 'opened_today',
+                      onClick: () => handleKpiClick('opened_today'),
+                    },
+                    {
+                      label: 'Closed today',
+                      value: todayActivity.closed,
+                      styleIndex: 2,
+                      active: kpiFocus === 'closed_today',
+                      onClick: () => handleKpiClick('closed_today'),
+                    },
+                  ]}
+                />
+                {p2pDocRows.map((row) => (
+                  <PmSection
+                    appKind={appKind}
+                    key={row.key}
+                    title={row.short === 'PO' ? 'Purchase orders' : 'Purchase requisitions'}
+                    hint={row.short === 'PO' ? 'Approved and in-flight purchase orders' : 'Purchase requisitions waiting or completed'}
+                    cards={[
+                      { label: `Total ${row.short}s`, value: row.total, styleIndex: 0 },
+                      {
+                        label: `Open ${row.short}s`,
+                        value: row.open,
+                        styleIndex: 1,
+                        active: kpiFocus === 'open',
+                        onClick: () => handleKpiClick('open'),
+                      },
+                      {
+                        label: `Closed ${row.short}s`,
+                        value: row.closed,
+                        styleIndex: 2,
+                        active: kpiFocus === 'closed',
+                        onClick: () => handleKpiClick('closed'),
+                      },
+                      {
+                        label: `Rejected ${row.short}s`,
+                        value: row.rejected,
+                        styleIndex: 3,
+                        active: kpiFocus === 'rejected',
+                        onClick: () => handleKpiClick('rejected'),
+                      },
+                    ]}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className={NE_KPI_GRID_CLASS}>
                 <KpiCard
-                  label="Projects"
-                  value={Number(data.metrics.projects)}
+                  label={totalLabel}
+                  value={displayDashCount(kpiTotal)}
                   styleIndex={0}
-                  sub={embed ? undefined : 'Distinct Project_ID'}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'total'}
+                  onClick={() => handleKpiClick('total')}
                 />
-              ) : null}
-            </div>
-
-            {isP2pLayout ? (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <P2pAmountKpiCard
-                  label="Total PR + PO value"
-                  value={p2pAmountTotal}
-                  sub={embed ? undefined : formatInrFull(p2pAmountTotal)}
-                  styleIndex={0}
-                />
-                <P2pAmountKpiCard
-                  label="Open pipeline value"
-                  value={p2pAmountOpen}
-                  sub={embed ? undefined : `${openVal.toLocaleString('en-IN')} open documents`}
+                <KpiCard
+                  label={openLabel}
+                  value={displayDashCount(kpiOpen)}
                   styleIndex={1}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'open'}
+                  onClick={() => handleKpiClick('open')}
                 />
-                <P2pAmountKpiCard
-                  label="Closed / approved value"
-                  value={p2pAmountClosed}
-                  sub={embed ? undefined : `${closedVal.toLocaleString('en-IN')} closed documents`}
+                <KpiCard
+                  label={closedLabel}
+                  value={displayDashCount(kpiClosed)}
                   styleIndex={2}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'closed'}
+                  onClick={() => handleKpiClick('closed')}
+                />
+                <KpiCard
+                  label={rejectedLabel}
+                  value={displayDashCount(kpiRejected)}
+                  styleIndex={3}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'rejected'}
+                  onClick={() => handleKpiClick('rejected')}
+                />
+                <KpiCard
+                  label="Opened today"
+                  value={displayDashCount(todayActivity.opened)}
+                  styleIndex={0}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'opened_today'}
+                  onClick={() => handleKpiClick('opened_today')}
+                />
+                <KpiCard
+                  label="Closed today"
+                  value={displayDashCount(todayActivity.closed)}
+                  styleIndex={2}
+                  embed
+                  appKind={appKind}
+                  active={kpiFocus === 'closed_today'}
+                  onClick={() => handleKpiClick('closed_today')}
                 />
               </div>
-            ) : null}
+            )}
 
-            {isP2pLayout && p2pDocRows.length > 0 ? (
-              <div className="space-y-3">
-                {!embed ? (
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <IndianRupee className="h-3.5 w-3.5 text-emerald-600" />
-                    PR & PO breakdown · counts and INR value
-                  </div>
-                ) : null}
-                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                  {p2pDocRows.map((row) => (
-                    <P2pDocBand key={row.key} row={row} />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {isPmLayout && portfolio ? (
-              <div className="space-y-3">
-                {!embed ? (
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    <FolderKanban className="h-3.5 w-3.5 text-violet-600" />
-                    Portfolio breakdown · matches scheduled PM email report
-                  </div>
-                ) : null}
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <PortfolioBand
-                    title="Projects"
-                    hint={embed ? '' : 'In Progress = at least one pending task · Completed = all linked tasks done'}
-                    total={portfolio.projects_total}
-                    open={portfolio.projects_open}
-                    closed={portfolio.projects_closed}
-                    totalLabel="Total Projects"
-                  />
-                  <PortfolioBand
-                    title="All Tasks"
-                    hint={embed ? '' : 'Every task on Project Task process (linked to a project or not)'}
-                    total={portfolio.tasks_total}
-                    open={portfolio.tasks_open}
-                    closed={portfolio.tasks_closed}
-                    totalLabel="Total Tasks"
-                  />
-                  <PortfolioBand
-                    title="Individual Tasks"
-                    hint={embed ? '' : 'Tasks with no linked Project ID — stand-alone work'}
-                    total={portfolio.individual_total}
-                    open={portfolio.individual_open}
-                    closed={portfolio.individual_closed}
-                    totalLabel="Total Individual"
-                  />
-                  <PortfolioBand
-                    title="Sub-tasks"
-                    hint={embed ? '' : 'Child work under a parent task (Sub Task process)'}
-                    total={portfolio.subtasks_total}
-                    open={portfolio.subtasks_open}
-                    closed={portfolio.subtasks_closed}
-                    totalLabel="Total Sub-tasks"
-                  />
-                </div>
-                {!embed ? (
-                  <p className="text-[11px] text-slate-500">
-                    Project-linked tasks: <strong>{portfolio.linked_tasks.toLocaleString('en-IN')}</strong>
-                    {' · '}
-                    Individual: <strong>{portfolio.individual_total.toLocaleString('en-IN')}</strong>
-                    {' · '}
-                    Sub-tasks: <strong>{portfolio.subtasks_total.toLocaleString('en-IN')}</strong>
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-              <div className="relative col-span-2 overflow-hidden rounded-2xl bg-[#F0EDFF] px-4 py-4 text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E0D9F5]">
-                <div className="pointer-events-none absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/15" />
-                <div className="relative">
-                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#5B4B9A]">
+            <div className={NE_KPI_GRID_CLASS}>
+              {!isP2pLayout ? (
+                <EmbedKpiCard
+                  label="Adoption · overall"
+                  value={adoptionOverall}
+                  suffix="%"
+                  sub="Ever signed in ÷ app users"
+                  themes={[EMBED_ADOPTION_THEME]}
+                  styleIndex={0}
+                />
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                     <Percent className="h-3.5 w-3.5" />
-                    {isP2pLayout ? 'Users · P2P app' : 'Adoption · overall'}
+                    Users · P2P app
                   </div>
-                  <p className="mt-2 text-4xl font-bold tabular-nums leading-none text-slate-900">
-                    {isP2pLayout
-                      ? Number(data.metrics.total_users || 0).toLocaleString('en-IN')
-                      : `${adoptionOverall}%`}
+                  <p className="mt-2 text-[28px] font-bold tabular-nums leading-none text-slate-900">
+                    {usersCardCount.toLocaleString('en-IN')}
                   </p>
-                  {!embed ? (
-                    <p className="mt-2 text-sm text-slate-500">
-                      {isP2pLayout
-                        ? `${Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')} signed in today`
-                        : 'Ever signed in ÷ app users (not today-only)'}
-                    </p>
-                  ) : null}
                 </div>
-              </div>
-              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+              )}
+              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   <Users className="h-3.5 w-3.5 text-sky-600" />
                   Users
                 </div>
-                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
-                  {Number(data.metrics.total_users || 0).toLocaleString('en-IN')}
+                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
+                  {usersCardCount.toLocaleString('en-IN')}
                 </div>
               </div>
-              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
                   Signed in today
                 </div>
-                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
                   {Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')}
                 </div>
               </div>
-              <div className="rounded-2xl bg-white px-4 py-3 shadow-sm" style={{ border: `1px solid ${CARD_BORDER}` }}>
+              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   <Sparkles className="h-3.5 w-3.5 text-violet-600" />
                   Adoption today
                 </div>
-                <div className="mt-1 text-xl font-bold tabular-nums text-slate-900">
+                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
                   {adoptionToday}%
                 </div>
-                {!embed ? (
-                  <p className="mt-0.5 text-[10px] text-slate-400">Today only · not affected by date filter</p>
-                ) : null}
               </div>
             </div>
 
-            {!embed && data.report_layout?.note ? (
-              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                {data.report_layout.note}
-              </p>
-            ) : null}
-
-            {!embed && data.board_filter_note ? (
-              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                {data.board_filter_note}
-              </p>
-            ) : null}
-
-            <div className={`grid grid-cols-1 gap-4 ${isItsmLayout || isP2pLayout ? 'xl:grid-cols-12' : 'lg:grid-cols-3'}`}>
-              <DashboardCard
-                title={isSolarLayout ? 'By category · Operation / Finance' : isP2pLayout ? 'By entity · PR + PO' : 'By entity'}
-                className={isItsmLayout || isP2pLayout ? 'xl:col-span-7' : 'lg:col-span-2'}
-              >
-                <div className="h-[220px]">
-                  {entityChart.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-sm text-slate-400">No entity data</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={entityChart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="18%">
-                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-                        <XAxis dataKey="name" tick={{ fontSize: 10, fill: MUTED }} interval={0} />
-                        <YAxis tick={{ fontSize: 10, fill: MUTED }} allowDecimals={false} width={32} />
-                        <Tooltip />
-                        <Bar dataKey="open" name="Open" fill={OPEN_COLOR} radius={[3, 3, 0, 0]} />
-                        <Bar dataKey="closed" name="Closed" fill={CLOSED_COLOR} radius={[3, 3, 0, 0]} />
-                        <Bar dataKey="rejected" name="Rejected" fill={REJECTED_COLOR} radius={[3, 3, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </DashboardCard>
-
-              <DashboardCard
-                title={isP2pLayout ? 'Combined status · PR + PO' : 'Status split'}
-                className={isItsmLayout || isP2pLayout ? 'xl:col-span-5' : undefined}
-              >
-                <div className="relative h-[220px]">
-                  {statusChart.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-sm text-slate-400">No status data</div>
-                  ) : (
-                    <>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={statusChart}
-                            dataKey="value"
-                            nameKey="name"
-                            innerRadius={52}
-                            outerRadius={78}
-                            paddingAngle={2}
-                          >
-                            {statusChart.map((entry) => (
-                              <Cell key={entry.name} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip formatter={(v) => Number(v).toLocaleString('en-IN')} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Total</p>
-                        <p className="text-xl font-bold tabular-nums text-slate-900">
-                          {data.metrics.total.toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </DashboardCard>
-            </div>
-
-            {isP2pLayout && p2pDocRows.length > 0 ? (
-              <DashboardCard title="PR vs PO · document count & value">
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={p2pDocRows.map((row) => ({
-                        name: row.title.replace('Purchase ', ''),
-                        total: row.total,
-                        open: row.open,
-                        closed: row.closed,
-                        amount: row.amountTotal,
-                      }))}
-                      margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                      barCategoryGap="22%"
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} />
-                      <YAxis yAxisId="count" tick={{ fontSize: 11, fill: MUTED }} allowDecimals={false} width={36} />
-                      <Tooltip
-                        formatter={(value, name) => {
-                          if (name === 'amount') return [formatInrFull(Number(value)), 'Total value'];
-                          return [Number(value).toLocaleString('en-IN'), String(name)];
-                        }}
-                      />
-                      <Bar yAxisId="count" dataKey="total" name="Total docs" fill="#334155" radius={[4, 4, 0, 0]} />
-                      <Bar yAxisId="count" dataKey="open" name="Open" fill={OPEN_COLOR} radius={[4, 4, 0, 0]} />
-                      <Bar yAxisId="count" dataKey="closed" name="Closed" fill={CLOSED_COLOR} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {p2pDocRows.map((row) => (
-                    <div key={row.key} className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-100">
-                      <p className="text-[11px] font-semibold text-slate-600">{row.title}</p>
-                      <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
-                        {row.total.toLocaleString('en-IN')} docs · {formatInr(row.amountTotal)}
-                      </p>
-                      <p className="text-[10px] text-slate-500">
-                        {row.open} open · {row.closed} closed · {row.rejected} rejected
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </DashboardCard>
-            ) : null}
-
-            {isTravelLayout ? (
-              <DashboardCard title="By process · Travel request / advance / expense">
-                <div className="h-[220px]">
-                  {processChart.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-sm text-slate-400">No process data</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={processChart} margin={{ top: 4, right: 4, left: 0, bottom: 0 }} barCategoryGap="18%">
-                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-                        <XAxis dataKey="name" tick={{ fontSize: 10, fill: MUTED }} interval={0} />
-                        <YAxis tick={{ fontSize: 10, fill: MUTED }} allowDecimals={false} width={32} />
-                        <Tooltip />
-                        <Bar dataKey="open" name="Open" fill={OPEN_COLOR} radius={[3, 3, 0, 0]} />
-                        <Bar dataKey="closed" name="Closed" fill={CLOSED_COLOR} radius={[3, 3, 0, 0]} />
-                        <Bar dataKey="rejected" name="Rejected" fill={REJECTED_COLOR} radius={[3, 3, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {processChart.map((row) => (
-                    <div key={row.fullName} className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-100">
-                      <p className="text-[11px] font-semibold text-slate-600">{row.fullName}</p>
-                      <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">{row.total.toLocaleString('en-IN')}</p>
-                      <p className="text-[10px] text-slate-500">
-                        {row.open} open · {row.closed} closed
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </DashboardCard>
-            ) : null}
-
-            {isItsmLayout || sourceRows.length > 0 ? (
-              <DashboardCard
-                title="Ticket source"
-                right={<span className="text-xs text-slate-500">{sourceTotal.toLocaleString('en-IN')} tickets</span>}
-              >
-                <div className={`grid grid-cols-1 gap-4 ${isItsmLayout ? 'xl:grid-cols-12' : ''}`}>
-                  <div className={isItsmLayout ? 'xl:col-span-7' : ''}>
-                    <SourceComposedChart rows={sourceRows} />
-                  </div>
-                  <div className={isItsmLayout ? 'xl:col-span-5' : ''}>
-                    <SourceIconReport rows={sourceRows} total={sourceTotal || data.metrics.total} />
-                  </div>
-                </div>
-              </DashboardCard>
-            ) : null}
-
-            {categoryChart.length > 0 ? (
-              <DashboardCard title="Operation vs Finance">
-                <div className="h-[180px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={categoryChart} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-                      <XAxis type="number" tick={{ fontSize: 11, fill: MUTED }} allowDecimals={false} />
-                      <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 11, fill: MUTED }} />
-                      <Tooltip formatter={(v) => Number(v).toLocaleString('en-IN')} />
-                      <Bar dataKey="value" name="Items" radius={[0, 4, 4, 0]}>
-                        {categoryChart.map((entry) => (
-                          <Cell key={entry.name} fill={entry.color} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </DashboardCard>
-            ) : null}
-
-            {!isP2pLayout ? (
+            <div ref={misSectionRef}>
             <DashboardCard
-              title="Entity matrix"
-              right={embed ? undefined : <span className="text-xs text-slate-500">Sorted by closure ratio</span>}
-            >
-              <div className="-mx-5 -mb-5 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-5 py-2.5 font-semibold">Entity</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Total</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Open</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Closed</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Rejected</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Closure %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entityRows.map((row) => {
-                      const open = Number(row.open || 0);
-                      const closed = Number(row.closed || 0);
-                      return (
-                        <tr key={row.entity_id} className="border-t border-slate-100">
-                          <td className="px-5 py-2.5 font-medium text-slate-900">{row.entity_label || row.entity_id}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{row.total}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-orange-500">{open}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-emerald-600">{closed}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-rose-600">
-                            {Number(row.rejected || 0)}
-                          </td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-slate-700">
-                            {closureRatioPct(open, closed)}%
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {entityRows.length > 0 ? (
-                      <tr className="border-t border-slate-200 bg-slate-50/80">
-                        <td className="px-5 py-2.5 font-semibold text-slate-900">All (matches KPIs)</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{data.metrics.total}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-orange-500">{openVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-emerald-600">{closedVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-rose-600">{rejectedVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-slate-700">
-                          {closureRatioPct(openVal, closedVal)}%
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </DashboardCard>
-            ) : (
-              <DashboardCard title="PR / PO summary · counts & INR">
-                <div className="-mx-5 -mb-5 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th className="px-5 py-2.5 font-semibold">Document</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Total</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Open</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Closed</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Rejected</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Total value</th>
-                        <th className="px-5 py-2.5 text-right font-semibold">Open value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {p2pDocRows.map((row) => (
-                        <tr key={row.key} className="border-t border-slate-100">
-                          <td className="px-5 py-2.5 font-medium text-slate-900">{row.title}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{row.total}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-orange-500">{row.open}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-emerald-600">{row.closed}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-rose-600">{row.rejected}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{formatInrFull(row.amountTotal)}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{formatInrFull(row.amountOpen)}</td>
-                        </tr>
-                      ))}
-                      <tr className="border-t border-slate-200 bg-slate-50/80">
-                        <td className="px-5 py-2.5 font-semibold text-slate-900">All (matches KPIs)</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{data.metrics.total}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-orange-500">{openVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-emerald-600">{closedVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-rose-600">{rejectedVal}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{formatInrFull(p2pAmountTotal)}</td>
-                        <td className="px-5 py-2.5 text-right font-semibold tabular-nums">{formatInrFull(p2pAmountOpen)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </DashboardCard>
-            )}
-
-            <DashboardCard
+              embed
               title={isP2pLayout ? 'MIS · P2P users (requesters / PO creators)' : 'MIS · Users'}
               right={
-                embed ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-                    <Users className="h-3.5 w-3.5" />
-                    {misUsers.length}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-                    <Users className="h-3.5 w-3.5" />
-                    {misUsers.length}
-                    {entity !== 'all' || period !== 'all' ? ' · same filters' : ''}
-                    {' · closed ↓'}
-                  </span>
-                )
+                <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                  <Users className="h-3.5 w-3.5" />
+                  {displayedMisUsers.length}
+                  <span className="ml-2 font-normal text-slate-400">v{DASHBOARD_VERSION}</span>
+                </span>
               }
             >
-              <div className="-mx-5 -mb-5 overflow-x-auto">
+              <div className="space-y-2.5 px-1 pb-3 lg:hidden">
+                {displayedMisUsers.map((user, index) => {
+                  const open = Number(user.open ?? user.pending ?? 0);
+                  const closed = Number(user.closed ?? user.completed ?? 0);
+                  const rejected = Number(user.rejected || 0);
+                  const login = misUserLoginDisplay(user, formatWhen);
+                  const rowKey = `${compactMisName(user.user_name) || user.user_id || user.user_name}-${index}`;
+                  return (
+                    <MisMobileRecordCard
+                      key={rowKey}
+                      title={user.user_name}
+                      subtitle={login.text === '-' ? 'Last sign-in —' : `Last sign-in ${login.text}`}
+                      fields={[
+                        { label: 'Open', value: open },
+                        { label: 'Closed', value: closed },
+                        { label: 'Rejected', value: rejected },
+                        { label: 'Total', value: user.total || open + closed + rejected },
+                        { label: 'Closure %', value: `${closureRatioPct(open, closed)}%` },
+                      ]}
+                    />
+                  );
+                })}
+                {displayedMisUsers.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-slate-400">
+                    No users for this filter. Try All entities or This FY.
+                  </p>
+                ) : null}
+              </div>
+              <div className="-mx-5 -mb-5 hidden overflow-x-auto lg:block">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
                     <tr>
@@ -1325,61 +1359,37 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     </tr>
                   </thead>
                   <tbody>
-                    {misUsers.map((user) => {
+                    {displayedMisUsers.map((user, index) => {
                       const open = Number(user.open ?? user.pending ?? 0);
                       const closed = Number(user.closed ?? user.completed ?? 0);
                       const rejected = Number(user.rejected || 0);
-                      const lastSignIn = user.last_sign_in;
-                      const inactive = !lastSignIn;
-                      const rowKey = String(user.user_id || user.user_name);
-                      const expanded = expandedUserId === rowKey;
+                      const login = misUserLoginDisplay(user, formatWhen);
+                      const rowKey = `${compactMisName(user.user_name) || user.user_id || user.user_name}-${index}`;
                       return (
-                        <Fragment key={rowKey}>
-                          <tr
-                            className="cursor-pointer border-t border-slate-100 hover:bg-[#EEF5FF]/70"
-                            onClick={() => setExpandedUserId(expanded ? null : rowKey)}
-                          >
-                            <td className="px-5 py-2.5 font-medium text-slate-900">
-                              <span className="inline-flex items-center gap-1.5">
-                                <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${expanded ? 'rotate-180' : ''}`} />
-                                {user.user_name}
+                        <tr key={rowKey} className="border-t border-slate-100">
+                          <td className="px-5 py-2.5 font-medium text-slate-900">{user.user_name}</td>
+                          <td className="px-5 py-2.5 text-sm tabular-nums text-slate-600">
+                            {login.text === '-' ? (
+                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
+                                {login.text}
                               </span>
-                            </td>
-                            <td className="px-5 py-2.5 text-sm tabular-nums text-slate-600">
-                              {inactive ? (
-                                <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
-                                  Inactive
-                                </span>
-                              ) : (
-                                formatWhen(lastSignIn)
-                              )}
-                            </td>
-                            <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#A96A20]">{open}</td>
-                            <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#287B5D]">{closed}</td>
-                            <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#B24E66]">{rejected}</td>
-                            <td className="px-5 py-2.5 text-right tabular-nums">{user.total || open + closed + rejected}</td>
-                            <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-slate-700">
-                              {closureRatioPct(open, closed)}%
-                            </td>
-                          </tr>
-                          {expanded ? (
-                            <tr className="border-t border-slate-100">
-                              <td colSpan={7} className="max-w-0 p-0">
-                                <div className="max-w-full overflow-hidden">
-                                  <UserWorkExpandPanel
-                                    userName={user.user_name}
-                                    applicationId={appId}
-                                    applicationName={app.name || appId}
-                                    environment={app.environment}
-                                  />
-                                </div>
-                              </td>
-                            </tr>
-                          ) : null}
-                        </Fragment>
+                            ) : (
+                              <span className={login.signedToday ? 'font-semibold text-[#287B5D]' : undefined}>
+                                {login.text}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#A96A20]">{open}</td>
+                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#287B5D]">{closed}</td>
+                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#B24E66]">{rejected}</td>
+                          <td className="px-5 py-2.5 text-right tabular-nums">{user.total || open + closed + rejected}</td>
+                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-slate-700">
+                            {closureRatioPct(open, closed)}%
+                          </td>
+                        </tr>
                       );
                     })}
-                    {misUsers.length === 0 ? (
+                    {displayedMisUsers.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-5 py-8 text-center text-sm text-slate-400">
                           No users for this filter. Try All entities or This FY.
@@ -1390,14 +1400,29 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 </table>
               </div>
             </DashboardCard>
+            </div>
 
-            {!embed ? (
-              <p className="px-1 text-[11px] text-slate-400">
-                Snapshot {formatWhen(data.snapshot_at)}
-                {data.filters.entity && data.filters.entity !== 'all' ? ` · ${data.filters.entity}` : ''}
-                {data.filters.period && data.filters.period !== 'all' ? ` · ${data.filters.period}` : ''}
-              </p>
-            ) : null}
+            <EmbedAppRecordsTable
+              inventory={stampedInventory.length ? stampedInventory : recordInventory}
+              columns={
+                isP2pLayout
+                  ? recordsColumns.filter((col) => col.id !== 'amount')
+                  : recordsColumns
+              }
+              dataSource={recordsDataSource}
+              entity={entity}
+              company={company}
+              status={recordsStatus}
+              assigned={assignedFilterName}
+              assignedId={assignedFilterId}
+              dateFrom={resolvedDates.from || undefined}
+              dateTo={resolvedDates.to || undefined}
+              todayKind={todayKind}
+              itsmCompanyMode={itsmCompanyMode}
+              travelMode={travelMode}
+              activityDates={activityDates}
+              filterAnimating={false}
+            />
           </>
         )}
       </div>

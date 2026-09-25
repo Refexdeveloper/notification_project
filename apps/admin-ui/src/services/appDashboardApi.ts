@@ -1,4 +1,5 @@
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type AppDashboardProcess = {
   process_id: string;
@@ -34,6 +35,11 @@ export type AppDashboardBreakdown = {
 export type AppDashboardUser = {
   user_id?: string;
   user_name: string;
+  email?: string;
+  company?: string | null;
+  company_key?: string | null;
+  is_active?: boolean;
+  active_status?: string | null;
   total: number;
   pending?: number;
   completed?: number;
@@ -41,6 +47,7 @@ export type AppDashboardUser = {
   closed?: number;
   rejected?: number;
   last_sign_in?: string | null;
+  ever_logged_in?: boolean;
 };
 
 export type AppDashboardEntity = {
@@ -57,6 +64,7 @@ export type AppDashboardData = {
   data_source?: string;
   filters: {
     entity: string;
+    user?: string;
     process_id: string;
     resource_type?: string;
     resource_id?: string;
@@ -116,6 +124,8 @@ export type AppDashboardData = {
     subtasks_closed: number;
   };
   users: AppDashboardUser[];
+  /** Kissflow APP_ROLE members — Users card / dropdown / MIS identity. */
+  app_users?: AppDashboardUser[];
   board_filter_note?: string;
   report_layout?: {
     kind: string;
@@ -128,14 +138,23 @@ export type AppDashboardData = {
   warning?: string;
 };
 
-const APP_DASHBOARD_CACHE_PREFIX = 'ne_app_dashboard_v9';
-/** Match main dashboard — reuse scoped filter results for 5 minutes. */
+const APP_DASHBOARD_CACHE_PREFIX = 'ne_app_dashboard_v13';
+/** Fresh cache — skip network on filter switch. */
 const APP_DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
+/** Stale-but-usable cache — instant paint while revalidating in embed. */
+const APP_DASHBOARD_CACHE_MAX_MS = 30 * 60 * 1000;
 
 type AppDashboardCacheEntry = {
   ts: number;
   data: AppDashboardData;
 };
+
+function decorateAppDashboard(data: AppDashboardData): AppDashboardData {
+  return {
+    ...data,
+    application_name: friendlyApplicationName(data.application_id, data.application_name),
+  };
+}
 
 function appDashboardCacheKey(applicationId: string, queryKey: string) {
   return `${APP_DASHBOARD_CACHE_PREFIX}:${applicationId}:${queryKey}`;
@@ -144,6 +163,7 @@ function appDashboardCacheKey(applicationId: string, queryKey: string) {
 function buildQueryKey(opts: {
   environment?: string;
   entity?: string;
+  user?: string;
   processId?: string;
   resourceType?: string;
   resourceId?: string;
@@ -154,6 +174,7 @@ function buildQueryKey(opts: {
   return [
     opts.environment || 'production',
     opts.entity || 'all',
+    opts.user || 'all',
     opts.resourceType || 'all',
     opts.resourceId || opts.processId || 'all',
     opts.period || 'all',
@@ -165,6 +186,7 @@ function buildQueryKey(opts: {
 export function appDashboardQueryKey(opts: {
   environment?: string;
   entity?: string;
+  user?: string;
   processId?: string;
   resourceType?: string;
   resourceId?: string;
@@ -175,10 +197,10 @@ export function appDashboardQueryKey(opts: {
   return buildQueryKey(opts);
 }
 
-export function readAppDashboardCache(
+export function readAppDashboardCacheEntry(
   applicationId: string,
   queryKey: string,
-): AppDashboardData | null {
+): AppDashboardCacheEntry | null {
   try {
     const raw = sessionStorage.getItem(appDashboardCacheKey(applicationId, queryKey));
     if (!raw) return null;
@@ -187,14 +209,56 @@ export function readAppDashboardCache(
       sessionStorage.removeItem(appDashboardCacheKey(applicationId, queryKey));
       return null;
     }
-    if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_STALE_MS) {
+    if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_MAX_MS) {
       sessionStorage.removeItem(appDashboardCacheKey(applicationId, queryKey));
       return null;
     }
-    return parsed.data;
+    return parsed;
   } catch {
     return null;
   }
+}
+
+export function isAppDashboardCacheFresh(
+  applicationId: string,
+  queryKey: string,
+  maxAgeMs = APP_DASHBOARD_CACHE_STALE_MS,
+): boolean {
+  const entry = readAppDashboardCacheEntry(applicationId, queryKey);
+  return Boolean(entry && Date.now() - entry.ts <= maxAgeMs);
+}
+
+/** Soft paint — newest cached dashboard for this app (any filter combo, up to 30 min). */
+export function readAppDashboardCacheSoft(applicationId: string): AppDashboardData | null {
+  try {
+    const prefix = `${APP_DASHBOARD_CACHE_PREFIX}:${applicationId}:`;
+    let best: AppDashboardCacheEntry | null = null;
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!key?.startsWith(prefix)) continue;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as AppDashboardCacheEntry;
+      if (!parsed?.data?.application_id) continue;
+      if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_MAX_MS) continue;
+      if (!best || parsed.ts > best.ts) best = parsed;
+    }
+    return best?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readAppDashboardCache(
+  applicationId: string,
+  queryKey: string,
+  opts?: { allowStale?: boolean },
+): AppDashboardData | null {
+  const entry = readAppDashboardCacheEntry(applicationId, queryKey);
+  if (!entry) return null;
+  const age = Date.now() - entry.ts;
+  if (!opts?.allowStale && age > APP_DASHBOARD_CACHE_STALE_MS) return null;
+  return entry.data;
 }
 
 function writeAppDashboardCache(applicationId: string, queryKey: string, data: AppDashboardData) {
@@ -210,6 +274,7 @@ export async function loadApplicationDashboard(opts: {
   applicationId: string;
   environment?: 'production' | 'development';
   entity?: string;
+  user?: string;
   processId?: string;
   resourceType?: string;
   resourceId?: string;
@@ -217,6 +282,8 @@ export async function loadApplicationDashboard(opts: {
   dateFrom?: string;
   dateTo?: string;
   skipCache?: boolean;
+  /** Use GCP engagement_cache fast path (default true). Set false with full=1 for heavy SQL. */
+  preferCache?: boolean;
 }): Promise<{ data: AppDashboardData; fromCache?: boolean }> {
   if (!isBackendApiMode()) {
     throw new Error('Backend API mode is required for the live application dashboard.');
@@ -226,13 +293,14 @@ export async function loadApplicationDashboard(opts: {
   if (!opts.skipCache) {
     const cached = readAppDashboardCache(opts.applicationId, queryKey);
     if (cached) {
-      return { data: cached, fromCache: true };
+      return { data: decorateAppDashboard(cached), fromCache: true };
     }
   }
 
   const params = new URLSearchParams();
   params.set('environment', opts.environment || 'production');
   if (opts.entity && opts.entity !== 'all') params.set('entity', opts.entity);
+  if (opts.user && opts.user !== 'all') params.set('user', opts.user);
   if (opts.resourceType && opts.resourceType !== 'all' && opts.resourceId && opts.resourceId !== 'all') {
     params.set('resource_type', opts.resourceType);
     params.set('resource_id', opts.resourceId);
@@ -242,16 +310,24 @@ export async function loadApplicationDashboard(opts: {
   if (opts.period && opts.period !== 'all') params.set('period', opts.period);
   if (opts.dateFrom) params.set('date_from', opts.dateFrom);
   if (opts.dateTo) params.set('date_to', opts.dateTo);
+  if (opts.preferCache === false) params.set('fast', '0');
+  else {
+    params.set('fast', '1');
+    params.set('stale', '1');
+  }
 
   const path = `/dashboard/application/${encodeURIComponent(opts.applicationId)}?${params.toString()}`;
-  const res = await apiV1Fetch<AppDashboardData>(path, { cache: 'no-store' }, { timeoutMs: 20000 });
+  const useCachePath = opts.preferCache !== false;
+  const slowApp = /solar|technician_reimbursement|reinvestment/i.test(String(opts.applicationId || ''));
+  const timeoutMs = useCachePath ? 25000 : (slowApp ? 45000 : 90000);
+  const res = await apiV1Fetch<AppDashboardData>(path, { cache: 'no-store' }, { timeoutMs });
 
   if (!res.ok || !res.data) {
     throw new Error(res.error || `Dashboard failed (${res.status || 'network'})`);
   }
 
-  writeAppDashboardCache(opts.applicationId, queryKey, res.data);
-  return { data: res.data };
+  writeAppDashboardCache(opts.applicationId, queryKey, decorateAppDashboard(res.data));
+  return { data: decorateAppDashboard(res.data) };
 }
 
 export async function refreshApplicationDashboardLive(opts: {
@@ -265,16 +341,62 @@ export async function refreshApplicationDashboardLive(opts: {
   const res = await apiV1Fetch<{ application_dashboard?: AppDashboardData; warnings?: string[] }>(
     `/dashboard/refresh?${params.toString()}`,
     { method: 'POST', body: '{}', cache: 'no-store' },
-    { timeoutMs: 120000 },
+    { timeoutMs: 25000 },
   );
   if (!res.ok || !res.data?.application_dashboard) {
     throw new Error(res.error || 'Live refresh failed');
   }
-  const data = res.data.application_dashboard;
+  const data = decorateAppDashboard(res.data.application_dashboard);
   writeAppDashboardCache(
     opts.applicationId,
-    buildQueryKey({ environment: opts.environment, entity: 'all', processId: 'all', period: 'all' }),
+    buildQueryKey({
+      environment: opts.environment,
+      entity: 'all',
+      processId: 'all',
+      period: 'all',
+    }),
+    data,
+  );
+  writeAppDashboardCache(
+    opts.applicationId,
+    buildQueryKey({
+      environment: opts.environment,
+      entity: 'all',
+      processId: 'all',
+      period: 'fy',
+    }),
     data,
   );
   return data;
+}
+
+/** APP_ROLE members for one app — fallback when dashboard payload has no app_users. */
+export async function loadApplicationAppUsers(opts: {
+  applicationId: string;
+  environment: 'production' | 'development';
+}): Promise<AppDashboardUser[]> {
+  const res = await apiV1Fetch<{
+    items?: Array<{
+      user_id: string;
+      user_name: string;
+      email?: string;
+      last_sign_in?: string | null;
+      ever_logged_in?: boolean;
+      applications?: Array<{ application_id: string }>;
+    }>;
+  }>(`/users/management?environment=${encodeURIComponent(opts.environment)}`);
+  if (!res.ok || !res.data?.items) return [];
+  return res.data.items
+    .filter((u) => (u.applications || []).some((a) => a.application_id === opts.applicationId))
+    .map((u) => ({
+      user_id: u.user_id,
+      user_name: u.user_name,
+      email: u.email || '',
+      last_sign_in: u.last_sign_in ?? null,
+      ever_logged_in: u.ever_logged_in,
+      open: 0,
+      closed: 0,
+      rejected: 0,
+      total: 0,
+    }));
 }

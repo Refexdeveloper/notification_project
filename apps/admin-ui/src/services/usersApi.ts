@@ -1,5 +1,6 @@
 import type { RefexEnvironment } from '@/seeds/refexAppCatalog';
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type BackendUserRow = {
   user_id: string;
@@ -170,7 +171,13 @@ export async function loadUserManagement(environment: RefexEnvironment): Promise
   }
 
   return {
-    items: res.data.items || [],
+    items: (res.data.items || []).map((item) => ({
+      ...item,
+      applications: (item.applications || []).map((app) => ({
+        ...app,
+        application_name: friendlyApplicationName(app.application_id, app.application_name),
+      })),
+    })),
     totals: res.data.totals,
     generatedAt: res.data.generated_at,
     warning: res.data.warning,

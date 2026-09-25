@@ -18,6 +18,7 @@ const {
   loadP2pDashboard,
 } = require('./p2pDashboard');
 const { isP2pConfigured } = require('./p2pReadonly');
+const { friendlyApplicationName } = require('./dashboardDisplay');
 
 const OVERVIEW_QUERY = `
 WITH apps AS (
@@ -266,39 +267,104 @@ function readCache(sourcePayload) {
   return cache;
 }
 
+function metricsFromCachePayload(cache) {
+  if (!cache || typeof cache !== 'object') return null;
+  const totals = cache.totals && typeof cache.totals === 'object' ? cache.totals : {};
+  const hasTotals =
+    totals.open_tickets != null
+    || totals.closed_tickets != null
+    || totals.total_users != null;
+  if (hasTotals) {
+    return {
+      open: Number(totals.open_tickets || 0),
+      closed: Number(totals.closed_tickets || 0),
+      rejected: Number(totals.rejected_tickets || totals.rejected || 0),
+      total_users: Number(totals.total_users || 0),
+      active_today: Number(totals.active_today || 0),
+      never_logged_in: Number(totals.never_logged_in || 0),
+      opened_today: Number(totals.opened_today || 0),
+      closed_today: Number(totals.closed_today || 0),
+    };
+  }
+
+  // Derive from cached records when totals were never written (failed refresh left empty totals).
+  const records = Array.isArray(cache.records) ? cache.records : [];
+  if (records.length) {
+    let open = 0;
+    let closed = 0;
+    let rejected = 0;
+    for (const r of records) {
+      const s = String(r?.status || '').toLowerCase();
+      if (s === 'closed') closed += 1;
+      else if (s === 'rejected') rejected += 1;
+      else open += 1;
+    }
+    const items = Array.isArray(cache.items) ? cache.items : [];
+    return {
+      open,
+      closed,
+      rejected,
+      total_users: items.length || Number(totals.total_users || 0),
+      active_today: Number(totals.active_today || 0),
+      never_logged_in: Number(totals.never_logged_in || 0),
+      opened_today: Number(totals.opened_today || 0),
+      closed_today: Number(totals.closed_today || 0),
+    };
+  }
+
+  const items = Array.isArray(cache.items) ? cache.items : [];
+  if (items.length) {
+    return {
+      open: items.reduce((s, u) => s + Number(u.open || u.open_count || 0), 0),
+      closed: items.reduce((s, u) => s + Number(u.completed || u.closed || u.completed_count || 0), 0),
+      rejected: items.reduce((s, u) => s + Number(u.rejected || u.rejected_count || 0), 0),
+      total_users: items.length,
+      active_today: Number(totals.active_today || 0),
+      never_logged_in: Number(totals.never_logged_in || 0),
+      opened_today: Number(totals.opened_today || 0),
+      closed_today: Number(totals.closed_today || 0),
+    };
+  }
+  return null;
+}
+
 function overlayFromCache(row, signIn, today) {
   const cache = readCache(row.source_payload);
+  const derived = metricsFromCachePayload(cache);
   const totals = cache?.totals || {};
   const cacheFresh = Boolean(cache) && isEngagementCacheFresh(cache, ENGAGEMENT_CACHE_TTL_MS);
   const cacheNewer =
     cache?.fetched_at &&
     (!row.snapshot_at || new Date(cache.fetched_at) > new Date(row.snapshot_at));
 
-  const useCache = cacheFresh || cacheNewer;
-  const totalUsers = useCache && totals.total_users != null
-    ? Number(totals.total_users)
+  const useCache = Boolean(derived) && (cacheFresh || cacheNewer || Boolean(cache?.fetched_at));
+  const totalUsers = useCache && derived.total_users != null
+    ? Number(derived.total_users)
     : Number(signIn.total_users ?? row.total_users ?? 0);
-  const signInToday = useCache && totals.active_today != null
-    ? Number(totals.active_today)
+  const signInToday = useCache && derived.active_today != null
+    ? Number(derived.active_today)
     : Number(signIn.sign_in_today || 0);
-  const everLoggedIn = useCache && totals.total_users != null
-    ? Math.max(0, totalUsers - Number(totals.never_logged_in || 0))
+  const everLoggedIn = useCache && derived.total_users != null
+    ? Math.max(0, totalUsers - Number(derived.never_logged_in || 0))
     : Number(signIn.ever_logged_in || 0);
 
-  const openTickets = useCache && totals.open_tickets != null
-    ? Number(totals.open_tickets)
+  const openTickets = useCache
+    ? Number(derived.open || 0)
     : row.application_id === 'IT_Service_Management_A00'
       ? Number(row.open_tickets || 0)
       : Number(row.open_tickets || 0) + Number(row.in_progress || 0);
-  const closedTickets = useCache && totals.closed_tickets != null
-    ? Number(totals.closed_tickets)
+  const closedTickets = useCache
+    ? Number(derived.closed || 0)
     : Number(row.closed_tickets || 0);
-  const openedToday = useCache && totals.opened_today != null
-    ? Number(totals.opened_today)
+  const openedToday = useCache
+    ? Number(derived.opened_today || 0)
     : Number(today.opened_today || 0);
-  const closedToday = useCache && totals.closed_today != null
-    ? Number(totals.closed_today)
+  const closedToday = useCache
+    ? Number(derived.closed_today || 0)
     : Number(today.closed_today || 0);
+  const rejected = useCache
+    ? Number(derived.rejected || 0)
+    : Number(row.rejected || 0);
 
   const snapshotAt = useCache && cache.fetched_at ? cache.fetched_at : row.snapshot_at || null;
   const dataSource = useCache ? 'live_overlay' : 'snapshot';
@@ -312,7 +378,7 @@ function overlayFromCache(row, signIn, today) {
     openedToday,
     closedToday,
     inProgress: Number(row.in_progress || 0),
-    rejected: Number(row.rejected || 0),
+    rejected,
     snapshotAt,
     dataSource,
     cacheFresh: useCache,
@@ -320,7 +386,13 @@ function overlayFromCache(row, signIn, today) {
 }
 
 async function queryWithTimeout(pool, sql, params, timeoutMs = 12000) {
-  const client = await pool.connect();
+  const connectMs = Math.min(4000, timeoutMs);
+  const client = await Promise.race([
+    pool.connect(),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('pool connect timeout')), connectMs);
+    }),
+  ]);
   try {
     await client.query(`SET LOCAL statement_timeout = ${Math.max(1000, timeoutMs)}`);
     return await client.query(sql, params);
@@ -330,23 +402,54 @@ async function queryWithTimeout(pool, sql, params, timeoutMs = 12000) {
 }
 
 /**
- * @param {import('pg').Pool} pool
- * @param {string} environment
+ * Fast main-dashboard landing: prefer engagement_cache; fall back to snapshot SQL
+ * only for apps missing usable cache totals (bounded timeout).
  */
 async function loadDashboardOverview(pool, environment) {
-  const [overviewResult, signInResult, todayResult] = await Promise.all([
-    queryWithTimeout(pool, OVERVIEW_QUERY, [environment], 10000),
-    queryWithTimeout(pool, OVERVIEW_SIGNIN_BY_APP_SQL, [environment], 10000).catch(() => ({ rows: [] })),
-    queryWithTimeout(pool, OVERVIEW_TODAY_BY_APP_SQL, [environment], 12000).catch(() => ({ rows: [] })),
-  ]);
+  const { rows } = await pool.query(
+    `SELECT environment, application_id, application_name, source_payload
+     FROM engagement_reporting.application
+     WHERE is_current = true AND environment = $1
+     ORDER BY application_name`,
+    [environment],
+  );
 
-  const signInByApp = new Map((signInResult.rows || []).map((row) => [row.application_id, row]));
-  const todayByApp = new Map((todayResult.rows || []).map((row) => [row.application_id, row]));
+  const needsSnapshot = rows.some((row) => !metricsFromCachePayload(readCache(row.source_payload)));
+  let snapshotByApp = new Map();
+  let signInByApp = new Map();
+  let todayByApp = new Map();
 
-  const apps = overviewResult.rows.map((row) => {
-    const signIn = signInByApp.get(row.application_id) || {};
-    const today = todayByApp.get(row.application_id) || {};
-    const overlay = overlayFromCache(row, signIn, today);
+  if (needsSnapshot) {
+    try {
+      const overviewResult = await queryWithTimeout(pool, OVERVIEW_QUERY, [environment], 8000);
+      snapshotByApp = new Map((overviewResult.rows || []).map((r) => [r.application_id, r]));
+    } catch {
+      /* keep empty — cache-only for apps that have it */
+    }
+    const [signInResult, todayResult] = await Promise.all([
+      queryWithTimeout(pool, OVERVIEW_SIGNIN_BY_APP_SQL, [environment], 5000).catch(() => ({ rows: [] })),
+      queryWithTimeout(pool, OVERVIEW_TODAY_BY_APP_SQL, [environment], 5000).catch(() => ({ rows: [] })),
+    ]);
+    signInByApp = new Map((signInResult.rows || []).map((row) => [row.application_id, row]));
+    todayByApp = new Map((todayResult.rows || []).map((row) => [row.application_id, row]));
+  }
+
+  const apps = rows.map((row) => {
+    const snap = snapshotByApp.get(row.application_id) || {};
+    const cache = readCache(row.source_payload);
+    const snapshotAt = cache?.fetched_at || cache?.snapshot_at || snap.snapshot_at || null;
+    const overlay = overlayFromCache(
+      {
+        ...row,
+        open_tickets: Number(snap.open_items ?? snap.open_tickets ?? 0),
+        closed_tickets: Number(snap.closed_items ?? snap.closed_tickets ?? 0),
+        rejected: Number(snap.rejected_items ?? snap.rejected ?? 0),
+        in_progress: Number(snap.in_progress_items ?? snap.in_progress ?? 0),
+        snapshot_at: snapshotAt,
+      },
+      signInByApp.get(row.application_id) || {},
+      todayByApp.get(row.application_id) || {},
+    );
     const ageHours = snapshotAgeHours(overlay.snapshotAt);
     const snapshotStale =
       !overlay.snapshotAt ||
@@ -356,7 +459,7 @@ async function loadDashboardOverview(pool, environment) {
     return {
       environment: row.environment,
       application_id: row.application_id,
-      application_name: row.application_name,
+      application_name: friendlyApplicationName(row.application_id, row.application_name),
       snapshot_at: overlay.snapshotAt,
       fetched_at: overlay.cacheFresh ? overlay.snapshotAt : null,
       data_source: overlay.dataSource,
@@ -377,7 +480,6 @@ async function loadDashboardOverview(pool, environment) {
         opened_today: overlay.openedToday,
         closed_today: overlay.closedToday,
         in_progress: overlay.inProgress,
-        rejected: overlay.rejected,
       },
       metric_labels: isItsmLikeApplication(row.application_id, row.application_name)
         ? {
@@ -398,9 +500,19 @@ async function loadDashboardOverview(pool, environment) {
   });
 
   // Overlay live MySQL P2P KPIs onto the registered Procurement to Pay row.
+  // Hard-cap wait so a slow/unreachable P2P MySQL cannot hang the whole main dashboard.
   if (isP2pConfigured()) {
     try {
-      const p2p = await loadP2pDashboard({ environment, period: 'all', entity: 'all' });
+      const p2p = await Promise.race([
+        loadP2pDashboard({ environment, period: 'all', entity: 'all' }),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            const err = new Error('P2P overview timed out');
+            err.code = 'P2P_OVERVIEW_TIMEOUT';
+            reject(err);
+          }, 2500);
+        }),
+      ]);
       const m = p2p?.metrics || {};
       const open = Number(m.open ?? m.pending ?? 0);
       const closed = Number(m.closed ?? m.completed ?? 0);

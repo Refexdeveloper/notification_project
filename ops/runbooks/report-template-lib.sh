@@ -293,7 +293,14 @@ report_template_seed_for_app() {
     Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
     EMS_001_A00) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
-    Expense_and_Travel_Management_A00) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
+    Expense_and_Travel_Management_A00)
+      # Entity-scoped Travel seeds (Refex / Venwind schedulers).
+      case "${ENTITY_FILTER:-${ENTITY_NAME:-}}" in
+        [Rr]efex*) printf '%s' 'db/seeds/travel-refex-template.html' ;;
+        [Vv]enwind*) printf '%s' 'db/seeds/travel-venwind-template.html' ;;
+        *) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
+      esac
+      ;;
     *) return 1 ;;
   esac
 }

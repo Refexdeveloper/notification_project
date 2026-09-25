@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { REFEXONE_LOGO_URL } from '@/constants/branding';
-import { REFEX_ENV_CONFIG } from '@/seeds/refexAppCatalog';
 import { staggerContainer } from '@/lib/motion';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationsFromBackend } from '@/services/applicationsApi';
@@ -63,7 +62,6 @@ export default function ApplicationsPage() {
   );
 
   const connectedCount = envApps.filter((a) => a.connected).length;
-  const envMeta = REFEX_ENV_CONFIG[PRODUCTION_ENV];
 
   const filteredApps = useMemo(() => {
     if (!searchQuery.trim()) return envApps;
@@ -94,9 +92,6 @@ export default function ApplicationsPage() {
             <h1 className="text-lg font-bold text-[#1E293B] tracking-tight truncate">
               Applications
             </h1>
-            <p className="text-xs text-[#64748B] mt-0.5 truncate">
-              {envMeta.subdomain}.kissflow.com · Production
-            </p>
           </div>
         </div>
 

@@ -16,6 +16,10 @@ type Props = {
   applicationId?: string;
   applicationName?: string;
   environment?: 'Production' | 'Development' | string;
+  entity?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
 };
 
 type Bucket = {
@@ -47,18 +51,46 @@ function formatAmount(value: unknown): string {
   return `₹${Math.round(n).toLocaleString('en-IN')}`;
 }
 
-function primaryLine(row: AppRecordRow): string {
+function isDraftRow(row: AppRecordRow): boolean {
+  const hay = `${row.status_raw || ''} ${row.status || ''} ${row.current_step || ''}`.toLowerCase();
+  return hay.includes('draft');
+}
+
+function isP2pApp(applicationId?: string): boolean {
+  return /procurement|p2p/i.test(String(applicationId || ''));
+}
+
+function isLeadApp(applicationId?: string): boolean {
+  return /lead/i.test(String(applicationId || ''));
+}
+
+function isTravelApp(applicationId?: string): boolean {
+  return /travel|expense_and_travel/i.test(String(applicationId || ''));
+}
+
+function displayRequestId(row: AppRecordRow, applicationId?: string): string {
+  const rid = String(row.request_id || '').trim();
+  if (rid && rid !== '—') return rid;
+  if (isTravelApp(applicationId)) return '—';
+  return '—';
+}
+
+function primaryLine(row: AppRecordRow, applicationId?: string): string {
+  if (isLeadApp(applicationId)) {
+    return String(row.subject || row.requested_by || '').trim();
+  }
   return String(row.subject || row.current_step || row.entity || '').trim();
 }
 
-function metaBits(row: AppRecordRow): string[] {
+function metaBits(row: AppRecordRow, applicationId?: string): string[] {
   const bits: string[] = [];
+  const title = primaryLine(row, applicationId);
   const entity = String(row.entity || '').trim();
   const step = String(row.current_step || '').trim();
   const when = formatWhen(row.created_at);
   const amount = formatAmount(row.amount);
-  if (entity && entity !== primaryLine(row)) bits.push(entity);
-  if (step && step !== primaryLine(row) && step !== entity) bits.push(step);
+  if (entity && entity !== title) bits.push(entity);
+  if (step && step !== title && step !== entity) bits.push(step);
   if (when) bits.push(when);
   if (amount) bits.push(amount);
   return bits;
@@ -75,6 +107,10 @@ export default function UserWorkExpandPanel({
   applicationId,
   applicationName,
   environment = 'Production',
+  entity,
+  status,
+  dateFrom,
+  dateTo,
 }: Props) {
   const [loading, setLoading] = useState(true);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
@@ -104,6 +140,10 @@ export default function UserWorkExpandPanel({
             applicationId: app.application_id,
             environment,
             assigned: userName,
+            entity,
+            status: status && status !== 'all' ? status : undefined,
+            dateFrom,
+            dateTo,
             limit: 40,
             offset: 0,
           });
@@ -113,6 +153,10 @@ export default function UserWorkExpandPanel({
               applicationId: app.application_id,
               environment,
               requester: userName,
+              entity,
+              status: status && status !== 'all' ? status : undefined,
+              dateFrom,
+              dateTo,
               limit: 40,
               offset: 0,
             });
@@ -132,20 +176,22 @@ export default function UserWorkExpandPanel({
           }
           const needle = userName.toLowerCase();
           const emailNeedle = String(email || '').toLowerCase();
-          const filtered = items.filter((r) => {
+          let filtered = items.filter((r) => {
             const a = String(r.assigned_to || '').toLowerCase();
             const req = String(r.requested_by || '').toLowerCase();
             return (
-              a.includes(needle) ||
-              req.includes(needle) ||
-              (emailNeedle && (a.includes(emailNeedle) || req.includes(emailNeedle)))
+              a.includes(needle)
+              || req.includes(needle)
+              || (emailNeedle && (a.includes(emailNeedle) || req.includes(emailNeedle)))
             );
           });
-          const useRows = filtered.length ? filtered : items;
+          if (isP2pApp(app.application_id)) {
+            filtered = filtered.filter((r) => !isDraftRow(r));
+          }
+          const useRows = filtered.length ? filtered : (isP2pApp(app.application_id) ? [] : items);
           const open = useRows.filter((r) => String(r.status || '').toLowerCase() === 'open');
           const closed = useRows.filter((r) => String(r.status || '').toLowerCase() === 'closed');
           const rejected = useRows.filter((r) => String(r.status || '').toLowerCase() === 'rejected');
-          // Prefer open items first, then recent closed — keep list short.
           const ordered = [...open, ...rejected, ...closed].slice(0, 10);
           next.push({
             appId: app.application_id,
@@ -176,7 +222,7 @@ export default function UserWorkExpandPanel({
     return () => {
       cancelled = true;
     };
-  }, [userName, email, applicationId, applicationName, environment, applications]);
+  }, [userName, email, applicationId, applicationName, environment, applications, entity, status, dateFrom, dateTo]);
 
   if (loading) {
     return (
@@ -213,13 +259,14 @@ export default function UserWorkExpandPanel({
           ) : (
             <ul className="divide-y divide-[#EEF2F7]">
               {b.items.map((row) => {
-                const title = primaryLine(row);
-                const bits = metaBits(row);
+                const title = primaryLine(row, b.appId);
+                const bits = metaBits(row, b.appId);
+                const reqId = displayRequestId(row, b.appId);
                 return (
                   <li key={row.id} className="px-3 py-2">
                     <div className="flex min-w-0 items-start gap-2.5">
                       <span className="mt-0.5 shrink-0 rounded-md bg-[#EEF3FA] px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none text-slate-700 ring-1 ring-[#D7E2EF]">
-                        {row.request_id || row.id || '—'}
+                        {reqId}
                       </span>
                       <div className="min-w-0 flex-1 overflow-hidden">
                         <p className="truncate text-[12px] font-medium leading-snug text-slate-800">

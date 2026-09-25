@@ -184,7 +184,10 @@ async function main() {
     else if (entry.hasCompleted) completedProjects += 1;
   }
   const derivedProjectTotal = projectMap.size;
-  const totalProjects = boardCount != null && boardCount > 0 ? boardCount : derivedProjectTotal;
+  // Same contract as dashboard pmPortfolio.js / countPmPortfolio — distinct
+  // Project IDs on tasks. Board count is diagnostic only (can include projects
+  // with no tasks and would disagree with Open + Completed).
+  const totalProjects = derivedProjectTotal;
 
   const taskBuckets = bucketCounts(tasks);
   const individualBuckets = bucketCounts(individual);
@@ -196,7 +199,8 @@ async function main() {
       total_projects: totalProjects,
       open_projects: openProjects,
       completed_projects: completedProjects,
-      projects_source: boardCount != null && boardCount > 0 ? 'board' : 'derived_from_tasks',
+      projects_source: 'derived_from_tasks',
+      board_project_count: boardCount,
       total_tasks: taskBuckets.total,
       pending_tasks: taskBuckets.pending,
       completed_tasks: taskBuckets.completed,

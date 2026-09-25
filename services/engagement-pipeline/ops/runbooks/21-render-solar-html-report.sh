@@ -83,7 +83,23 @@ tasks AS (
     process_status,
     current_step,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
-    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
+    CASE
+      WHEN lower(trim(concat_ws(' ',
+        coalesce(current_step, ''),
+        coalesce(source_payload->>'Service_Category', ''),
+        coalesce(source_payload->'Service_Category'->>'Name', ''),
+        coalesce(source_payload->>'Expense_Type', ''),
+        coalesce(source_payload->'Expense_Type'->>'Name', ''),
+        coalesce(source_payload->>'Category', ''),
+        coalesce(source_payload->'Category'->>'Name', ''),
+        coalesce(source_payload->>'Department', ''),
+        coalesce(source_payload->'Department'->>'Name', ''),
+        coalesce(source_payload->>'Cost_Center', ''),
+        coalesce(source_payload->>'Request_Type', '')
+      ))) ~ '(financ|account|treasury|audit|invoice)' THEN 'finance'
+      ELSE 'operation'
+    END AS cat
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${SOLAR_PROCESS_ID}'
@@ -143,6 +159,20 @@ SELECT json_build_object(
     WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
+  'operation_total', (SELECT count(*) FROM tasks WHERE cat = 'operation'),
+  'operation_open', (SELECT count(*) FROM tasks WHERE cat = 'operation'
+      AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
+      AND lower(coalesce(process_status, '')) !~ '(reject|cancel|withdraw)'),
+  'operation_closed', (SELECT count(*) FROM tasks WHERE cat = 'operation'
+      AND (process_status IN ('Completed', 'Closed')
+        OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
+  'finance_total', (SELECT count(*) FROM tasks WHERE cat = 'finance'),
+  'finance_open', (SELECT count(*) FROM tasks WHERE cat = 'finance'
+      AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
+      AND lower(coalesce(process_status, '')) !~ '(reject|cancel|withdraw)'),
+  'finance_closed', (SELECT count(*) FROM tasks WHERE cat = 'finance'
+      AND (process_status IN ('Completed', 'Closed')
+        OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
   'total_app_users', (SELECT count(*) FROM solar_app_users),
   'signed_in_users', (
     SELECT count(*)
@@ -302,6 +332,22 @@ SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
+log "Building Operation vs Finance category sections (dashboard parity)"
+CATEGORY_JSON="$(jq -c '{
+  operation: {
+    total: (.operation_total // 0),
+    open: (.operation_open // 0),
+    closed: (.operation_closed // 0)
+  },
+  finance: {
+    total: (.finance_total // 0),
+    open: (.finance_open // 0),
+    closed: (.finance_closed // 0)
+  }
+}' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_CATEGORY_HTML="$(printf '%s' "${CATEGORY_JSON}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-solar-category-html.js")"
+[[ -n "${SOLAR_CATEGORY_HTML}" ]] || SOLAR_CATEGORY_HTML=""
+
 log "Rendering Solar HTML from published template (PostgreSQL or seed fallback)"
 
 TEMPLATE_SRC="$(mktemp)"
@@ -310,6 +356,15 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load Solar report template HTML."
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
+
+SEED_TEMPLATE="${REPO_ROOT}/db/seeds/solar-reinvestment-template.html"
+# Force seed layout when published Admin UI HTML is missing Operation vs Finance addon.
+if [[ -f "${SEED_TEMPLATE}" ]]; then
+  if ! grep -qF '{{CategorySectionsHtml}}' "${TEMPLATE_SRC}"; then
+    log "Published Solar template missing CategorySectionsHtml — using seed layout (Operation vs Finance)"
+    cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+  fi
+fi
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
@@ -327,7 +382,8 @@ jq -n \
   --arg TotalUsers "${SOLAR_TOTAL_USERS}" \
   --arg SignedInToday "${SOLAR_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${SOLAR_ROWS_HTML}" \
-  --arg ReportBody "Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status." \
+  --arg CategorySectionsHtml "${SOLAR_CATEGORY_HTML}" \
+  --arg ReportBody "Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation)." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
@@ -339,6 +395,7 @@ jq -n \
     TotalUsers: $TotalUsers,
     SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
+    CategorySectionsHtml: $CategorySectionsHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 

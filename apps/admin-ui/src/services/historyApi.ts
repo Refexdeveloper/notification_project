@@ -1,6 +1,7 @@
 import type { KissflowApplication } from '@/mocks/applications';
 import { resolveBackendApplicationId } from '@/services/applicationsApi';
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type SendHistoryRow = {
   id: string;
@@ -66,7 +67,7 @@ function mapSendRow(row: {
   return {
     id: row.id,
     application_id: row.application_id,
-    application_name: row.application_name || row.application_id || '—',
+    application_name: friendlyApplicationName(row.application_id, row.application_name || row.application_id || '—'),
     status,
     sent_at: row.sent_at || new Date(0).toISOString(),
     error_message: row.error_message,

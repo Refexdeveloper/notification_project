@@ -3,31 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   BarChart3,
-  CheckCircle2,
-  FolderOpen,
   LayoutGrid,
-  Percent,
-  PieChart as PieChartIcon,
   RefreshCw,
   Sparkles,
-  TrendingUp,
-  UserCheck,
   Users,
 } from 'lucide-react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Legend,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import Layout from '@/components/feature/Layout';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -40,30 +20,31 @@ import {
   refreshDashboardLive,
   type DashboardApplication,
 } from '@/services/dashboardApi';
-import { loadApplicationDashboard } from '@/services/appDashboardApi';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
 import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
 import {
   currentIstYear,
+  istTodayYmd,
   resolveDateScope,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
 import { buildAppOpenPath, readEmbedFromSearch, withEmbedParams } from '@/lib/embedMode';
-import { EMBED_EXECUTIVE, personalGreeting } from '@/lib/timeGreeting';
+import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
+import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
+import { buildEntityBucketOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
+import { loadApplicationRecordInventory } from '@/services/appRecordsApi';
+import type { AppRecordRow } from '@/services/appRecordsApi';
+import {
+  companyCountsFromRecords,
+  countTodayActivity,
+  ensureFilterOption,
+  entityCountsFromRecords,
+  filterAppRecords,
+  summarizeAppRecords,
+} from '@/lib/appDashboardClientFilter';
 
 const CARD_BORDER = 'rgba(226, 232, 240, 0.9)';
-const MUTED = '#64748b';
-const CHART_GRID = '#e2e8f0';
-
-const KPI_STYLES = [
-  { bg: '#EAF3FF', text: '#1E3A5F', muted: '#5B7A9D', iconBg: '#D6E8FF', iconColor: '#3977BE', icon: Users },
-  { bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D', icon: UserCheck },
-  { bg: '#FFF2E4', text: '#7A4A1A', muted: '#A96A20', iconBg: '#FFE8CC', iconColor: '#A96A20', icon: FolderOpen },
-  { bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D', icon: CheckCircle2 },
-] as const;
-
-const OPEN_COLOR = '#D4A574';
-const CLOSED_COLOR = '#5BA88A';
 
 const APP_CARD_ACCENTS = [
   { bg: '#EAF3FF', text: '#3977BE' },
@@ -74,14 +55,7 @@ const APP_CARD_ACCENTS = [
 ] as const;
 
 function formatWhen(value: string | null | undefined): string {
-  if (!value) return '—';
-  return new Date(value).toLocaleString('en-IN', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return displayWhen(value);
 }
 
 function aggregateMetrics(apps: DashboardApplication[]) {
@@ -178,116 +152,16 @@ function KpiCard({
   sub?: string;
   styleIndex?: number;
 }) {
-  const style = KPI_STYLES[styleIndex % KPI_STYLES.length];
-  const Icon = style.icon;
-
   return (
-    <div
-      className="relative min-w-0 overflow-hidden rounded-2xl p-5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]"
-      style={{ background: style.bg }}
-    >
-      <div className="relative flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider" style={{ color: style.muted }}>
-            {label}
-          </p>
-          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums" style={{ color: style.text }}>
-            {value.toLocaleString()}
-            {suffix}
-          </p>
-          {sub ? (
-            <p className="mt-2 text-sm font-semibold" style={{ color: style.muted }}>
-              {sub}
-            </p>
-          ) : null}
-        </div>
-        <div
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-black/5"
-          style={{ background: style.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: style.iconColor }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ChartTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ name?: string; value?: number; color?: string }>;
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-lg">
-      {label ? <p className="mb-1.5 text-xs font-semibold text-slate-900">{label}</p> : null}
-      <div className="space-y-1">
-        {payload.map((entry) => (
-          <div key={String(entry.name)} className="flex items-center gap-2 text-xs">
-            <span className="h-2 w-2 rounded-full" style={{ background: entry.color }} />
-            <span className="text-slate-500">{entry.name}</span>
-            <span className="ml-auto font-bold tabular-nums text-slate-900">{entry.value?.toLocaleString()}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BarChartTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ name?: string; value?: number; color?: string; payload?: { fullName?: string } }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const fullName = payload[0]?.payload?.fullName as string | undefined;
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-lg">
-      {fullName ? <p className="mb-1.5 text-xs font-semibold text-slate-900">{fullName}</p> : null}
-      <div className="space-y-1">
-        {payload.map((entry) => (
-          <div key={String(entry.name)} className="flex items-center gap-2 text-xs">
-            <span className="h-2 w-2 rounded-full" style={{ background: entry.color }} />
-            <span className="text-slate-500">{entry.name}</span>
-            <span className="ml-auto font-bold tabular-nums text-slate-900">{entry.value?.toLocaleString()}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DonutCenter({ total }: { total: number }) {
-  return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Total</p>
-      <p className="text-2xl font-bold tabular-nums text-slate-900">{total.toLocaleString()}</p>
-    </div>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="animate-pulse space-y-5">
-      <div className="h-12 rounded-2xl bg-slate-200/70" />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-[108px] rounded-2xl bg-slate-200/70" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="h-[280px] rounded-2xl bg-slate-200/70 lg:col-span-2" />
-        <div className="h-[280px] rounded-2xl bg-slate-200/70" />
-      </div>
-    </div>
+    <EmbedKpiCard
+      label={label}
+      value={value}
+      sub={sub}
+      suffix={suffix}
+      styleIndex={styleIndex}
+      themes={EMBED_EXEC_KPI_THEMES}
+      appKind="consolidated"
+    />
   );
 }
 
@@ -306,14 +180,14 @@ function AppDetailCard({
   const labels = app.metric_labels;
   const accent = APP_CARD_ACCENTS[accentIndex % APP_CARD_ACCENTS.length];
   const rows = [
-    { metric: 'Total items', value: appTotalItems(m) },
-    { metric: labels.sign_in_today, value: m.sign_in_today },
-    { metric: labels.sign_in_rate_overall, value: `${m.sign_in_rate_overall}%` },
-    { metric: labels.sign_in_rate_today, value: `${m.sign_in_rate_today}%` },
-    { metric: labels.open_tickets, value: m.open_tickets },
-    { metric: 'Opened today', value: m.opened_today ?? 0 },
-    { metric: labels.closed_tickets, value: m.closed_tickets },
-    { metric: 'Closed today', value: m.closed_today ?? 0 },
+    { metric: 'Total items', value: displayDashCount(appTotalItems(m)) },
+    { metric: labels.sign_in_today, value: displayDashCount(m.sign_in_today) },
+    { metric: labels.sign_in_rate_overall, value: `${displayDashCount(m.sign_in_rate_overall)}%` },
+    { metric: labels.sign_in_rate_today, value: `${displayDashCount(m.sign_in_rate_today)}%` },
+    { metric: labels.open_tickets, value: displayDashCount(m.open_tickets) },
+    { metric: 'Opened today', value: displayDashCount(m.opened_today) },
+    { metric: labels.closed_tickets, value: displayDashCount(m.closed_tickets) },
+    { metric: 'Closed today', value: displayDashCount(m.closed_today) },
   ];
 
   const subtitle = `${m.total_users} users · ${
@@ -327,7 +201,7 @@ function AppDetailCard({
   return (
     <DashboardCard
       title={app.application_name}
-      subtitle={embed ? undefined : subtitle}
+      subtitle={subtitle}
       action={
         <button
           type="button"
@@ -393,8 +267,12 @@ export default function DashboardPage() {
   });
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [entity, setEntity] = useState('all');
+  const [company, setCompany] = useState('all');
   const [filteredApplications, setFilteredApplications] = useState<DashboardApplication[] | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
+  const [catalogRecords, setCatalogRecords] = useState<AppRecordRow[]>([]);
+  const [catalogReady, setCatalogReady] = useState(false);
 
   useEffect(() => {
     const fromUrl = searchParams.get('app');
@@ -417,19 +295,6 @@ export default function DashboardPage() {
     if (forceRefresh) {
       setRefreshing(true);
       setError('');
-      const live = await refreshDashboardLive('production');
-      if (live.ok && live.data?.applications) {
-        applyDashboardData(live.data);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-      if (live.error) {
-        setRefreshWarnings((prev) => {
-          const msg = `Live refresh: ${live.error} — falling back to snapshot`;
-          return prev.includes(msg) ? prev : [...prev, msg];
-        });
-      }
     } else if (isDashboardCacheFresh('production')) {
       // Fresh within 5 minutes — paint from cache and skip network entirely.
       const cached = readDashboardCache('production');
@@ -454,8 +319,11 @@ export default function DashboardPage() {
     setError('');
     const result = await loadDashboard('production', {
       live: false,
-      skipCache: true,
+      skipCache: Boolean(forceRefresh),
     });
+    if (forceRefresh) {
+      void refreshDashboardLive('production').catch(() => undefined);
+    }
 
     if (!result.ok || !result.data) {
       if (!soft) {
@@ -480,8 +348,46 @@ export default function DashboardPage() {
   }, [load]);
 
   useEffect(() => {
-    // Default FY + All time: use overview snapshot (already fast) — no N-way API fan-out.
-    if (period === 'all' || period === 'fy') {
+    if (!applications.length || !backendMode) return;
+    let cancelled = false;
+    void (async () => {
+      const batchSize = 3;
+      const rows: AppRecordRow[] = [];
+      for (let i = 0; i < applications.length; i += batchSize) {
+        if (cancelled) return;
+        const batch = applications.slice(i, i + batchSize);
+        const part = await Promise.all(
+          batch.map(async (app) => {
+            try {
+              const inv = await loadApplicationRecordInventory({
+                applicationId: app.application_id,
+                environment: app.environment as 'production' | 'development',
+                skipCache: false,
+              });
+              return (inv.ok ? inv.items : []).map((row) => ({
+                ...row,
+                application_id: app.application_id,
+              }));
+            } catch {
+              return [];
+            }
+          }),
+        );
+        rows.push(...part.flat());
+      }
+      if (!cancelled) {
+        setCatalogRecords(rows);
+        setCatalogReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applications, backendMode]);
+
+  useEffect(() => {
+    // All time + All entities/companies: use overview snapshot.
+    if (period === 'all' && entity === 'all' && company === 'all') {
       setFilteredApplications(null);
       setFilterLoading(false);
       return;
@@ -489,8 +395,8 @@ export default function DashboardPage() {
 
     if (!applications.length) return;
 
-    // Today: use opened_today / closed_today already on the overview payload (instant).
-    if (period === 'daily') {
+    // Today with no entity/company: opened_today / closed_today on the overview payload.
+    if (period === 'daily' && entity === 'all' && company === 'all') {
       setFilterLoading(false);
       setFilteredApplications(
         applications.map((app) => {
@@ -510,55 +416,127 @@ export default function DashboardPage() {
       return;
     }
 
-    // Weekly / MTD / QTD / Month / Year / Custom → scoped app dashboards (5‑min cache).
+    if (!catalogReady) {
+      // Keep snapshot KPIs on screen — do not block landing while inventories load.
+      setFilterLoading(false);
+      return;
+    }
 
-    let cancelled = false;
-    setFilterLoading(true);
-    void (async () => {
-      // Prefer session cache (5 min). Never skipCache — that caused multi-minute filter waits.
-      const scoped = await Promise.all(
-        applications.map(async (app) => {
-          try {
-            const result = await loadApplicationDashboard({
-              applicationId: app.application_id,
-              environment: 'production',
-              period: resolvedDates.period,
-              dateFrom: resolvedDates.from,
-              dateTo: resolvedDates.to,
-              entity: 'all',
-              skipCache: false,
-            });
-            const dash = result.data;
-            if (!dash) return app;
-            const m = dash.metrics;
-            return {
-              ...app,
-              snapshot_at: dash.snapshot_at,
-              data_source: dash.data_source === 'live_overlay' ? 'live' : 'snapshot',
-              metrics: {
-                ...app.metrics,
-                open_tickets: Number(m.open ?? m.pending ?? 0),
-                closed_tickets: Number(m.closed ?? m.completed ?? 0),
-                rejected: Number(m.rejected || 0),
-                total_items: Number(m.total || 0),
-              },
-            } satisfies DashboardApplication;
-          } catch {
-            return app;
-          }
-        }),
+    setFilterLoading(false);
+    const scoped = applications.map((app) => {
+      const isItsm = /itsm|service_management/i.test(app.application_id || app.application_name || '');
+      const isTravel = /travel|expense_and_travel/i.test(app.application_id || app.application_name || '');
+      const mine = catalogRecords.filter(
+        (r) => String(r.application_id || '') === app.application_id,
       );
-      if (!cancelled) {
-        setFilteredApplications(scoped);
-        setFilterLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [applications, period, resolvedDates]);
+      const filtered = filterAppRecords(mine, {
+        entity,
+        company,
+        dateFrom: resolvedDates.from,
+        dateTo: resolvedDates.to,
+        itsmCompanyMode: isItsm,
+        travelMode: isTravel,
+        activityDates: period === 'daily',
+      });
+      const sum = summarizeAppRecords(filtered);
+      const today = countTodayActivity(filtered, istTodayYmd());
+      return {
+        ...app,
+        metrics: {
+          ...app.metrics,
+          open_tickets: sum.open,
+          closed_tickets: sum.closed,
+          rejected: sum.rejected,
+          total_items: sum.total,
+          opened_today: today.opened,
+          closed_today: today.closed,
+        },
+      } satisfies DashboardApplication;
+    });
+    setFilteredApplications(scoped);
+  }, [applications, catalogReady, catalogRecords, period, resolvedDates, entity, company]);
+
+  const entityOptions = useMemo(() => {
+    const rows = entityCountsFromRecords(catalogRecords);
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.id] = r.count;
+    return ensureFilterOption(
+      buildEntityBucketOptions(counts, { mode: 'all_buckets', allLabel: 'All entities' }),
+      entity,
+    );
+  }, [catalogRecords, entity]);
+  const companyOptions = useMemo(() => {
+    const rows = companyCountsFromRecords(catalogRecords, { entity });
+    return sortCompanyFilterOptions(ensureFilterOption(
+      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      company,
+    ));
+  }, [catalogRecords, company, entity]);
 
   const displayApplications = filteredApplications ?? applications;
+
+  const applicationFilterOptions = useMemo(
+    () => [
+      { id: 'all', label: 'All apps' },
+      ...displayApplications.map((a) => ({
+        id: `${a.environment}-${a.application_id}`,
+        label: a.application_name,
+      })),
+    ],
+    [displayApplications],
+  );
+
+  const handleEntityChange = (next: string) => {
+    setEntity(next);
+    setCompany('all');
+  };
+
+  const dashboardFilterBar = (
+    <ExecutiveDateFilterBar
+      period={period}
+      onPeriodChange={setPeriod}
+      calendarYear={calendarYear}
+      onCalendarYearChange={setCalendarYear}
+      calendarMonth={calendarMonth}
+      onCalendarMonthChange={setCalendarMonth}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onDateFromChange={setDateFrom}
+      onDateToChange={setDateTo}
+      entity={entity}
+      onEntityChange={handleEntityChange}
+      entityOptions={entityOptions}
+      entityLabel="Entity"
+      company={company}
+      onCompanyChange={setCompany}
+      companyOptions={companyOptions}
+      companyLabel="Company"
+      application={selectedAppId}
+      onApplicationChange={(id) => {
+        const next = id === 'all' ? 'all' : id;
+        setSelectedAppId(next);
+        if (embed) {
+          setSearchParams(withEmbedParams(searchParams, { app: next === 'all' ? null : next }), { replace: true });
+        }
+      }}
+      applicationOptions={applicationFilterOptions}
+      applicationLabel="Application"
+      refreshing={refreshing || filterLoading}
+      hideHints
+      embedLayout
+      onClearFilters={() => {
+        setPeriod('fy');
+        setSelectedAppId('all');
+        setEntity('all');
+        setCompany('all');
+        setDateFrom('');
+        setDateTo('');
+        if (embed) {
+          setSearchParams(withEmbedParams(searchParams, { app: null }), { replace: true });
+        }
+      }}
+    />
+  );
 
   const filteredApps = useMemo(() => {
     if (selectedAppId === 'all') return displayApplications;
@@ -566,51 +544,6 @@ export default function DashboardPage() {
   }, [displayApplications, selectedAppId]);
 
   const totals = useMemo(() => aggregateMetrics(filteredApps), [filteredApps]);
-
-  const barChartData = useMemo(
-    () =>
-      filteredApps.map((app) => ({
-        name: app.application_name.length > 14 ? `${app.application_name.slice(0, 12)}…` : app.application_name,
-        fullName: app.application_name,
-        open: app.metrics.open_tickets,
-        closed: app.metrics.closed_tickets,
-        signInToday: app.metrics.sign_in_today,
-      })),
-    [filteredApps],
-  );
-
-  /** Precomputed open/closed % so tooltip/axis show 80% not raw ticket counts. */
-  const workloadShareData = useMemo(
-    () =>
-      filteredApps.map((app) => {
-        const open = Number(app.metrics.open_tickets || 0);
-        const closed = Number(app.metrics.closed_tickets || 0);
-        const total = open + closed;
-        const openPct = total > 0 ? Math.round((open / total) * 1000) / 10 : 0;
-        const closedPct = total > 0 ? Math.round((closed / total) * 1000) / 10 : 0;
-        return {
-          name: app.application_name.length > 14 ? `${app.application_name.slice(0, 12)}…` : app.application_name,
-          fullName: app.application_name,
-          openPct,
-          closedPct,
-          open,
-          closed,
-          total,
-        };
-      }),
-    [filteredApps],
-  );
-
-  const donutData = useMemo(
-    () =>
-      [
-        { name: 'Open', value: totals.open_tickets, color: OPEN_COLOR },
-        { name: 'Closed', value: totals.closed_tickets, color: CLOSED_COLOR },
-      ].filter((d) => d.value > 0),
-    [totals],
-  );
-
-  const donutTotal = totals.open_tickets + totals.closed_tickets + totals.rejected;
 
   const embedAppTitle = useMemo(() => {
     if (!embed) return undefined;
@@ -637,73 +570,19 @@ export default function DashboardPage() {
 
   return (
     <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
-      <div
-        className="relative rounded-3xl border bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-[0_12px_40px_rgba(15,23,42,0.06)]"
-        style={{ borderColor: CARD_BORDER }}
-      >
+      <div className="relative rounded-3xl border border-slate-100 bg-transparent shadow-none">
         <DashboardLoadingOverlay
           show={Boolean(refreshing || filterLoading || (loading && applications.length === 0))}
           mode="fixed"
           label={
             refreshing
-              ? 'Refreshing live metrics…'
+              ? 'Updating dashboard…'
               : filterLoading
                 ? 'Applying date filters…'
                 : 'Loading dashboard…'
           }
         />
-        <div className="relative overflow-hidden rounded-t-3xl border-b border-[#D7E2EF] bg-[#EEF3FF] px-5 py-5">
-          {embed ? (
-            <div className="mb-4 border-b border-[#D7E2EF] pb-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3977BE]">
-                {personalGreeting()}
-              </p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800 sm:text-base">
-                {EMBED_EXECUTIVE.name} · {EMBED_EXECUTIVE.title}
-              </p>
-            </div>
-          ) : null}
-          <div className="relative flex flex-wrap items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white ring-1 ring-[#D7E2EF]">
-                <BarChart3 className="h-6 w-6 text-[#3977BE]" />
-              </div>
-              <div className="min-w-0">
-                {!embed ? (
-                  <div className="mb-1 flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 text-[#3977BE]" />
-                    <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#3977BE]/80">
-                      Engagement dashboard
-                    </span>
-                  </div>
-                ) : null}
-                {!embed ? (
-                  <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">Engagement overview</h1>
-                ) : null}
-                {!embed ? (
-                  <p className="truncate text-xs text-slate-500">
-                    {refreshMode === 'live' ? 'Live overlay' : 'PostgreSQL snapshot'} · fast landing
-                    {generatedAt ? ` · Updated ${formatWhen(generatedAt)}` : ''}
-                    {refreshing ? ' · refreshing…' : ''}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void load(true)}
-                disabled={loading || refreshing}
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                {refreshing ? 'Refreshing live…' : 'Refresh live'}
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <div className="relative space-y-6 p-5 md:p-6">
+        <div className="relative space-y-4 px-0 py-0 md:px-0">
           {refreshWarnings.length > 0 && (
             <div className="space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
               {refreshWarnings.map((w) => (
@@ -720,374 +599,51 @@ export default function DashboardPage() {
               primaryLabel="Retry"
               onPrimary={() => void load()}
             />
-          ) : loading && applications.length === 0 ? (
-            <div className="min-h-[280px]" />
-          ) : (
-            <div className="space-y-6">
-              <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-md sm:p-4">
-                <ExecutiveDateFilterBar
-                  period={period}
-                  onPeriodChange={setPeriod}
-                  calendarYear={calendarYear}
-                  onCalendarYearChange={setCalendarYear}
-                  calendarMonth={calendarMonth}
-                  onCalendarMonthChange={setCalendarMonth}
-                  dateFrom={dateFrom}
-                  dateTo={dateTo}
-                  onDateFromChange={setDateFrom}
-                  onDateToChange={setDateTo}
-                  application={selectedAppId}
-                  onApplicationChange={(id) => {
-                    const next = id === 'all' ? 'all' : id;
-                    setSelectedAppId(next);
-                    if (embed) {
-                      setSearchParams(
-                        withEmbedParams(searchParams, { app: next === 'all' ? null : next }),
-                        { replace: true },
-                      );
-                    }
-                  }}
-                  applicationOptions={[
-                    { id: 'all', label: 'All apps' },
-                    ...displayApplications.map((a) => ({
-                      id: `${a.environment}-${a.application_id}`,
-                      label: a.application_name,
-                    })),
-                  ]}
-                  refreshing={refreshing || filterLoading}
-                  hideHints={embed}
-                />
-                {period !== 'fy' || selectedAppId !== 'all' ? (
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPeriod('fy');
-                        setSelectedAppId('all');
-                        setDateFrom('');
-                        setDateTo('');
-                        if (embed) {
-                          setSearchParams(withEmbedParams(searchParams, { app: null }), { replace: true });
-                        }
-                      }}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-700"
-                    >
-                      Clear filters
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+          ) : loading && applications.length === 0 ? null : (
+            <div className="space-y-4">
+              <EmbedDashboardHero
+                actions={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void load(true)}
+                    disabled={loading || refreshing}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                    {refreshing ? 'Updating…' : 'Refresh'}
+                  </Button>
+                }
+                filters={dashboardFilterBar}
+              />
 
-              {selectedAppId !== 'all' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const appId = filteredApps[0]?.application_id || selectedAppId;
-                    navigate(
-                      buildAppOpenPath({
-                        environment: filteredApps[0]?.environment,
-                        applicationId: appId,
-                        tab: 'dashboard',
-                        embed,
-                      }),
-                    );
-                  }}
-                  className="group flex w-full items-center justify-between gap-3 rounded-2xl border border-[#D0E0F5] bg-[#EEF3FF] px-4 py-3.5 text-left text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] transition hover:bg-[#EAF2FF] sm:px-5"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5B7A9D]">
-                      {embed ? 'Open project dashboard' : 'Go to application'}
-                    </p>
-                    <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">
-                      {filteredApps[0]?.application_name || 'Open dashboard'}
-                    </p>
-                  </div>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] group-hover:bg-[#EAF2FF]">
-                    Open
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </span>
-                </button>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {displayApplications.map((app) => {
-                    const id = `${app.environment}-${app.application_id}`;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() =>
-                          navigate(
-                            buildAppOpenPath({
-                              environment: app.environment,
-                              applicationId: app.application_id,
-                              tab: 'dashboard',
-                              embed,
-                            }),
-                          )
-                        }
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-800"
-                      >
-                        <span className="truncate">{app.application_name}</span>
-                        <ArrowRight className="h-3 w-3 shrink-0 opacity-60" />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <div className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div className={NE_KPI_GRID_CLASS}>
                     <KpiCard
                       label="Total items"
                       value={totals.open_tickets + totals.closed_tickets + totals.rejected}
-                      sub={
-                        embed
-                          ? undefined
-                          : period === 'all'
-                            ? selectedAppId === 'all'
-                              ? 'All applications · open + closed + rejected'
-                              : 'Selected application'
-                            : 'Filtered by created date'
-                      }
                       styleIndex={0}
                     />
-                    <KpiCard
-                      label="Total users"
-                      value={totals.total_users}
-                      sub={embed ? undefined : `${totals.sign_in_today} of ${totals.total_users} today`}
-                      styleIndex={1}
-                    />
+                    <KpiCard label="Total users" value={totals.total_users} styleIndex={1} />
                     <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={2} />
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <div className="relative min-w-0 overflow-hidden rounded-2xl bg-[#F0EDFF] p-5 text-slate-800 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E0D9F5]">
-                      <div className="relative flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-[#5B4B9A]">
-                            Adoption today
-                          </p>
-                          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums text-slate-900">
-                            {totals.total_users
-                              ? Math.round((totals.sign_in_today / totals.total_users) * 100)
-                              : 0}
-                            %
-                          </p>
-                          {!embed ? (
-                            <p className="mt-2 text-sm font-semibold text-slate-500">
-                              Signed in today ÷ total users · not affected by date filter
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 ring-1 ring-[#E0D9F5]">
-                          <Percent className="h-5 w-5 text-[#5B4B9A]" />
-                        </div>
-                      </div>
-                    </div>
-                    <KpiCard
-                      label="Open items"
-                      value={totals.open_tickets}
-                      sub={embed ? undefined : `${totals.opened_today} today`}
-                      styleIndex={2}
+                    <EmbedKpiCard
+                      label="Adoption today"
+                      value={
+                        totals.total_users
+                          ? Math.round((totals.sign_in_today / totals.total_users) * 100)
+                          : 0
+                      }
+                      suffix="%"
+                      sub="Signed in today ÷ total users"
+                      themes={[EMBED_ADOPTION_THEME]}
+                      styleIndex={0}
                     />
-                    <KpiCard
-                      label="Closed items"
-                      value={totals.closed_tickets}
-                      sub={embed ? undefined : `${totals.closed_today} today`}
-                      styleIndex={3}
-                    />
+                    <KpiCard label="Open items" value={totals.open_tickets} styleIndex={2} />
+                    <KpiCard label="Closed items" value={totals.closed_tickets} styleIndex={3} />
+                    <KpiCard label="Opened today" value={totals.opened_today} styleIndex={0} />
+                    <KpiCard label="Closed today" value={totals.closed_today} styleIndex={2} />
                   </div>
                 </div>
-
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                  <DashboardCard
-                    className="lg:col-span-2"
-                    title="Open vs closed by application"
-                    subtitle={embed ? undefined : 'Clustered column chart'}
-                    icon={TrendingUp}
-                  >
-                    {barChartData.length === 0 ? (
-                      <p className="flex h-full min-h-[180px] items-center justify-center text-sm text-slate-500">
-                        No application data
-                      </p>
-                    ) : (
-                      <div className="h-[240px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={barChartData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }} barGap={6}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-                            <XAxis
-                              dataKey="name"
-                              tick={{ fontSize: 11, fill: MUTED }}
-                              axisLine={{ stroke: CHART_GRID }}
-                              tickLine={false}
-                            />
-                            <YAxis
-                              tick={{ fontSize: 11, fill: MUTED }}
-                              axisLine={{ stroke: CHART_GRID }}
-                              tickLine={false}
-                            />
-                            <Tooltip content={<BarChartTooltip />} cursor={{ fill: 'rgba(148,163,184,0.08)', radius: 8 }} />
-                            <Legend
-                              verticalAlign="top"
-                              align="right"
-                              iconType="circle"
-                              wrapperStyle={{ fontSize: 11, paddingBottom: 8 }}
-                            />
-                            <defs>
-                              <linearGradient id="openBarGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#fb923c" />
-                                <stop offset="100%" stopColor="#ea580c" />
-                              </linearGradient>
-                              <linearGradient id="closedBarGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#34d399" />
-                                <stop offset="100%" stopColor="#059669" />
-                              </linearGradient>
-                            </defs>
-                            <Bar
-                              dataKey="open"
-                              name="Open"
-                              fill="url(#openBarGradient)"
-                              radius={[8, 8, 0, 0]}
-                              maxBarSize={44}
-                              isAnimationActive={false}
-                            />
-                            <Bar
-                              dataKey="closed"
-                              name="Closed"
-                              fill="url(#closedBarGradient)"
-                              radius={[8, 8, 0, 0]}
-                              maxBarSize={44}
-                              isAnimationActive={false}
-                            />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-                  </DashboardCard>
-
-                  <DashboardCard title="Work item mix" subtitle={embed ? undefined : 'Donut · selected scope'} icon={PieChartIcon}>
-                    {donutData.length === 0 ? (
-                      <p className="flex h-full min-h-[180px] items-center justify-center text-sm text-slate-500">
-                        No ticket data
-                      </p>
-                    ) : (
-                      <div className="relative h-[240px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={donutData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={58}
-                              outerRadius={82}
-                              paddingAngle={4}
-                              stroke="rgba(255,255,255,0.9)"
-                              strokeWidth={3}
-                              isAnimationActive={false}
-                            >
-                              {donutData.map((entry) => (
-                                <Cell key={entry.name} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip content={<ChartTooltip />} />
-                            <Legend verticalAlign="bottom" iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <DonutCenter total={donutTotal} />
-                      </div>
-                    )}
-                  </DashboardCard>
-                </div>
-
-                <DashboardCard
-                  title="Executive workload share"
-                  subtitle={embed ? undefined : 'Per-app open vs closed mix'}
-                  icon={BarChart3}
-                >
-                  {workloadShareData.length === 0 ? (
-                    <p className="flex h-full min-h-[160px] items-center justify-center text-sm text-slate-500">
-                      No application data
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="h-[220px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={workloadShareData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-                            <XAxis dataKey="name" tick={{ fontSize: 11, fill: MUTED }} />
-                            <YAxis
-                              domain={[0, 100]}
-                              tickFormatter={(v) => `${v}%`}
-                              tick={{ fontSize: 11, fill: MUTED }}
-                              width={40}
-                            />
-                            <Tooltip
-                              content={({ active, payload }) => {
-                                if (!active || !payload?.length) return null;
-                                const row = payload[0]?.payload as {
-                                  fullName?: string;
-                                  openPct?: number;
-                                  closedPct?: number;
-                                  open?: number;
-                                  closed?: number;
-                                };
-                                return (
-                                  <div
-                                    className="rounded-xl border bg-white px-3 py-2.5 shadow-lg"
-                                    style={{ borderColor: CARD_BORDER }}
-                                  >
-                                    <p className="mb-1.5 text-xs font-semibold text-slate-900">{row.fullName}</p>
-                                    <div className="space-y-1 text-xs">
-                                      <div className="flex items-center gap-2">
-                                        <span className="h-2 w-2 rounded-full" style={{ background: OPEN_COLOR }} />
-                                        <span className="text-slate-500">Open</span>
-                                        <span className="ml-auto font-bold tabular-nums text-slate-900">
-                                          {row.openPct}% ({Number(row.open || 0).toLocaleString('en-IN')})
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <span className="h-2 w-2 rounded-full" style={{ background: CLOSED_COLOR }} />
-                                        <span className="text-slate-500">Closed</span>
-                                        <span className="ml-auto font-bold tabular-nums text-slate-900">
-                                          {row.closedPct}% ({Number(row.closed || 0).toLocaleString('en-IN')})
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              }}
-                            />
-                            <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                            <Bar dataKey="openPct" name="Open %" fill={OPEN_COLOR} radius={[6, 6, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                            <Bar dataKey="closedPct" name="Closed %" fill={CLOSED_COLOR} radius={[6, 6, 0, 0]} maxBarSize={28} isAnimationActive={false} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-                        {workloadShareData.map((row) => (
-                          <div
-                            key={row.fullName}
-                            className="relative overflow-hidden rounded-xl border border-slate-100 bg-slate-50/80 p-3"
-                          >
-                            <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                              {row.fullName}
-                            </p>
-                            <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{row.closedPct}%</p>
-                            {!embed ? (
-                              <p className="text-[11px] text-slate-500">Closed share · {row.openPct}% open</p>
-                            ) : null}
-                            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-slate-200">
-                              <div className="h-full" style={{ width: `${row.openPct}%`, background: OPEN_COLOR }} />
-                              <div className="h-full" style={{ width: `${row.closedPct}%`, background: CLOSED_COLOR }} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </DashboardCard>
 
                 <SectionHeader icon={LayoutGrid} title="Application detail" accent="from-blue-500 to-indigo-600" />
 
@@ -1116,6 +672,7 @@ export default function DashboardPage() {
                               applicationId: app.application_id,
                               tab: 'dashboard',
                               embed,
+                              fromSearch: searchParams,
                             }),
                           )
                         }

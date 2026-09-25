@@ -1,16 +1,30 @@
 # Embed Admin UI dashboards in Refexone (super-app)
 
-**Status:** Phase 1 implemented locally on branch `feature/refexone-embed-dashboard` (`?embed=1`). Deploy admin-ui to production to go live. SSO / embed-token (Phase 2) still future work.
+**Status:** Phase 1 **live** (`embed7b` admin-ui + `embed7` backend). Revisions: `refex-admin-ui-00116-5vw` → pending embed7b; backend `refex-backend-api-00159-6j7`.
+
+## Embed design tokens (reference screenshot + Refex brand)
+
+| Token | Value | Notes |
+|-------|-------|-------|
+| Page background | `#F5F7FA` | Matches PM dashboard screenshot |
+| Font | **Inter** | Same as reference; artifact link was not readable |
+| Accent blue | `#0F6CBD` | Refex brand (not Material `#1976D2`) |
+| Icon pill bg | `#EEF3FF` | Filter icon circles |
+| Card | white, `rounded-xl`, shadow `0 4px 18px rgba(112,144,176,0.12)` | KPI + chart cards in embed |
 
 ## Embed layout (`?embed=1` only — normal Admin UI unchanged)
 
 | Zone | Content |
 |------|---------|
-| **Top header** | Application name only (e.g. “IT Service Management”) |
+| **Top header** | Application name only (e.g. “IT Helpdesk”) |
 | **Second container (pastel card)** | Time greeting (Good morning / afternoon / evening) + **Dinesh Agarwal · Group CEO** + Full Engagement report + icon + Active badge + Refresh dashboard |
 | **Below** | Same KPI charts/tables; all explanatory/filter/technical copy hidden (no Last synced, no kissflow domain, no filter hints) |
 
 Original application URLs are unchanged — append `&embed=1` to get the embed shell.
+
+**Refexone Back button:** append `&return_to=https://your-refexone-url` (URL-encoded). Browser Back returns to Refexone instead of Admin UI history.
+
+**Embed filters (right-aligned, same row as greeting):** Company · User · Period. Compare removed. No Business Functions filter.
 
 ## Goal
 
@@ -45,7 +59,7 @@ Base: `https://refex-admin-ui-dhwffeu7pq-el.a.run.app`
 
 | Refexone card | Embed dashboard URL |
 |---------------|---------------------|
-| IT Service Management | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
+| IT Helpdesk | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
 | Project Tracker | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Project_Management_Tracker_A00?tab=dashboard&embed=1` |
 | Procurement / P2P | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Procurement_to_Pay_A00?tab=dashboard&embed=1` |
 | Travel | `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/applications/production-Expense_and_Travel_Management_A00?tab=dashboard&embed=1` |
@@ -65,7 +79,7 @@ Example ITSM: `https://refex-admin-ui-dhwffeu7pq-el.a.run.app/dashboard?embed=1&
 
 | Refexone card | `application_id` | Path |
 |---------------|------------------|------|
-| IT Management / ITSM | `IT_Service_Management_A00` | `/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
+| IT Helpdesk / ITSM | `IT_Service_Management_A00` | `/applications/production-IT_Service_Management_A00?tab=dashboard&embed=1` |
 | Project Tracker | `Project_Management_Tracker_A00` | `/applications/production-Project_Management_Tracker_A00?tab=dashboard&embed=1` |
 | Procurement / P2P | `Procurement_to_Pay_A00` | `/applications/production-Procurement_to_Pay_A00?tab=dashboard&embed=1` |
 | Travel | `Expense_and_Travel_Management_A00` | `/applications/production-Expense_and_Travel_Management_A00?tab=dashboard&embed=1` |
@@ -127,7 +141,7 @@ Pick one:
 
 1. Map KPI card `id` → Notification Engine `application_id` in super-app config.  
 2. On click (CEO/CTO role only):  
-   `window.open(ADMIN_UI_BASE + '/applications/production-' + appId + '?tab=dashboard&embed=1', '_blank')`  
+   `window.open(ADMIN_UI_BASE + '/applications/production-' + appId + '?tab=dashboard&embed=1&return_to=' + encodeURIComponent(REFEXONE_RETURN_URL), '_blank')`  
    or navigate WebView.  
 3. Ensure role gate: only users with `ceo` / `cto` (or app-role allowlist) see the card / can mint embed tokens.
 

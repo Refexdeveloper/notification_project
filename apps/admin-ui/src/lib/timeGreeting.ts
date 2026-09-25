@@ -19,13 +19,7 @@ export function greetingForIstHour(now = new Date()): 'Good morning' | 'Good aft
   return 'Good evening';
 }
 
-/** Fixed executive identity for Refexone embed shell. */
-export const EMBED_EXECUTIVE = {
-  name: 'Dinesh Agarwal',
-  title: 'Group CEO',
-} as const;
-
-/** e.g. "Good morning" for embed chip; name/title are separate in the header. */
+/** Time-of-day greeting only. Name/title come from the embed URL or the logged-in session. */
 export function personalGreeting(opts?: { now?: Date }): string {
   return greetingForIstHour(opts?.now);
 }

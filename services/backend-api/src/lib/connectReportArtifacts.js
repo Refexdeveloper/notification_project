@@ -5,6 +5,7 @@ const { createSchedule } = require('./scheduleRepository');
 const { getStarterHtml, suggestStarterId, STARTER_CATALOG } = require('./reportStarters');
 const { checksumForContent } = require('./templateContent');
 const { normalizeReportTemplateHtml } = require('./templatePipelineSync');
+const { friendlyApplicationName } = require('./dashboardDisplay');
 
 const DEFAULT_CRON = '0 9 * * 1-5';
 const DEFAULT_TIMEZONE = 'Asia/Kolkata';
@@ -118,7 +119,10 @@ async function ensureConnectReportArtifacts(client, { environment, applicationId
       processes.flatMap((p) => (Array.isArray(p.field_names) ? p.field_names : [])).filter(Boolean),
     ),
   ];
-  const appName = String(app.application_name || applicationId).trim() || applicationId;
+  const appName = friendlyApplicationName(
+    applicationId,
+    String(app.application_name || applicationId).trim() || applicationId,
+  );
 
   const analysis = {
     application_id: applicationId,

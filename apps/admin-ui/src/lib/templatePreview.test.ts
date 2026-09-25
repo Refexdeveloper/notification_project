@@ -48,6 +48,12 @@ describe('templatePreview', () => {
     expect(out).toContain('alt="refexOne"');
   });
 
+  it('renames IT Service Management to IT Helpdesk in preview HTML', () => {
+    const html = '<p>Live IT Service Request · IT Service Management</p>';
+    expect(applyTemplateVariables(html, {})).toContain('IT Helpdesk');
+    expect(applyTemplateVariables(html, {})).not.toContain('IT Service Management');
+  });
+
   it('merges scheduler overrides on legacy call shape', () => {
     const html = '{{ReportTitle}} — {{OpenTickets}} open';
     const out = renderPreviewHtml(html, {

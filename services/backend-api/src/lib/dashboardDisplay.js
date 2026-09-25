@@ -91,6 +91,20 @@ function classifySolarCategory(payload, currentStep) {
 
 const NON_HUMAN_NAME_RE =
   /^(it\s*helpdesk|help\s*desk|power\s*bi|system|bot|lead\s*bot|lead\s*tracker(\s*app)?|tracker\s*app|service\s*account|noreply|no-reply|sa-[\w-]+|kf[_-]|user[_-]?\d+$)/i;
+
+/** ITSM role labels from Kissflow → executive MIS names (Refex ITSM). */
+const ITSM_PERSON_ALIASES = new Map([
+  ['it manager', 'Sakthivel'],
+  ['it manager refex', 'Sakthivel'],
+  ['it head', 'Mugesh'],
+]);
+
+function normalizeItsmPersonLabel(name) {
+  const text = String(name || '').trim();
+  if (!text) return '';
+  const key = text.toLowerCase().replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+  return ITSM_PERSON_ALIASES.get(key) || text;
+}
 /** Kissflow internal ids: SA-DwZd_N8hF5, Us-xxxx, etc. */
 const KISSFLOW_ID_RE = /^[A-Za-z]{2}-[\w-]{6,}$/;
 
@@ -121,33 +135,76 @@ function isDisplayablePersonName(name, userId) {
  */
 function resolvePersonDisplayName(name, email, userId) {
   for (const candidate of [name, email]) {
-    const text = String(candidate || '').trim();
+    const text = normalizeItsmPersonLabel(String(candidate || '').trim());
     if (text && isDisplayablePersonName(text, userId)) return text;
   }
   return null;
 }
 
+function compactMisName(name) {
+  const parts = String(name || '').trim().toLowerCase()
+    .replace(/\./g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  while (parts.length > 1 && parts[parts.length - 1].length === 1) parts.pop();
+  return parts.join('');
+}
+
+/** Collapse porchezhiyan / porchezhiyan.m M / porchezhiyan M into one row. */
+function normalizeMisPersonKey(name, email, userId) {
+  const mail = String(email || '').trim().toLowerCase();
+  if (mail.includes('@')) return `email:${mail}`;
+  const compact = compactMisName(name);
+  if (compact.length >= 3) return `name:${compact}`;
+  const id = String(userId || '').trim().toLowerCase();
+  if (id && !looksLikeKissflowUserId(id)) return `id:${id}`;
+  return `raw:${String(name || id).toLowerCase()}`;
+}
+
 function cleanMisUsers(users) {
-  const seen = new Set();
-  const out = [];
+  const map = new Map();
   for (const u of users || []) {
     const id = String(u.user_id || '').trim();
     const display = resolvePersonDisplayName(u.user_name, u.email, id);
     if (!display) continue;
-    const key = `${display.toLowerCase()}|${String(u.email || '').toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      ...u,
-      user_name: display,
-      open: Number(u.open ?? u.pending ?? 0),
-      closed: Number(u.closed ?? u.completed ?? 0),
-      rejected: Number(u.rejected || 0),
-      pending: undefined,
-      completed: undefined,
-    });
+    const key = normalizeMisPersonKey(display, u.email, id);
+    const open = Number(u.open ?? u.pending ?? 0);
+    const closed = Number(u.closed ?? u.completed ?? 0);
+    const rejected = Number(u.rejected || 0);
+    const hit = map.get(key);
+    if (!hit) {
+      map.set(key, {
+        ...u,
+        user_name: display,
+        open,
+        closed,
+        rejected,
+        total: open + closed + rejected,
+        pending: undefined,
+        completed: undefined,
+      });
+      continue;
+    }
+    hit.open += open;
+    hit.closed += closed;
+    hit.rejected += rejected;
+    hit.total = hit.open + hit.closed + hit.rejected;
+    if (display.length > String(hit.user_name || '').length) hit.user_name = display;
+    if (u.email && !hit.email) hit.email = u.email;
+    if (id && !looksLikeKissflowUserId(id) && looksLikeKissflowUserId(String(hit.user_id || ''))) {
+      hit.user_id = id;
+    }
+    if (u.last_sign_in && (!hit.last_sign_in || new Date(u.last_sign_in) > new Date(hit.last_sign_in))) {
+      hit.last_sign_in = u.last_sign_in;
+    }
+    if (hit.open + hit.closed > 0) {
+      hit.closure_ratio = Math.round((hit.closed / (hit.open + hit.closed)) * 1000) / 10;
+    }
   }
-  return out;
+  return [...map.values()];
 }
 
 /** Drop / rename rows that only have Kissflow id display names (any user list shape). */
@@ -169,6 +226,23 @@ function filterDisplayablePeople(rows, nameKeys = ['user_name', 'name']) {
   return out;
 }
 
+const ITSM_APP_ID = 'IT_Service_Management_A00';
+const ITSM_DISPLAY_NAME = 'IT Helpdesk';
+
+/** Kissflow app id stays IT_Service_Management_A00; UI/email label is IT Helpdesk. */
+function friendlyApplicationName(applicationId, applicationName) {
+  const id = String(applicationId || '').trim();
+  const name = String(applicationName || '').trim();
+  if (
+    id === ITSM_APP_ID
+    || /it[_-]?service[_-]?management/i.test(id)
+    || /^it\s*service\s*management$/i.test(name)
+  ) {
+    return ITSM_DISPLAY_NAME;
+  }
+  return name || id;
+}
+
 module.exports = {
   SOURCE_FIELD_KEYS,
   pickSourceRaw,
@@ -177,7 +251,11 @@ module.exports = {
   looksLikeKissflowUserId,
   isDisplayablePersonName,
   resolvePersonDisplayName,
+  normalizeItsmPersonLabel,
   cleanMisUsers,
   filterDisplayablePeople,
   stringifyKfValue,
+  ITSM_APP_ID,
+  ITSM_DISPLAY_NAME,
+  friendlyApplicationName,
 };

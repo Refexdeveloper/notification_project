@@ -32,6 +32,9 @@ async function invokeScheduleRunner(scheduleId, options = {}) {
   if (options.testRecipient) {
     url.searchParams.set('test_recipient', String(options.testRecipient).trim().toLowerCase());
   }
+  if (options.fullIngest === true || options.fullIngest === 'true' || options.fullIngest === '1') {
+    url.searchParams.set('full_ingest', '1');
+  }
 
   const headers = { Accept: 'text/plain' };
   if (process.env.K_SERVICE || process.env.GOOGLE_CLOUD_PROJECT) {

@@ -1,0 +1,23 @@
+---
+description: KPI card size and palette must match Project Tracker — never stretch 3-col
+globs: apps/admin-ui/src/components/feature/EmbedKpiCard.tsx,apps/admin-ui/src/pages/dashboard/page.tsx,apps/admin-ui/src/pages/applications/detail/components/AppDashboardTab.tsx
+alwaysApply: true
+---
+
+# Project Tracker KPI card contract (Notification Engine)
+
+Design reference (read-only, do not merge repos):
+
+`/Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx`
+
+- `PremiumKPICard` — `min-h-[112px] lg:min-h-[168px]`, label + value left, icon right
+- `DASHBOARD_CARD_GRID` — `grid grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4`
+- Palette: `#2B5AED` `#0084AD` `#22C55E` `#EF4444` `#8B5CF6` `#F97316`
+
+## Rules
+
+- Embed and normal dashboards use the same `EmbedKpiCard` / `NE_KPI_GRID_CLASS`.
+- **Always 4-up on xl.** Never `md:grid-cols-3` for 3 or 6 cards — that stretches cards too wide.
+- Incomplete last rows stay quarter-width (empty cells OK). Do not grow remaining cards to fill the row.
+- Same height and width for every card in the grid. No empty space *inside* a stretched card.
+- Do not change scheduled-email KPI logic when restyling cards.

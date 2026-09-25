@@ -28,6 +28,17 @@ function jobNameFor(scheduleId, legacySchedulerId) {
   return `ne-schedule-${String(scheduleId).toLowerCase().slice(0, 36)}`;
 }
 
+/** Stable Cloud Scheduler job names for apps created before PostgreSQL schedule IDs. */
+function resolveLegacySchedulerId(applicationId, entityFilter) {
+  const app = String(applicationId || '');
+  const entity = String(entityFilter || '').trim().toLowerCase();
+  if (app === 'Expense_and_Travel_Management_A00') {
+    if (entity === 'refex') return 'sch-refex-travel-daily-refex';
+    if (entity === 'venwind' || !entity || entity === 'all') return 'sch-refex-travel-daily';
+  }
+  return null;
+}
+
 async function schedulerFetch(path, { method = 'GET', body, token }) {
   const res = await fetch(`https://cloudscheduler.googleapis.com/v1/${path}`, {
     method,
@@ -142,4 +153,5 @@ async function syncScheduleCloudJob(row) {
 module.exports = {
   syncScheduleCloudJob,
   jobNameFor,
+  resolveLegacySchedulerId,
 };

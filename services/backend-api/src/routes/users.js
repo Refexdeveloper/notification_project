@@ -3,6 +3,8 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
+const { filterDisplayablePeople } = require('../lib/dashboardDisplay');
+const { isLoggedInToday } = require('../lib/reportTimezone');
 
 const router = express.Router();
 
@@ -45,8 +47,6 @@ function normalizeEnvironment(value) {
   return lower;
 }
 
-const { isLoggedInToday } = require('../lib/reportTimezone');
-
 function buildTotals(rows) {
   return {
     total_users: rows.length,
@@ -55,6 +55,36 @@ function buildTotals(rows) {
     never_logged_in: rows.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
   };
 }
+
+router.get('/management', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return dbNotConfigured(res, req.correlationId);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment);
+  if (!environment) {
+    return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
+  }
+
+  try {
+    const { loadUserManagement } = require('../lib/userManagement');
+    const data = await loadUserManagement(getPool(), environment);
+    return ok(res, req.correlationId, data);
+  } catch (err) {
+    if (err.code === '42P01') {
+      return ok(res, req.correlationId, {
+        items: [],
+        count: 0,
+        totals: { total_users: 0, active_today: 0, open: 0, closed: 0, rejected: 0 },
+        warning: 'SCHEMA_NOT_MIGRATED',
+      });
+    }
+    if (err.code === 'DATABASE_NOT_CONFIGURED') {
+      return dbNotConfigured(res, req.correlationId);
+    }
+    return fail(res, req.correlationId, 'USER_MANAGEMENT_FAILED', err.message, 500, true);
+  }
+});
 
 router.get('/', async (req, res) => {
   if (!isDatabaseConfigured()) {
@@ -69,21 +99,24 @@ router.get('/', async (req, res) => {
   try {
     const { rows } = await getPool().query(USERS_QUERY, [environment]);
     const snapshotAt = rows[0]?.snapshot_at || null;
-    const items = rows.map((row) => ({
-      user_id: row.user_id,
-      user_name: row.user_name,
-      email: row.email,
-      user_type: row.user_type,
-      active_status: row.active_status,
-      last_sign_in: row.last_sign_in,
-      ever_logged_in: row.ever_logged_in,
-      source_payload: row.source_payload,
-    }));
+    const items = filterDisplayablePeople(
+      rows.map((row) => ({
+        user_id: row.user_id,
+        user_name: row.user_name,
+        email: row.email,
+        user_type: row.user_type,
+        active_status: row.active_status,
+        last_sign_in: row.last_sign_in,
+        ever_logged_in: row.ever_logged_in,
+        source_payload: row.source_payload,
+      })),
+      ['user_name'],
+    ).map(({ name, ...rest }) => rest);
 
     return ok(res, req.correlationId, {
       items,
       count: items.length,
-      totals: buildTotals(rows),
+      totals: buildTotals(items),
       generated_at: new Date().toISOString(),
       snapshot_at: snapshotAt,
       environment,

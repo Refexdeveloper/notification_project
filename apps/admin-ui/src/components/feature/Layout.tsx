@@ -6,8 +6,7 @@ import Header from './Header';
 import PageMotion from '@/components/ui/PageMotion';
 import { useAuth } from '@/hooks/AuthContext';
 import { duration, easeOutExpo } from '@/lib/motion';
-import { apiV1Fetch, isBackendApiMode } from '@/services/backendApi';
-import { readEmbedFromSearch } from '@/lib/embedMode';
+import { readEmbedFromSearch, resolveEmbedReturnUrl } from '@/lib/embedMode';
 
 interface BreadcrumbItem {
   label: string;
@@ -29,23 +28,7 @@ interface LayoutProps {
 const SIDEBAR_KEY = 'ne_sidebar_collapsed';
 const SIDEBAR_EXPANDED = 264;
 const SIDEBAR_COLLAPSED = 72;
-const HOURLY_SYNC_MS = 60 * 60 * 1000;
 const MOBILE_MQ = '(max-width: 767px)';
-
-/** Weekdays Mon–Fri, 09:00–18:59 Asia/Kolkata (matches Cloud Scheduler window). */
-function isWeekdayBusinessHoursIst(now = new Date()): boolean {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    weekday: 'short',
-    hour: 'numeric',
-    hour12: false,
-  }).formatToParts(now);
-  const weekday = parts.find((p) => p.type === 'weekday')?.value || '';
-  const hourRaw = parts.find((p) => p.type === 'hour')?.value || '0';
-  const hour = Number(hourRaw === '24' ? '0' : hourRaw);
-  const isWeekday = weekday !== 'Sat' && weekday !== 'Sun';
-  return isWeekday && hour >= 9 && hour <= 18;
-}
 
 export default function Layout({ children, breadcrumbs, title, embedAppTitle, embed: embedProp, headerActions }: LayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -81,6 +64,22 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
     setMobileNavOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!embed) return undefined;
+    document.body.classList.add('embed-shell');
+    const returnTo = resolveEmbedReturnUrl(searchParams);
+    // One guard entry so the first browser Back always fires popstate (even on direct/new-tab opens).
+    window.history.pushState({ refexEmbedBack: true }, '');
+    const onPopState = () => {
+      window.location.replace(returnTo);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      document.body.classList.remove('embed-shell');
+    };
+  }, [embed, searchParams]);
+
   const toggleSidebar = useCallback(() => {
     if (isMobile) {
       setMobileNavOpen((v) => !v);
@@ -103,24 +102,8 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
     }
   }, [isAuthenticated, navigate, location.pathname]);
 
-  useEffect(() => {
-    if (!isAuthenticated || !isBackendApiMode()) return;
-
-    const run = () => {
-      if (!isWeekdayBusinessHoursIst()) return;
-      void apiV1Fetch('/ops/incremental-sync?environment=production', {
-        method: 'POST',
-        body: JSON.stringify({ refresh_engagement: true }),
-      });
-    };
-
-    const initial = window.setTimeout(run, 15_000);
-    const interval = window.setInterval(run, HOURLY_SYNC_MS);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(interval);
-    };
-  }, [isAuthenticated]);
+  // Incremental sync runs on Cloud Scheduler (runbook 36) — do not trigger from the browser;
+  // it competes with dashboard queries for DB pool connections and Kissflow API quota.
 
   if (!isAuthenticated) return null;
 

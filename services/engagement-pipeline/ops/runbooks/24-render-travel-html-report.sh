@@ -58,7 +58,8 @@ USER_FILTER="${USER_FILTER:-${REQUESTER_FILTER:-}}"
 DATE_FROM="${DATE_FROM:-}"
 DATE_TO="${DATE_TO:-}"
 
-log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+# Logs must go to stderr — load_entity_payload captures stdout as JSON for node.
+log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
 sql_escape() {
@@ -109,20 +110,63 @@ ensure_refexone_logo() {
   fi
 }
 
-travel_entity_sql() {
+travel_entity_key_expr() {
+  echo "lower(trim(coalesce(
+    nullif(trim(i.entity), ''),
+    nullif(trim(i.source_payload->>'Entity'), ''),
+    nullif(trim(i.source_payload->'Entity'->>'Name'), ''),
+    nullif(trim(i.source_payload->'Entity'->>'Value'), ''),
+    nullif(trim(i.source_payload->'Entity'->>'v'), ''),
+    nullif(trim(i.source_payload->>'EntityFlow'), ''),
+    nullif(trim(i.source_payload->'EntityFlow'->>'Name'), ''),
+    nullif(trim(i.source_payload->>'Entity_Flow'), ''),
+    nullif(trim(i.source_payload->'Entity_Flow'->>'Name'), ''),
+    nullif(trim(i.source_payload->>'Employee_entity'), ''),
+    nullif(trim(i.source_payload->'Employee_entity'->>'Name'), ''),
+    nullif(trim(i.source_payload->>'Employee_Org_Type'), ''),
+    nullif(trim(i.source_payload->>'Company'), ''),
+    nullif(trim(i.source_payload->'Company'->>'Name'), ''),
+    nullif(trim(i.source_payload->>'Created_by_Company'), ''),
+    nullif(trim(i.source_payload->>'Creator_Company'), ''),
+    nullif(trim(i.source_payload->>'Createdby_company'), ''),
+    ''
+  )))"
+}
+
+travel_entity_filter_sql() {
   local entity="$1"
-  local expr="lower(trim(coalesce(i.entity, i.source_payload->>'Entity', i.source_payload->'Entity'->>'Name', i.source_payload->>'Company', i.source_payload->'Company'->>'Name', '')))"
+  local key="entity_key"
   case "$(printf '%s' "${entity}" | tr '[:upper:]' '[:lower:]')" in
     refex)
-      printf "(%s LIKE '%%refex%%' AND %s NOT LIKE '%%venwind%%')" "${expr}" "${expr}"
+      printf "(%s IN ('', 'refex') OR (%s LIKE '%%refex%%' AND %s NOT LIKE '%%venwind%%' AND %s NOT LIKE '%%extrovis%%'))" \
+        "${key}" "${key}" "${key}" "${key}"
       ;;
     venwind)
-      printf "(%s LIKE '%%venwind%%')" "${expr}"
+      printf "(%s LIKE '%%venwind%%')" "${key}"
       ;;
     *)
-      printf "(%s LIKE '%%venwind%%')" "${expr}"
+      printf "(%s LIKE '%%venwind%%')" "${key}"
       ;;
   esac
+}
+
+travel_is_draft_sql() {
+  echo "(
+    lower(coalesce(i.process_status, '')) LIKE '%draft%'
+    OR lower(coalesce(i.current_step, '')) LIKE '%draft%'
+    OR lower(coalesce(i.process_id, '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->>'_status', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->>'Status', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->'Status'->>'Name', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->>'Process_Status', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->'Process_Status'->>'Name', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->>'_current_step', '')) LIKE '%draft%'
+    OR lower(coalesce(i.source_payload->>'Step', '')) LIKE '%draft%'
+  )"
+}
+
+travel_entity_sql() {
+  travel_entity_filter_sql "$1"
 }
 
 travel_status_sql() {
@@ -159,9 +203,10 @@ travel_user_sql() {
   printf "(lower(coalesce(classified.requester_name, '')) LIKE '%%' || lower('%s') || '%%' OR lower(coalesce(classified.requester_email, '')) LIKE '%%' || lower('%s') || '%%')" "${u}" "${u}"
 }
 
-# Latest completed snapshot per process, then union items.
+# Latest completed snapshot per process, then union items (entity filter matches dashboard entity_key rules).
 travel_classified_cte() {
-  local entity_scope="$1"
+  local entity_filter_sql
+  entity_filter_sql="$(travel_entity_filter_sql "${ENTITY_FILTER}")"
   cat <<SQL
 latest AS (
   SELECT DISTINCT ON (sr.process_id)
@@ -187,6 +232,7 @@ classified AS (
     ) AS request_id,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
+    ($(travel_entity_key_expr)) AS entity_key,
     COALESCE(
       NULLIF(trim(i.source_payload->'Requester'->>'_id'), ''),
       NULLIF(trim(i.source_payload->'Requested_By'->>'_id'), ''),
@@ -235,7 +281,14 @@ classified AS (
     CASE
       WHEN i.process_status IN ('Withdrawn')
         OR lower(coalesce(i.process_status, '')) ~ '(reject|cancel|withdraw)'
-        OR lower(trim(coalesce(i.source_payload->>'_status', i.source_payload->>'Status', ''))) ~ '(reject|cancel|withdraw)'
+        OR lower(coalesce(
+          i.source_payload->>'_status',
+          i.source_payload->>'Status',
+          i.source_payload->'Status'->>'Name',
+          i.source_payload->>'Process_Status',
+          i.source_payload->'Process_Status'->>'Name',
+          ''
+        )) ~ '(reject|cancel|withdraw)'
         THEN 'rejected'
       WHEN i.process_status IN ('Completed', 'Closed')
         OR lower(coalesce(i.process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled')
@@ -246,68 +299,99 @@ classified AS (
   JOIN latest l
     ON i.snapshot_run_id = l.snapshot_run_id
    AND i.process_id = l.process_id
-  WHERE ${entity_scope}
+  WHERE NOT ($(travel_is_draft_sql))
+),
+filtered AS (
+  SELECT * FROM classified
+  WHERE (${entity_filter_sql})
 )
 SQL
 }
 
 query_travel_summary() {
-  local entity_scope="$1"
   echo "
 \pset tuples_only on
 \pset format unaligned
-WITH $(travel_classified_cte "${entity_scope}"),
-filtered AS (
-  SELECT * FROM classified
+WITH $(travel_classified_cte),
+scoped AS (
+  SELECT * FROM filtered
   WHERE $(travel_status_sql) AND $(travel_date_sql) AND $(travel_user_sql)
 )
 SELECT json_build_object(
-  'total', (SELECT count(*) FROM filtered),
-  'pending', (SELECT count(*) FROM filtered WHERE status_bucket = 'pending'),
-  'completed', (SELECT count(*) FROM filtered WHERE status_bucket = 'completed'),
-  'rejected', (SELECT count(*) FROM filtered WHERE status_bucket = 'rejected'),
+  'total', (SELECT count(*) FROM scoped),
+  'pending', (SELECT count(*) FROM scoped WHERE status_bucket = 'pending'),
+  'completed', (SELECT count(*) FROM scoped WHERE status_bucket = 'completed'),
+  'rejected', (SELECT count(*) FROM scoped WHERE status_bucket = 'rejected'),
   'opened_today', (
-    SELECT count(*) FROM classified
+    SELECT count(*) FROM filtered
     WHERE $(travel_status_sql) AND $(travel_user_sql)
       AND created_at IS NOT NULL
       AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
   'closed_today', (
-    SELECT count(*) FROM classified
+    SELECT count(*) FROM filtered
     WHERE $(travel_status_sql) AND $(travel_user_sql)
       AND completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
       AND status_bucket IN ('completed', 'rejected')
   ),
-  'has_sla_target', (SELECT count(*) FROM filtered WHERE sla_target_minutes IS NOT NULL) > 0,
+  'has_sla_target', (SELECT count(*) FROM scoped WHERE sla_target_minutes IS NOT NULL) > 0,
   'sla_breached_open', (
-    SELECT count(*) FROM filtered
+    SELECT count(*) FROM scoped
     WHERE status_bucket = 'pending'
       AND sla_target_minutes IS NOT NULL
       AND created_at IS NOT NULL
       AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes
   ),
   'sla_breached_closed', (
-    SELECT count(*) FROM filtered
+    SELECT count(*) FROM scoped
     WHERE status_bucket IN ('completed', 'rejected')
       AND sla_target_minutes IS NOT NULL
       AND created_at IS NOT NULL
       AND completed_at IS NOT NULL
       AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes
-  )
+  ),
+  'by_process', COALESCE((
+    SELECT json_agg(row_to_json(p) ORDER BY p.sort_order)
+    FROM (
+      SELECT
+        meta.sort_order,
+        meta.process_id,
+        meta.process_label,
+        COALESCE(counts.total, 0)::int AS total,
+        COALESCE(counts.pending, 0)::int AS pending,
+        COALESCE(counts.completed, 0)::int AS completed,
+        COALESCE(counts.rejected, 0)::int AS rejected
+      FROM (
+        VALUES
+          (1, 'Travel_Management_A02', 'Travel Request'),
+          (2, 'Advance_Payment_Request_Process_A01', 'Travel Advance'),
+          (3, 'Expense_Management_A03', 'Travel Expense')
+      ) AS meta(sort_order, process_id, process_label)
+      LEFT JOIN (
+        SELECT
+          f.process_id,
+          count(*)::int AS total,
+          count(*) FILTER (WHERE f.status_bucket = 'pending')::int AS pending,
+          count(*) FILTER (WHERE f.status_bucket = 'completed')::int AS completed,
+          count(*) FILTER (WHERE f.status_bucket = 'rejected')::int AS rejected
+        FROM scoped f
+        GROUP BY f.process_id
+      ) counts ON counts.process_id = meta.process_id
+    ) p
+  ), '[]'::json)
 );
 "
 }
 
 query_travel_users() {
-  local entity_scope="$1"
   echo "
 \pset tuples_only on
 \pset format unaligned
-WITH $(travel_classified_cte "${entity_scope}"),
-filtered AS (
+WITH $(travel_classified_cte),
+scoped AS (
   SELECT *
-  FROM classified
+  FROM filtered
   WHERE $(travel_status_sql)
     AND $(travel_date_sql)
     AND $(travel_user_sql)
@@ -321,16 +405,6 @@ activity AS (
     count(*) FILTER (WHERE status_bucket = 'pending')::int AS pending_count,
     count(*) FILTER (WHERE status_bucket = 'completed')::int AS completed_count,
     count(*) FILTER (WHERE status_bucket = 'rejected')::int AS rejected_count,
-    MAX(CASE
-      WHEN status_bucket = 'pending' AND created_at IS NOT NULL
-        THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 86400))::int
-      ELSE NULL
-    END) AS pending_days,
-    MAX(CASE
-      WHEN status_bucket = 'pending' AND created_at IS NOT NULL
-        THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 3600))::int
-      ELSE NULL
-    END) AS pending_hours,
     count(*) FILTER (
       WHERE sla_target_minutes IS NOT NULL
         AND created_at IS NOT NULL
@@ -346,19 +420,23 @@ activity AS (
           )
         )
     )::int AS sla_breached_count
-  FROM filtered
+  FROM scoped
   WHERE NULLIF(trim(requester_id), '') IS NOT NULL
   GROUP BY requester_id
 ),
 oldest_pending AS (
   SELECT DISTINCT ON (requester_id)
     requester_id AS user_id,
-    COALESCE(NULLIF(trim(owner_name), ''), NULLIF(trim(pending_step), ''), '') AS pending_step
-  FROM filtered
+    COALESCE(NULLIF(trim(owner_name), ''), '') AS pending_owner,
+    COALESCE(NULLIF(trim(pending_step), ''), '') AS pending_step_name,
+    GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 86400))::int AS pending_days,
+    GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 3600))::int AS pending_hours
+  FROM scoped
   WHERE status_bucket = 'pending'
   ORDER BY requester_id, created_at ASC NULLS LAST
 )
-SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+SELECT COALESCE(
+  (SELECT json_agg(t) FROM (
   SELECT
     resolved.user_name,
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
@@ -366,9 +444,10 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     a.pending_count,
     a.completed_count,
     a.rejected_count,
-    COALESCE(a.pending_days, 0) AS pending_days,
-    COALESCE(a.pending_hours, 0) AS pending_hours,
-    COALESCE(op.pending_step, '') AS pending_step,
+    COALESCE(op.pending_days, 0) AS pending_days,
+    COALESCE(op.pending_hours, 0) AS pending_hours,
+    COALESCE(NULLIF(trim(op.pending_owner), ''), NULLIF(trim(op.pending_step_name), ''), '') AS pending_step,
+    COALESCE(op.pending_owner, '') AS pending_owner,
     COALESCE(a.sla_breached_count, 0) AS sla_breached_count
   FROM activity a
   LEFT JOIN oldest_pending op ON op.user_id = a.user_id
@@ -388,25 +467,27 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     AND resolved.user_name <> a.user_id
     AND resolved.user_name !~ '^[Uu][Ss][A-Za-z0-9_-]{6,}\$'
   ORDER BY a.pending_count DESC, a.total_count DESC, a.completed_count DESC
-) t;
+  ) t),
+  '[]'::json
+);
 "
 }
 
 query_travel_pending_items() {
-  local entity_scope="$1"
   echo "
 \pset tuples_only on
 \pset format unaligned
-WITH $(travel_classified_cte "${entity_scope}"),
-filtered AS (
+WITH $(travel_classified_cte),
+scoped AS (
   SELECT *
-  FROM classified
+  FROM filtered
   WHERE status_bucket = 'pending'
     AND $(travel_status_sql)
     AND $(travel_date_sql)
     AND $(travel_user_sql)
 )
-SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+SELECT COALESCE(
+  (SELECT json_agg(t) FROM (
   SELECT
     COALESCE(NULLIF(trim(requester_name), ''), requester_email, 'Unknown') AS user_name,
     request_id,
@@ -422,23 +503,24 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
         AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes THEN 'Breached'
       ELSE 'Within SLA'
     END AS sla_status
-  FROM filtered
+  FROM scoped
   WHERE NULLIF(trim(COALESCE(requester_name, requester_email)), '') IS NOT NULL
   ORDER BY created_at ASC NULLS LAST
   LIMIT 50
-) t;
+  ) t),
+  '[]'::json
+);
 "
 }
 
 query_travel_sla_items() {
-  local entity_scope="$1"
   echo "
 \pset tuples_only on
 \pset format unaligned
-WITH $(travel_classified_cte "${entity_scope}"),
-filtered AS (
+WITH $(travel_classified_cte),
+scoped AS (
   SELECT *
-  FROM classified
+  FROM filtered
   WHERE $(travel_status_sql)
     AND $(travel_date_sql)
     AND $(travel_user_sql)
@@ -456,78 +538,72 @@ filtered AS (
       )
     )
 )
-SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+SELECT COALESCE(
+  (SELECT json_agg(t) FROM (
   SELECT
     COALESCE(NULLIF(trim(requester_name), ''), requester_email, 'Unknown') AS user_name,
     request_id,
     COALESCE(NULLIF(trim(process_status), ''), status_bucket) AS process_status,
     GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 86400))::int AS pending_days,
     GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - created_at)) / 3600))::int AS pending_hours
-  FROM filtered
+  FROM scoped
   WHERE NULLIF(trim(COALESCE(requester_name, requester_email)), '') IS NOT NULL
   ORDER BY created_at ASC NULLS LAST
   LIMIT 40
-) t;
+  ) t),
+  '[]'::json
+);
 "
 }
 
 psql_json() {
-  psql "${PG_CONN_STRING}" | tr -d '\r' | grep -v '^Output format' | grep -v '^Tuples only' | sed '/^$/d' || true
+  psql -q "${PG_CONN_STRING}" 2>/dev/null \
+    | tr -d '\r' \
+    | grep -v '^Output format' \
+    | grep -v '^Tuples only' \
+    | grep -v '^NOTICE:' \
+    | sed '/^$/d' \
+    || true
+}
+
+ensure_json() {
+  local raw="$1"
+  local fallback="${2:-[]}"
+  raw="$(printf '%s' "${raw}" | sed '/^$/d')"
+  if [[ -n "${raw}" ]] && printf '%s' "${raw}" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "${raw}"
+  else
+    printf '%s' "${fallback}"
+  fi
 }
 
 load_entity_payload() {
   local entity_name="$1"
-  local entity_scope
-  entity_scope="$(travel_entity_sql "${entity_name}")"
   log "Querying ${entity_name} travel usage (processes: ${TRAVEL_PROCESS_IDS})"
-  local summary users pending sla
-  summary="$(query_travel_summary "${entity_scope}" | psql_json)"
-  users="$(query_travel_users "${entity_scope}" | psql_json)"
-  pending="$(query_travel_pending_items "${entity_scope}" | psql_json)"
-  sla="$(query_travel_sla_items "${entity_scope}" | psql_json)"
-  [[ -n "${summary}" ]] || stop "Failed to retrieve ${entity_name} travel summary."
-  [[ -n "${users}" ]] || users='[]'
-  [[ -n "${pending}" ]] || pending='[]'
-  [[ -n "${sla}" ]] || sla='[]'
+  local summary users pending sla tmpdir
+  summary="$(ensure_json "$(query_travel_summary | psql_json)" '{}')"
+  users="$(ensure_json "$(query_travel_users | psql_json)" '[]')"
+  pending="$(ensure_json "$(query_travel_pending_items | psql_json)" '[]')"
+  sla="$(ensure_json "$(query_travel_sla_items | psql_json)" '[]')"
+  [[ "${summary}" != "{}" ]] || stop "Failed to retrieve ${entity_name} travel summary."
   local today_ist
   today_ist="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
-  jq -c --arg entity "${entity_name}" --arg today "${today_ist}" \
-    --argjson summary "${summary}" --argjson users "${users}" \
-    --argjson pending "${pending}" --argjson sla "${sla}" '
-    def is_kissflow_id:
-      type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
-    [$users[]
-      | select((.user_name // "") | tostring | length > 0)
-      | select((.user_name | is_kissflow_id | not))
-    ] as $rows
-    | [$pending[]
-      | select((.user_name // "") | tostring | length > 0)
-      | select((.user_name | is_kissflow_id | not))
-    ] as $pending_rows
-    | [$sla[]
-      | select((.user_name // "") | tostring | length > 0)
-      | select((.user_name | is_kissflow_id | not))
-    ] as $sla_rows
-    | {
-        entity: $entity,
-        total: ($summary.total // 0),
-        pending: ($summary.pending // 0),
-        completed: ($summary.completed // 0),
-        rejected: ($summary.rejected // 0),
-        opened_today: ($summary.opened_today // 0),
-        closed_today: ($summary.closed_today // 0),
-        has_sla_target: ($summary.has_sla_target // false),
-        sla_breached_open: ($summary.sla_breached_open // 0),
-        sla_breached_closed: ($summary.sla_breached_closed // 0),
-        sla_breached_total: (($summary.sla_breached_open // 0) + ($summary.sla_breached_closed // 0)),
-        total_users: ($rows | length),
-        users_with_pending: ([$rows[] | select((.pending_count // 0) > 0)] | length),
-        signed_in_today: ([$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length),
-        users: $rows,
-        pending_items: $pending_rows,
-        sla_items: $sla_rows
-      }
-  '
+  tmpdir="$(mktemp -d)"
+  printf '%s' "${summary}" > "${tmpdir}/summary.json"
+  printf '%s' "${users}" > "${tmpdir}/users.json"
+  printf '%s' "${pending}" > "${tmpdir}/pending.json"
+  printf '%s' "${sla}" > "${tmpdir}/sla.json"
+  export TRAVEL_SUMMARY_JSON_FILE="${tmpdir}/summary.json"
+  export TRAVEL_USERS_JSON_FILE="${tmpdir}/users.json"
+  export TRAVEL_PENDING_JSON_FILE="${tmpdir}/pending.json"
+  export TRAVEL_SLA_JSON_FILE="${tmpdir}/sla.json"
+  export TRAVEL_ENTITY_NAME="${entity_name}"
+  export TRAVEL_TODAY_IST="${today_ist}"
+  node "${REPO_ROOT}/services/engagement-pipeline/scripts/merge-travel-usage-payload.js" \
+    || stop "Failed to merge ${entity_name} travel usage payload."
+  rm -rf "${tmpdir}"
+  unset TRAVEL_SUMMARY_JSON_FILE TRAVEL_USERS_JSON_FILE TRAVEL_PENDING_JSON_FILE TRAVEL_SLA_JSON_FILE \
+    TRAVEL_ENTITY_NAME TRAVEL_TODAY_IST
 }
 
 command -v jq >/dev/null 2>&1 || stop "jq is not installed."
@@ -548,11 +624,15 @@ for pid in ${TRAVEL_PROCESS_IDS}; do
 done
 
 USAGE_PAYLOAD="$(load_entity_payload "${ENTITY_FILTER}")"
+[[ -n "${USAGE_PAYLOAD}" ]] || stop "Travel usage payload is empty for ${ENTITY_FILTER}"
+printf '%s' "${USAGE_PAYLOAD}" | jq -e . >/dev/null 2>&1 || stop "Travel usage payload is not valid JSON"
 HTML_PARTS="$(printf '%s' "${USAGE_PAYLOAD}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-travel-usage-html.js")"
 [[ -n "${HTML_PARTS}" ]] || stop "Failed to build Travel usage HTML sections."
+printf '%s' "${HTML_PARTS}" | jq -e . >/dev/null 2>&1 || stop "Travel HTML parts JSON is invalid"
 
 USER_TABLE_HTML="$(jq -r '.UserTableHtml // ""' <<< "${HTML_PARTS}")"
 USER_TABLE_SECTION_HTML="$(jq -r '.UserTableSectionHtml // ""' <<< "${HTML_PARTS}")"
+PROCESS_SECTIONS_HTML="$(jq -r '.ProcessSectionsHtml // ""' <<< "${HTML_PARTS}")"
 PENDING_DETAILS_HTML="$(jq -r '.PendingDetailsHtml // ""' <<< "${HTML_PARTS}")"
 SLA_ANALYSIS_HTML="$(jq -r '.SlaAnalysisHtml // ""' <<< "${HTML_PARTS}")"
 
@@ -583,9 +663,22 @@ report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load Travel repor
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-engagement-template.html"
-if ! grep -qF '{{UserTableSectionHtml}}' "${TEMPLATE_SRC}" && [[ -f "${SEED_TEMPLATE}" ]]; then
-  log "Published template is missing Travel usage placeholders — using seed layout to avoid empty sections"
-  cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+case "${ENTITY_FILTER:-}" in
+  [Rr]efex*) SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-refex-template.html" ;;
+  [Vv]enwind*) SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-venwind-template.html" ;;
+esac
+# Always prefer seed layout when published Admin UI HTML is missing required KPI placeholders.
+if [[ -f "${SEED_TEMPLATE}" ]]; then
+  if ! grep -qF '{{ProcessSectionsHtml}}' "${TEMPLATE_SRC}" \
+    || ! grep -qF '{{OpenedToday}}' "${TEMPLATE_SRC}" \
+    || ! grep -qF '{{TotalRequests}}' "${TEMPLATE_SRC}" \
+    || grep -qF 'Payment Request + Expense + Travel' "${TEMPLATE_SRC}"; then
+    log "Published Travel template missing KPI placeholders or outdated subtitle — using seed layout (${SEED_TEMPLATE})"
+    cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+  elif ! grep -qF '{{UserTableSectionHtml}}' "${TEMPLATE_SRC}"; then
+    log "Published Travel template missing UserTableSectionHtml — using seed layout"
+    cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+  fi
 fi
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
@@ -608,70 +701,39 @@ if [[ ${#FILTER_NOTES[@]} -gt 0 ]]; then
   FILTER_NOTE=" Filters applied: $(IFS=', '; echo "${FILTER_NOTES[*]}")."
 fi
 
-REPORT_BODY="${ENTITY_NAME} only. Combines Advance Payment, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.${FILTER_NOTE}"
+REPORT_BODY="${ENTITY_NAME} only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.${FILTER_NOTE}"
 
-jq -n \
-  --arg ReportTitle "${REPORT_TITLE}" \
-  --arg ReportDate "${GENERATED_AT_DISPLAY}" \
-  --arg EntityScope "${ENTITY_SCOPE}" \
-  --arg EntityName "${ENTITY_NAME}" \
-  --arg TotalRequests "${TOTAL_REQUESTS}" \
-  --arg PendingRequests "${PENDING_REQUESTS}" \
-  --arg CompletedRequests "${COMPLETED_REQUESTS}" \
-  --arg RejectedRequests "${REJECTED_REQUESTS}" \
-  --arg OpenedToday "${OPENED_TODAY}" \
-  --arg ClosedToday "${CLOSED_TODAY}" \
-  --arg TotalUsers "${TOTAL_USERS}" \
-  --arg SignedInToday "${SIGNED_IN_TODAY}" \
-  --arg UsersWithPending "${USERS_WITH_PENDING}" \
-  --arg SlaBreachedTotal "${SLA_BREACHED_TOTAL}" \
-  --arg SlaBreachedOpen "${SLA_BREACHED_OPEN}" \
-  --arg SlaBreachedClosed "${SLA_BREACHED_CLOSED}" \
-  --arg UserTableHtml "${USER_TABLE_HTML}" \
-  --arg UserTableSectionHtml "${USER_TABLE_SECTION_HTML}" \
-  --arg PendingDetailsHtml "${PENDING_DETAILS_HTML}" \
-  --arg SlaAnalysisHtml "${SLA_ANALYSIS_HTML}" \
-  --arg OverallSummaryHtml "" \
-  --arg EntitySectionsHtml "" \
-  --arg ReportBody "${REPORT_BODY}" \
-  '{
-    ReportTitle: $ReportTitle,
-    ReportDate: $ReportDate,
-    EntityScope: $EntityScope,
-    EntityName: $EntityName,
-    TotalRequests: $TotalRequests,
-    PendingRequests: $PendingRequests,
-    CompletedRequests: $CompletedRequests,
-    RejectedRequests: $RejectedRequests,
-    OpenedToday: $OpenedToday,
-    ClosedToday: $ClosedToday,
-    TotalUsers: $TotalUsers,
-    SignedInToday: $SignedInToday,
-    UsersWithPending: $UsersWithPending,
-    SlaBreachedTotal: $SlaBreachedTotal,
-    SlaBreachedOpen: $SlaBreachedOpen,
-    SlaBreachedClosed: $SlaBreachedClosed,
-    UserTableHtml: $UserTableHtml,
-    UserTableSectionHtml: $UserTableSectionHtml,
-    PendingDetailsHtml: $PendingDetailsHtml,
-    SlaAnalysisHtml: $SlaAnalysisHtml,
-    OverallSummaryHtml: $OverallSummaryHtml,
-    EntitySectionsHtml: $EntitySectionsHtml,
-    ReportBody: $ReportBody
-  }' > "${VARS_JSON}"
+TRAVEL_VARS_TMP="$(mktemp -d)"
+printf '%s' "${USAGE_PAYLOAD}" > "${TRAVEL_VARS_TMP}/usage.json"
+printf '%s' "${HTML_PARTS}" > "${TRAVEL_VARS_TMP}/html_parts.json"
+export TRAVEL_USAGE_JSON_FILE="${TRAVEL_VARS_TMP}/usage.json"
+export TRAVEL_HTML_PARTS_FILE="${TRAVEL_VARS_TMP}/html_parts.json"
+export TRAVEL_META_REPORT_TITLE="${REPORT_TITLE}"
+export TRAVEL_META_REPORT_DATE="${GENERATED_AT_DISPLAY}"
+export TRAVEL_META_ENTITY_SCOPE="${ENTITY_SCOPE}"
+export TRAVEL_META_ENTITY_NAME="${ENTITY_NAME}"
+export TRAVEL_META_REPORT_BODY="${REPORT_BODY}"
+export TEMPLATE_VARS_OUT="${VARS_JSON}"
+node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-travel-template-vars.js" \
+  || stop "Failed to build Travel template variables JSON."
+rm -rf "${TRAVEL_VARS_TMP}"
+unset TRAVEL_USAGE_JSON_FILE TRAVEL_HTML_PARTS_FILE TEMPLATE_VARS_OUT \
+  TRAVEL_META_REPORT_TITLE TRAVEL_META_REPORT_DATE TRAVEL_META_ENTITY_SCOPE \
+  TRAVEL_META_ENTITY_NAME TRAVEL_META_REPORT_BODY
 
 report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
   || stop "Failed to render Travel report template."
 
 cp "${OUTPUT_FILE}" "${LATEST_FILE}"
 
+printf '%s' "${USAGE_PAYLOAD}" > "${VARS_JSON}.usage"
 jq -n \
   --arg generated_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
   --arg output_file "${OUTPUT_FILE}" \
   --arg entity_filter "${ENTITY_FILTER}" \
   --arg status_filter "${STATUS_FILTER}" \
   --arg processes "${TRAVEL_PROCESS_IDS}" \
-  --argjson usage "${USAGE_PAYLOAD}" '
+  --slurpfile usage "${VARS_JSON}.usage" '
 {
   action: "RENDER_TRAVEL_HTML_REPORT",
   generated_at: $generated_at,
@@ -680,15 +742,16 @@ jq -n \
   entity_filter: $entity_filter,
   status_filter: $status_filter,
   processes: ($processes | split(" ")),
-  entity: $usage.entity,
-  total: $usage.total,
-  pending: $usage.pending,
-  completed: $usage.completed,
-  total_users: $usage.total_users,
-  users_with_pending: $usage.users_with_pending,
-  sla_breached_total: $usage.sla_breached_total
+  entity: ($usage[0].entity // $entity_filter),
+  total: ($usage[0].total // 0),
+  pending: ($usage[0].pending // 0),
+  completed: ($usage[0].completed // 0),
+  total_users: ($usage[0].total_users // 0),
+  users_with_pending: ($usage[0].users_with_pending // 0),
+  sla_breached_total: ($usage[0].sla_breached_total // 0)
 }
 ' > "${AUDIT_FILE}"
+rm -f "${VARS_JSON}.usage"
 
 log "Travel usage report rendered successfully (${ENTITY_NAME})"
 printf '\nOutput file:\n%s\n' "${OUTPUT_FILE}"

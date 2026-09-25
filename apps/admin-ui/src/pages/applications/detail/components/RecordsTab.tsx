@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -6,27 +7,45 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
+  LayoutDashboard,
+  RefreshCw,
   Search,
   X,
   XCircle,
 } from 'lucide-react';
 import type { KissflowApplication } from '@/mocks/applications';
+import { resolveBackendApplicationId } from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
-  loadApplicationRecords,
+  loadApplicationRecordInventory,
   type AppRecordsResponse,
 } from '@/services/appRecordsApi';
+import { buildEntityBucketOptions, buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
+import {
+  assignedRecordLabel,
+  companyCountsFromRecords,
+  ensureFilterOption,
+  entityCountsFromRecords,
+  filterAppRecords,
+  stampRecordsWithAssigneeCompany,
+  summarizeAppRecords,
+} from '@/lib/appDashboardClientFilter';
 import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
+import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
 import {
   currentIstYear,
   resolveDateScope,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
+import { displayDashCount, displayDashText, displayPersonCell, displayWhen } from '@/lib/dashboardEmpty';
 import { duration, easeOutSoft } from '@/lib/motion';
+import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
+import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
 
 type Props = {
   app: KissflowApplication;
+  embed?: boolean;
 };
 
 const STATUS_PILLS = [
@@ -37,21 +56,11 @@ const STATUS_PILLS = [
 ] as const;
 
 function formatWhen(value: string | null | undefined): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return displayWhen(value);
 }
 
 function formatInr(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(Number(n))) return '—';
-  return `₹${Math.round(Number(n)).toLocaleString('en-IN')}`;
+  return `₹${Math.round(displayDashCount(n)).toLocaleString('en-IN')}`;
 }
 
 function statusTone(status: string): string {
@@ -67,33 +76,80 @@ function KpiMini({
   value,
   tone,
   icon,
+  embed = false,
 }: {
   label: string;
   value: number;
-  tone: { bg: string; text: string; muted: string; iconBg: string };
+  tone: { bg: string; text: string; muted: string; iconBg: string; iconColor?: string };
   icon: ReactNode;
+  embed?: boolean;
 }) {
   return (
-    <div className="rounded-xl p-2.5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]" style={{ background: tone.bg }}>
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: tone.muted }}>{label}</p>
-          <p className="mt-0.5 text-lg font-bold tabular-nums leading-none sm:text-xl" style={{ color: tone.text }}>
+    <div
+      className={
+        embed
+          ? 'relative flex h-full min-h-[148px] min-w-0 flex-col overflow-hidden rounded-xl border border-slate-100 p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
+          : 'rounded-xl p-2.5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]'
+      }
+      style={{ background: embed ? `linear-gradient(160deg, ${tone.bg} 0%, #ffffff 68%)` : tone.bg }}
+    >
+      <div className={embed ? 'relative flex items-start justify-between gap-3' : 'flex items-center justify-between gap-2'}>
+        <div className="min-w-0 flex-1">
+          <p
+            className={
+              embed
+                ? 'truncate text-[11px] font-semibold uppercase tracking-wider text-slate-500'
+                : 'text-[9px] font-semibold uppercase tracking-wide'
+            }
+            style={embed ? undefined : { color: tone.muted }}
+          >
+            {label}
+          </p>
+          <p
+            className={
+              embed
+                ? 'mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums'
+                : 'mt-0.5 text-lg font-bold tabular-nums leading-none sm:text-xl'
+            }
+            style={{ color: tone.text }}
+          >
             {Number(value || 0).toLocaleString('en-IN')}
           </p>
         </div>
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: tone.iconBg, color: tone.text }}>{icon}</div>
+        <div
+          className={
+            embed
+              ? 'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-black/5'
+              : 'flex h-7 w-7 items-center justify-center rounded-lg'
+          }
+          style={{ background: tone.iconBg, color: tone.iconColor || tone.text }}
+        >
+          {icon}
+        </div>
       </div>
     </div>
   );
 }
 
-export default function RecordsTab({ app }: Props) {
+export default function RecordsTab({ app, embed = false }: Props) {
+  const navigate = useNavigate();
+  const backendAppId = resolveBackendApplicationId(app);
+  const itsmCompanyMode = /itsm|service_management/i.test(String(app.appId || app.id || backendAppId || ''));
+  const travelMode = /travel|expense_and_travel/i.test(String(app.appId || app.id || backendAppId || ''));
+  const { id: routeAppId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const embedReturnTo = readEmbedReturnUrl(searchParams);
   const [data, setData] = useState<AppRecordsResponse | null>(null);
+  const [inventory, setInventory] = useState<AppRecordsResponse['items']>([]);
+  const [recordColumns, setRecordColumns] = useState<AppRecordsResponse['columns']>([]);
+  const [inventoryReady, setInventoryReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
   const [status, setStatus] = useState<string>('all');
   const [entity, setEntity] = useState('all');
+  const [company, setCompany] = useState('all');
   const [assigned, setAssigned] = useState('');
   const [requester, setRequester] = useState('');
   const [search, setSearch] = useState('');
@@ -126,7 +182,7 @@ export default function RecordsTab({ app }: Props) {
 
   useEffect(() => {
     setPage(0);
-  }, [status, entity, assigned, requester, debouncedSearch, period, resolvedDates.from, resolvedDates.to, app.id]);
+  }, [status, entity, company, assigned, requester, debouncedSearch, period, resolvedDates.from, resolvedDates.to, app.id]);
 
   useEffect(() => {
     if (!isBackendApiMode()) {
@@ -136,64 +192,168 @@ export default function RecordsTab({ app }: Props) {
     let cancelled = false;
     setLoading(true);
     setError('');
-    loadApplicationRecords({
-      applicationId: app.appId || app.id,
+    loadApplicationRecordInventory({
+      applicationId: backendAppId,
       environment: app.environment,
-      status,
-      entity,
-      assigned: assigned || undefined,
-      requester: requester || undefined,
-      search: debouncedSearch,
-      dateFrom: resolvedDates.from,
-      dateTo: resolvedDates.to,
-      limit: pageSize,
-      offset: page * pageSize,
+      skipCache: true,
+      forceLive: refreshKey > 0,
     }).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
         setError(result.error || 'Failed to load records');
-        setData(null);
+        setInventory([]);
+        setRecordColumns([]);
       } else {
-        setData(result.data);
+        setInventory(result.items);
+        setRecordColumns(result.columns);
       }
+      setInventoryReady(true);
       setLoading(false);
+      setRefreshing(false);
     });
     return () => {
       cancelled = true;
     };
+  }, [backendAppId, app.environment, refreshKey]);
+
+  const stampedInventory = useMemo(
+    () => stampRecordsWithAssigneeCompany(inventory, [], { itsmCompanyMode }),
+    [inventory, itsmCompanyMode],
+  );
+
+  const filteredRows = useMemo(() => {
+    if (!inventoryReady) return [];
+    return filterAppRecords(stampedInventory, {
+      entity,
+      company,
+      status,
+      assigned: assigned || undefined,
+      dateFrom: resolvedDates.from,
+      dateTo: resolvedDates.to,
+      itsmCompanyMode,
+      travelMode,
+      activityDates: period === 'daily',
+    }).filter((row) => {
+      if (!debouncedSearch) return true;
+      const q = debouncedSearch.toLowerCase();
+      const hay = [
+        row.request_id,
+        row.subject,
+        row.assigned_to,
+        row.requested_by,
+        row.entity,
+        row.status,
+      ]
+        .map((v) => String(v || '').toLowerCase())
+        .join(' ');
+      return hay.includes(q);
+    }).filter((row) => {
+      if (!requester) return true;
+      return String(row.requested_by || '').toLowerCase().includes(requester.toLowerCase());
+    });
   }, [
-    app.appId,
-    app.id,
-    app.environment,
-    status,
+    stampedInventory,
+    inventoryReady,
     entity,
+    company,
+    status,
     assigned,
     requester,
     debouncedSearch,
-    page,
     resolvedDates.from,
     resolvedDates.to,
+    app.appId,
+    app.id,
+    backendAppId,
+    itsmCompanyMode,
+    travelMode,
   ]);
 
-  const totalPages = useMemo(() => {
-    const total = Number(data?.total || 0);
-    return Math.max(1, Math.ceil(total / pageSize));
-  }, [data?.total]);
+  useEffect(() => {
+    if (!inventoryReady) return;
+    const pageRows = filteredRows.slice(page * pageSize, page * pageSize + pageSize);
+    const summary = summarizeAppRecords(filteredRows);
+    setData({
+      application_id: backendAppId,
+      environment: String(app.environment),
+      data_source: 'client_inventory',
+      total: filteredRows.length,
+      limit: pageSize,
+      offset: page * pageSize,
+      columns: recordColumns,
+      items: pageRows,
+      summary,
+      inventory_summary: summary,
+    });
+  }, [filteredRows, page, pageSize, recordColumns, inventoryReady, backendAppId, app.environment]);
 
-  const filterOpts = data?.filter_options;
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  const totalPages = useMemo(() => {
+    const total = filteredRows.length;
+    return Math.max(1, Math.ceil(total / pageSize));
+  }, [filteredRows.length, pageSize]);
+
   const entityOptions = useMemo(() => {
-    const opts = filterOpts?.entities?.length ? filterOpts.entities : [];
-    if (!opts.some((o) => o.id === 'all')) {
-      return [{ id: 'all', label: 'All entities' }, ...opts];
+    const mode = travelMode ? 'refex_venwind' : itsmCompanyMode ? 'refex_extrovis' : 'all_buckets';
+    const rows = entityCountsFromRecords(stampedInventory, { itsmCompanyMode, travelMode });
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.id] = r.count;
+    return ensureFilterOption(
+      buildEntityBucketOptions(counts, { mode, allLabel: 'All entities' }),
+      entity,
+    );
+  }, [entity, stampedInventory, itsmCompanyMode, travelMode]);
+
+  const companyOptions = useMemo(() => {
+    const rows = companyCountsFromRecords(stampedInventory, { itsmCompanyMode, entity });
+    if (itsmCompanyMode) {
+      const counts: Record<string, number> = {};
+      for (const r of rows) counts[r.id] = r.count;
+      const catalog = buildRefexCompanyOptions(counts, { allLabel: 'All companies', entity });
+      const extras = rows.filter(
+        (r) => String(r.id).startsWith('raw:') && !catalog.some((c) => c.id === r.id),
+      );
+      return sortCompanyFilterOptions(ensureFilterOption([...catalog, ...extras], company));
     }
-    return opts;
-  }, [filterOpts?.entities]);
-  const assigneeOptions = filterOpts?.assignees?.length ? filterOpts.assignees : [];
-  const requesterOptions = filterOpts?.requesters?.length ? filterOpts.requesters : [];
-  const isSolar = /solar|reinvestment|site_expense/i.test(String(app.appId || app.id || ''));
-  const showEntity = !isSolar && filterOpts?.show_entity !== false && entityOptions.length > 1;
-  const showAssigned = filterOpts?.show_assigned !== false && assigneeOptions.length > 0;
-  const showRequester = filterOpts?.show_requester !== false;
+    if (!rows.length) {
+      return buildRefexCompanyOptions({}, { allLabel: 'All companies', entity });
+    }
+    return sortCompanyFilterOptions(ensureFilterOption(
+      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      company,
+    ));
+  }, [company, entity, stampedInventory, itsmCompanyMode]);
+
+  const assigneeOptions = useMemo(() => {
+    const set = new Set<string>();
+    const source = entity === 'all' && company === 'all'
+      ? stampedInventory
+      : filterAppRecords(stampedInventory, { entity, company, itsmCompanyMode, travelMode });
+    for (const row of source) {
+      const v = String(row.assigned_to || '').trim();
+      if (v && v !== '—') set.add(v);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [company, entity, stampedInventory, itsmCompanyMode, travelMode]);
+  const requesterOptions = useMemo(() => {
+    const set = new Set<string>();
+    const source = entity === 'all' && company === 'all'
+      ? stampedInventory
+      : filterAppRecords(stampedInventory, { entity, company, itsmCompanyMode, travelMode });
+    for (const row of source) {
+      const v = String(row.requested_by || '').trim();
+      if (v && v !== '—') set.add(v);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [company, entity, stampedInventory, itsmCompanyMode, travelMode]);
+  const showEntity = true;
+  const showCompany = !(itsmCompanyMode && entity === 'extrovis');
+  const showAssigned = assigneeOptions.length > 0;
+  const showRequester = requesterOptions.length > 0;
 
   const summary = data?.summary || {
     total: Number(data?.total || 0),
@@ -202,17 +362,34 @@ export default function RecordsTab({ app }: Props) {
     rejected: 0,
   };
 
+  const defaultPeriod: DatePresetId = 'fy';
   const filtersActive =
-    status !== 'all' || entity !== 'all' || assigned || requester || search.trim() || period !== 'fy';
+    status !== 'all'
+    || entity !== 'all'
+    || company !== 'all'
+    || assigned
+    || requester
+    || search.trim()
+    || period !== defaultPeriod;
+
+  const clearHeroFilters = () => {
+    setEntity('all');
+    setCompany('all');
+    setPeriod(defaultPeriod);
+    setDateFrom('');
+    setDateTo('');
+    setPage(0);
+  };
 
   const clearFilters = () => {
     setStatus('all');
     setEntity('all');
+    setCompany('all');
     setAssigned('');
     setRequester('');
     setSearch('');
     setDebouncedSearch('');
-    setPeriod('fy');
+    setPeriod(defaultPeriod);
     setDateFrom('');
     setDateTo('');
     setPage(0);
@@ -227,70 +404,134 @@ export default function RecordsTab({ app }: Props) {
         { id: 'requested_by', label: 'Requested by' },
         { id: 'status', label: 'Status' },
         { id: 'entity', label: 'Entity' },
+        { id: 'company_name', label: 'Company name' },
         { id: 'created_at', label: 'Created' },
       ];
+
+  const handleEntityChange = (next: string) => {
+    setEntity(next);
+    setCompany('all');
+    setPage(0);
+  };
+
+  const filterBar = (
+    <ExecutiveDateFilterBar
+      period={period}
+      onPeriodChange={setPeriod}
+      calendarYear={calendarYear}
+      onCalendarYearChange={setCalendarYear}
+      calendarMonth={calendarMonth}
+      onCalendarMonthChange={setCalendarMonth}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      onDateFromChange={setDateFrom}
+      onDateToChange={setDateTo}
+      entity={entity}
+      onEntityChange={showEntity ? handleEntityChange : undefined}
+      entityOptions={showEntity ? entityOptions : undefined}
+      entityLabel="Entity"
+      company={company}
+      onCompanyChange={showCompany ? setCompany : undefined}
+      companyOptions={showCompany ? companyOptions : undefined}
+      companyLabel="Company"
+      refreshing={loading && Boolean(data)}
+      embedLayout
+      hideHints
+      onClearFilters={clearHeroFilters}
+    />
+  );
+
+  const embedHeroActions = embed ? (
+    <>
+      <button
+        type="button"
+        onClick={() => navigate(buildEmbedDashboardPath(routeAppId || app.id, embedReturnTo, searchParams), { replace: true })}
+        className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[#EAF2FF] px-3 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
+      >
+        <LayoutDashboard className="h-3.5 w-3.5" />
+        Full Engagement report
+      </button>
+      <button
+        type="button"
+        onClick={() => refresh()}
+        disabled={loading || refreshing}
+        className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#D0E0F5] bg-white px-3 text-xs font-semibold text-[#3977BE] hover:bg-[#F8FBFF] disabled:opacity-60"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+        Refresh records
+      </button>
+    </>
+  ) : null;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.fast, ease: easeOutSoft }}
-      className="relative space-y-3"
+      className={`relative ${embed ? 'space-y-4' : 'space-y-3'}`}
     >
       <DashboardLoadingOverlay
-        show={loading}
+        show={loading || refreshing}
         mode="fixed"
-        label={data ? 'Refreshing records…' : 'Loading records…'}
+        label={refreshing ? 'Refreshing records…' : data ? 'Loading records…' : 'Loading records…'}
       />
 
-      <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-3 shadow-[0_8px_30px_rgba(15,23,42,0.06)] sm:p-4">
-        <ExecutiveDateFilterBar
-          period={period}
-          onPeriodChange={setPeriod}
-          calendarYear={calendarYear}
-          onCalendarYearChange={setCalendarYear}
-          calendarMonth={calendarMonth}
-          onCalendarMonthChange={setCalendarMonth}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onDateFromChange={setDateFrom}
-          onDateToChange={setDateTo}
-          entity={entity}
-          onEntityChange={showEntity ? setEntity : undefined}
-          entityOptions={showEntity ? entityOptions : undefined}
-          refreshing={loading && Boolean(data)}
-        />
-      </div>
+      <EmbedDashboardHero
+        actions={
+          embed ? (
+            embedHeroActions
+          ) : (
+            <button
+              type="button"
+              onClick={() => refresh()}
+              disabled={loading || refreshing}
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#D0E0F5] bg-white px-3 text-xs font-semibold text-[#3977BE] hover:bg-[#F8FBFF] disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh records
+            </button>
+          )
+        }
+        filters={filterBar}
+      />
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className={`grid gap-4 ${embed ? 'grid-cols-2 md:grid-cols-4 [&>*]:h-full' : 'grid-cols-2 gap-2 sm:grid-cols-4'}`}>
         <KpiMini
           label="Total"
           value={Number(summary.total || 0)}
-          tone={{ bg: '#EAF3FF', text: '#1E3A5F', muted: '#5B7A9D', iconBg: '#D6E8FF' }}
-          icon={<Layers className="h-3.5 w-3.5" />}
+          tone={{ bg: '#EAF3FF', text: '#1E3A5F', muted: '#5B7A9D', iconBg: '#D6E8FF', iconColor: '#3977BE' }}
+          icon={<Layers className={embed ? 'h-5 w-5' : 'h-3.5 w-3.5'} />}
+          embed={embed}
         />
         <KpiMini
           label="Open"
           value={Number(summary.open || 0)}
-          tone={{ bg: '#FFF2E4', text: '#7A4A1A', muted: '#A96A20', iconBg: '#FFE8CC' }}
-          icon={<AlertCircle className="h-3.5 w-3.5" />}
+          tone={{ bg: '#FFF2E4', text: '#7A4A1A', muted: '#A96A20', iconBg: '#FFE8CC', iconColor: '#A96A20' }}
+          icon={<AlertCircle className={embed ? 'h-5 w-5' : 'h-3.5 w-3.5'} />}
+          embed={embed}
         />
         <KpiMini
           label="Closed"
           value={Number(summary.closed || 0)}
-          tone={{ bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3' }}
-          icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+          tone={{ bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D' }}
+          icon={<CheckCircle2 className={embed ? 'h-5 w-5' : 'h-3.5 w-3.5'} />}
+          embed={embed}
         />
         <KpiMini
           label="Rejected"
           value={Number(summary.rejected || 0)}
-          tone={{ bg: '#FDECEF', text: '#7A3044', muted: '#B24E66', iconBg: '#F8D9E0' }}
-          icon={<XCircle className="h-3.5 w-3.5" />}
+          tone={{ bg: '#FDECEF', text: '#7A3044', muted: '#B24E66', iconBg: '#F8D9E0', iconColor: '#B24E66' }}
+          icon={<XCircle className={embed ? 'h-5 w-5' : 'h-3.5 w-3.5'} />}
+          embed={embed}
         />
       </div>
 
-      {/* Filters + total in one compact bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm">
+      {/* Row filters — search, status, assignee */}
+      <div
+        className={`flex flex-wrap items-center gap-2 rounded-2xl border bg-white p-2.5 shadow-sm ${
+          embed ? 'rounded-xl border-slate-100 shadow-[0_4px_18px_rgba(112,144,176,0.08)]' : 'border-slate-200'
+        }`}
+      >
         <div className="relative min-w-[160px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           <input
@@ -350,7 +591,7 @@ export default function RecordsTab({ app }: Props) {
             Clear filters
           </button>
         ) : null}
-        <span className="ml-auto text-xs font-semibold tabular-nums text-slate-600">
+        <span className={`ml-auto text-xs font-semibold tabular-nums text-slate-600 ${embed ? 'hidden' : ''}`}>
           {Number(summary.total || 0).toLocaleString('en-IN')} records
           {data?.data_source === 'live_cache' ? ' · live' : ''}
         </span>
@@ -363,19 +604,69 @@ export default function RecordsTab({ app }: Props) {
         </div>
       ) : null}
 
-      <div className="relative min-h-[220px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {!loading && !data?.items?.length ? (
-          <div className="p-12 text-center text-sm text-slate-500">No records match these filters.</div>
+      <div
+        className={`relative min-h-[220px] overflow-hidden ${
+          embed
+            ? 'rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
+            : 'rounded-2xl border border-slate-200 bg-white shadow-sm'
+        }`}
+      >
+        {embed ? (
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-900">Records</h3>
+            <span className="text-xs font-semibold tabular-nums text-slate-500">
+              {Number(summary.total || 0).toLocaleString('en-IN')} rows
+              {data?.data_source === 'live_cache' ? ' · live' : ''}
+            </span>
+          </div>
+        ) : null}
+        {!loading && !refreshing && !data?.items?.length ? (
+          <div className={`text-center text-sm text-slate-500 ${embed ? 'py-10' : 'p-12'}`}>
+            No records match these filters.
+          </div>
         ) : data?.items?.length ? (
           <>
-            <div className="overflow-x-auto">
+            <div className="space-y-2.5 lg:hidden">
+              {data.items.map((row) => {
+                const titleCol = columns.find((c) => c.id === 'subject') || columns[0];
+                const idCol = columns.find((c) => c.id === 'request_id');
+                const statusCol = columns.find((c) => c.id === 'status');
+                const previewIds = new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
+                const fieldValue = (col: (typeof columns)[number]) => {
+                  const raw = (row as Record<string, unknown>)[col.id];
+                  if (col.id === 'request_id') return displayDashText(raw, '—');
+                  if (col.id === 'status') return displayDashText(raw || row.status_raw, '—');
+                  if (col.id === 'created_at') return formatWhen(String(raw || ''));
+                  if (col.id === 'amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
+                  if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
+                  return displayPersonCell(raw);
+                };
+                return (
+                  <MisMobileRecordCard
+                    key={row.id}
+                    title={titleCol ? fieldValue(titleCol) : '—'}
+                    subtitle={idCol ? fieldValue(idCol) : undefined}
+                    badge={statusCol ? (
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(row.status || ''))}`}>
+                        {fieldValue(statusCol)}
+                      </span>
+                    ) : undefined}
+                    fields={columns.filter((c) => previewIds.has(c.id)).map((c) => ({ label: c.label, value: fieldValue(c) }))}
+                    extraFields={columns
+                      .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
+                      .map((c) => ({ label: c.label, value: fieldValue(c) }))}
+                  />
+                );
+              })}
+            </div>
+            <div className={`hidden overflow-x-auto lg:block ${embed ? '-mx-5 -mb-5' : ''}`}>
               <table className="w-full min-w-[780px] text-sm sm:min-w-[980px]">
-                <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/90 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                  <tr className="border-b border-slate-100">
                     {columns.map((col) => (
                       <th
                         key={col.id}
-                        className={`whitespace-nowrap px-3 py-2.5 font-semibold ${
+                        className={`whitespace-nowrap font-semibold ${embed ? 'px-5 py-2.5' : 'px-3 py-2.5'} ${
                           col.id === 'request_id' ? 'min-w-[7.5rem]' : ''
                         }`}
                       >
@@ -386,46 +677,47 @@ export default function RecordsTab({ app }: Props) {
                 </thead>
                 <tbody>
                   {data.items.map((row) => (
-                    <tr key={row.id} className="border-b border-slate-50 last:border-0 hover:bg-sky-50/40">
+                    <tr key={row.id} className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
                       {columns.map((col) => {
                         const raw = (row as Record<string, unknown>)[col.id];
+                        const cellPad = embed ? 'px-5 py-2.5' : 'px-3 py-2.5';
                         if (col.id === 'request_id') {
                           return (
-                            <td key={col.id} className="whitespace-nowrap px-3 py-2.5">
+                            <td key={col.id} className={`whitespace-nowrap ${cellPad}`}>
                               <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[12px] font-semibold tracking-wide text-slate-900 ring-1 ring-slate-200">
-                                {raw == null || raw === '' ? '—' : String(raw)}
+                                {displayDashText(raw, '—')}
                               </span>
                             </td>
                           );
                         }
                         if (col.id === 'status') {
                           return (
-                            <td key={col.id} className="px-3 py-2.5">
+                            <td key={col.id} className={cellPad}>
                               <span
                                 className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
                               >
-                                {String(raw || row.status_raw || '—')}
+                                {displayDashText(raw || row.status_raw, '—')}
                               </span>
                             </td>
                           );
                         }
                         if (col.id === 'created_at') {
                           return (
-                            <td key={col.id} className="whitespace-nowrap px-3 py-2.5 text-slate-600">
+                            <td key={col.id} className={`whitespace-nowrap tabular-nums text-slate-600 ${cellPad}`}>
                               {formatWhen(String(raw || ''))}
                             </td>
                           );
                         }
                         if (col.id === 'amount') {
                           return (
-                            <td key={col.id} className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">
+                            <td key={col.id} className={`whitespace-nowrap tabular-nums text-slate-800 ${cellPad}`}>
                               {formatInr(typeof raw === 'number' ? raw : Number(raw))}
                             </td>
                           );
                         }
                         return (
-                          <td key={col.id} className="max-w-[200px] truncate px-3 py-2.5 text-slate-800 sm:max-w-[220px]">
-                            {raw == null || raw === '' ? '—' : String(raw)}
+                          <td key={col.id} className={`max-w-[200px] truncate text-slate-800 sm:max-w-[220px] ${cellPad}`}>
+                            {col.id === 'assigned_to' ? assignedRecordLabel(row, { itsmCompanyMode }) : displayPersonCell(raw)}
                           </td>
                         );
                       })}
@@ -434,7 +726,11 @@ export default function RecordsTab({ app }: Props) {
                 </tbody>
               </table>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-3 py-2.5">
+            <div
+              className={`flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/60 ${
+                embed ? 'mx-[-1.25rem] mb-[-1.25rem] px-5 py-2.5' : 'px-3 py-2.5'
+              }`}
+            >
               <p className="text-xs text-slate-500">
                 Page {page + 1} of {totalPages} · {Number(data.total || 0).toLocaleString('en-IN')} rows
               </p>

@@ -44,6 +44,27 @@ function latestRunsCte({ environmentParam = '$1', applicationIdParam = null, ali
 )`;
 }
 
+/** Newest completed snapshot timestamp for an application (ingest / schedule-runner). */
+async function latestApplicationSnapshotAt(pool, environment, applicationId) {
+  const { rows } = await pool.query(
+    `SELECT max(COALESCE(sr.load_completed_at, sr.extraction_completed_at, sr.created_at)) AS snapshot_at
+     FROM engagement_reporting.snapshot_run sr
+     WHERE sr.environment = $1
+       AND sr.status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+       AND (
+         sr.application_id = $2
+         OR sr.process_id IN (
+           SELECT process_id FROM engagement_reporting.process
+           WHERE environment = $1 AND application_id = $2 AND is_current = true
+         )
+       )`,
+    [environment, applicationId],
+  );
+  const at = rows[0]?.snapshot_at;
+  return at ? new Date(at) : null;
+}
+
 module.exports = {
   latestRunsCte,
+  latestApplicationSnapshotAt,
 };

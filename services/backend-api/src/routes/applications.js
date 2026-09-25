@@ -20,8 +20,9 @@ const {
 } = require('../lib/kissflowDiscovery');
 const { bootstrapApplication } = require('../lib/applicationBootstrap');
 const { normalizeEnvironment, resolveKissflowCredentials } = require('../lib/kissflowClient');
+const { friendlyApplicationName } = require('../lib/dashboardDisplay');
 const { syncProcessFields } = require('../lib/fieldSyncService');
-const { ensureP2pApplication } = require('../lib/p2pDashboard');
+const { ensureP2pApplicationCached } = require('../lib/p2pDashboard');
 
 const router = express.Router();
 
@@ -44,6 +45,35 @@ WHERE is_current = true
 ORDER BY application_name
 `;
 
+const APPLICATION_BY_ID_QUERY = `
+SELECT
+  environment,
+  application_id,
+  application_name,
+  last_seen_at,
+  is_current,
+  source_payload->>'kissflow_account_id' AS kissflow_account_id,
+  source_payload->>'subdomain' AS subdomain,
+  source_payload->>'region' AS region,
+  source_payload->>'description' AS description,
+  COALESCE(source_payload->'dataform_ids', '[]'::jsonb) AS dataform_ids,
+  COALESCE(source_payload->'board_ids', '[]'::jsonb) AS board_ids,
+  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids
+FROM engagement_reporting.application
+WHERE is_current = true
+  AND environment = $1
+  AND application_id = $2
+LIMIT 1
+`;
+
+function decorateApplicationRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    application_name: friendlyApplicationName(row.application_id, row.application_name),
+  };
+}
+
 function dbNotConfigured(res, correlationId) {
   return ok(res, correlationId, {
     items: [],
@@ -60,7 +90,7 @@ router.get('/', async (req, res) => {
   try {
     // Non-Kissflow P2P must exist in PG or Admin UI never lists it.
     try {
-      await ensureP2pApplication(getPool(), { environment: 'production' });
+      await ensureP2pApplicationCached(getPool(), { environment: 'production' });
     } catch (ensureErr) {
       // Listing still works if ensure fails (permissions / schema); log via response hint below.
       if (ensureErr.code === '42P01') {
@@ -68,7 +98,8 @@ router.get('/', async (req, res) => {
       }
     }
     const { rows } = await getPool().query(APPLICATIONS_QUERY);
-    ok(res, req.correlationId, { items: rows, count: rows.length });
+    const items = rows.map(decorateApplicationRow);
+    ok(res, req.correlationId, { items, count: items.length });
   } catch (err) {
     if (err.code === '42P01') {
       return ok(res, req.correlationId, { items: [], count: 0, warning: 'SCHEMA_NOT_MIGRATED' });
@@ -85,6 +116,31 @@ router.get('/', async (req, res) => {
       });
     }
     fail(res, req.correlationId, 'APPLICATIONS_LIST_FAILED', err.message, 500, true);
+  }
+});
+
+router.get('/:applicationId', async (req, res) => {
+  if (!isDatabaseConfigured()) {
+    return dbNotConfigured(res, req.correlationId);
+  }
+
+  const environment = normalizeEnvironment(req.query.environment || 'production');
+  const applicationId = String(req.params.applicationId || '').trim();
+  if (!applicationId) {
+    return fail(res, req.correlationId, 'APPLICATION_ID_REQUIRED', 'applicationId is required', 400);
+  }
+
+  try {
+    const { rows } = await getPool().query(APPLICATION_BY_ID_QUERY, [environment, applicationId]);
+    if (!rows.length) {
+      return fail(res, req.correlationId, 'APP_NOT_FOUND', 'Application not found', 404);
+    }
+    return ok(res, req.correlationId, { item: decorateApplicationRow(rows[0]) });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return ok(res, req.correlationId, { item: null, warning: 'SCHEMA_NOT_MIGRATED' });
+    }
+    return fail(res, req.correlationId, 'APPLICATION_GET_FAILED', err.message, 500, true);
   }
 });
 
@@ -311,7 +367,7 @@ router.patch('/:applicationId', async (req, res) => {
       correlationId: req.correlationId,
     });
     await client.query('COMMIT');
-    return ok(res, req.correlationId, { item, environment, application_id: applicationId });
+    return ok(res, req.correlationId, { item: decorateApplicationRow(item), environment, application_id: applicationId });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.code === 'APPLICATION_NOT_FOUND') {

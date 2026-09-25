@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, LayoutGrid, Users, X } from 'lucide-react';
 import {
   availableCalendarYears,
   availableIndianFyStartYears,
@@ -20,6 +20,11 @@ import {
   weeksInMonth,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
+import NeMobileFilterSheet, {
+  NeMobileActiveFilterChips,
+  NeMobileFilterField,
+  NeMobileFiltersButton,
+} from '@/components/feature/NeMobileFilterSheet';
 
 type PeriodTab = 'weekly' | 'monthly' | 'year' | 'custom';
 
@@ -34,11 +39,16 @@ type Props = {
   dateTo: string;
   onDateFromChange: (v: string) => void;
   onDateToChange: (v: string) => void;
-  /** Optional entity filter (app dashboard / records). */
+  /** Optional entity filter (app dashboard / records) — Refex / Extrovis / Venwind. */
   entity?: string;
   onEntityChange?: (entity: string) => void;
   entityOptions?: Array<{ id: string; label: string; count?: number }>;
   entityLabel?: string;
+  /** Optional company filter (29 Refex legal entities, scoped by entity). */
+  company?: string;
+  onCompanyChange?: (company: string) => void;
+  companyOptions?: Array<{ id: string; label: string; count?: number }>;
+  companyLabel?: string;
   /** Optional application filter (main dashboard) — rendered top-right. */
   application?: string;
   onApplicationChange?: (id: string) => void;
@@ -48,12 +58,23 @@ type Props = {
   compact?: boolean;
   /** Refexone embed — hide filter hint paragraphs */
   hideHints?: boolean;
+  /** Refexone embed shell — reference layout: labels, right-aligned filters, compare toggle */
+  embedLayout?: boolean;
+  user?: string;
+  onUserChange?: (userId: string) => void;
+  userOptions?: Array<{ id: string; label: string }>;
+  compareEnabled?: boolean;
+  onCompareChange?: (enabled: boolean) => void;
+  /** Shown to the right of Period so filters stay on one row. */
+  onClearFilters?: () => void;
 };
 
 export const CARD_BORDER = 'rgba(226, 232, 240, 0.9)';
 export const MUTED = '#64748b';
 
-const ACCENT = '#0f766e'; // teal-green like reference screenshots
+const ACCENT = '#0f766e'; // teal-green (normal mode)
+const EMBED_BLUE = '#0f6cbd';
+const EMBED_ICON_BG = '#eef3ff';
 
 function tabForPeriod(period: string): PeriodTab {
   if (period === 'weekly') return 'weekly';
@@ -77,15 +98,29 @@ export default function ExecutiveDateFilterBar({
   entity,
   onEntityChange,
   entityOptions,
-  entityLabel = 'Entity',
+  entityLabel,
+  company,
+  onCompanyChange,
+  companyOptions,
+  companyLabel = 'Company',
   application,
   onApplicationChange,
   applicationOptions,
   applicationLabel = 'Application',
   refreshing,
   hideHints,
+  embedLayout = false,
+  user,
+  onUserChange,
+  userOptions,
+  compareEnabled = false,
+  onCompareChange,
+  onClearFilters,
 }: Props) {
+  const resolvedEntityLabel = entityLabel ?? 'Entity';
+  const resolvedCompanyLabel = companyLabel ?? 'Company';
   const [open, setOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [tab, setTab] = useState<PeriodTab>(() => tabForPeriod(period));
   const [browseYear, setBrowseYear] = useState(calendarYear || currentIstYear());
   const [browseMonth, setBrowseMonth] = useState(calendarMonth || currentIstMonth());
@@ -95,11 +130,35 @@ export default function ExecutiveDateFilterBar({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const summary = periodSummaryLabel(period, calendarYear, calendarMonth, dateFrom, dateTo);
+  const embedSummary =
+    embedLayout && period === 'all'
+      ? 'All time'
+      : embedLayout
+        ? summary.split('·')[0]?.trim() || summary
+        : summary;
   const todayYmd = istTodayYmd();
-  const showEntity = Boolean(onEntityChange && entityOptions && entityOptions.length > 1);
+  const showEntity = Boolean(onEntityChange && entityOptions && entityOptions.length > 0);
   const entityValue = entity || 'all';
+  const showCompany = Boolean(onCompanyChange && companyOptions && companyOptions.length > 0);
+  const companyValue = company || 'all';
   const showApplication = Boolean(onApplicationChange && applicationOptions && applicationOptions.length > 0);
   const applicationValue = application || 'all';
+  const userValue = user || 'all';
+  const entitySelectOptions = useMemo(() => {
+    const rows = entityOptions || [];
+    if (rows.some((o) => o.id === entityValue)) return rows;
+    return [...rows, { id: entityValue, label: entityValue }];
+  }, [entityOptions, entityValue]);
+  const companySelectOptions = useMemo(() => {
+    const rows = companyOptions || [];
+    if (rows.some((o) => o.id === companyValue)) return rows;
+    return [...rows, { id: companyValue, label: companyValue }];
+  }, [companyOptions, companyValue]);
+  const userSelectOptions = useMemo(() => {
+    const rows = userOptions || [];
+    if (rows.some((o) => o.id === userValue)) return rows;
+    return [...rows, { id: userValue, label: userValue }];
+  }, [userOptions, userValue]);
 
   const weekOptions = useMemo(() => weeksInMonth(browseYear, browseMonth), [browseYear, browseMonth]);
   const monthOptions = useMemo(() => availableMonthsForYear(browseYear), [browseYear]);
@@ -220,57 +279,148 @@ export default function ExecutiveDateFilterBar({
 
   const selectedWeekFrom = period === 'weekly' ? dateFrom || currentWeekBoundsIst().from : '';
 
+  const showUser = embedLayout
+    ? Boolean(onUserChange && userOptions)
+  const showUser = embedLayout
+    ? Boolean(onUserChange && userOptions)
+    : Boolean(onUserChange && userOptions && userOptions.length > 1);
+
+  useEffect(() => {
+    triggerRef.current = sheetOpen ? mobileTriggerRef.current : desktopTriggerRef.current;
+  }, [sheetOpen, open]);
+
+  const entityLabelText = entitySelectOptions.find((o) => o.id === entityValue)?.label || entityValue;
+  const companyLabelText = companySelectOptions.find((o) => o.id === companyValue)?.label || companyValue;
+  const userLabelText = userSelectOptions.find((o) => o.id === userValue)?.label || userValue;
+  const applicationLabelText = applicationOptions?.find((o) => o.id === applicationValue)?.label || applicationValue;
+  const periodIsDefault = period === 'all' || period === 'fy';
+  const activeFilterCount = [
+    showEntity && entityValue !== 'all',
+    showCompany && companyValue !== 'all',
+    showUser && userValue !== 'all',
+    showApplication && applicationValue !== 'all',
+    !periodIsDefault,
+  ].filter(Boolean).length;
+  const filterChips = [
+    showEntity && entityValue !== 'all' ? { key: 'entity', label: entityLabelText, onRemove: () => onEntityChange?.('all') } : null,
+    showCompany && companyValue !== 'all' ? { key: 'company', label: companyLabelText, onRemove: () => onCompanyChange?.('all') } : null,
+    showUser && userValue !== 'all' ? { key: 'user', label: userLabelText, onRemove: () => onUserChange?.('all') } : null,
+    showApplication && applicationValue !== 'all' ? { key: 'app', label: applicationLabelText, onRemove: () => onApplicationChange?.('all') } : null,
+    !periodIsDefault ? { key: 'period', label: embedSummary, onRemove: () => onPeriodChange('all') } : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; onRemove: () => void }>;
+
+  const clearAllFilters = () => {
+    if (onClearFilters) onClearFilters();
+    else {
+      onEntityChange?.('all');
+      onCompanyChange?.('all');
+      onUserChange?.('all');
+      onApplicationChange?.('all');
+      onPeriodChange('all');
+    }
+    setSheetOpen(false);
+    setOpen(false);
+  };
+
+  const sheetSelectClass = embedLayout
+    ? 'h-11 w-full appearance-none rounded-2xl border border-slate-100 bg-white pl-3.5 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none'
+    : 'h-11 w-full appearance-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-8 text-sm font-semibold text-slate-800 outline-none';
+    ? 'h-11 w-full min-w-[8.5rem] appearance-none rounded-2xl border border-slate-100 bg-white pl-10 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe]'
+    : 'h-11 w-full appearance-none rounded-2xl border border-emerald-200/80 bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none ring-emerald-100/50 transition hover:border-emerald-300 focus:ring-2';
+
+  const filterLabelClass = embedLayout
+    ? 'mb-1 block text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400'
+    : 'mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400';
+
+  const embedPeriodBtnClass =
+    'group inline-flex h-11 w-full min-w-[8.75rem] items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 text-left shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-[#c7daf5] sm:min-w-[10.5rem]';
+
+  const embedIconWrap = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#eef3ff]';
+
   return (
     <div ref={rootRef} className="relative z-30 overflow-visible">
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className={`flex items-end gap-2 ${embedLayout ? 'flex-nowrap justify-end overflow-x-auto pb-0.5' : 'flex-wrap gap-2.5'}`}>
         {showEntity ? (
-          <label className="relative inline-flex min-w-[9.5rem] max-w-[14rem] flex-1 sm:flex-none">
-            <span className="sr-only">{entityLabel}</span>
+      <div className="flex w-full flex-col gap-2 lg:hidden">
+        <NeMobileFiltersButton count={activeFilterCount} onClick={() => setSheetOpen(true)} />
+        <NeMobileActiveFilterChips chips={filterChips} />
+      </div>
+      <div className={`hidden items-end gap-2 lg:flex ${embedLayout ? 'flex-nowrap justify-end overflow-x-auto pb-0.5' : 'flex-wrap gap-2.5'}`}>
+            <span className={filterLabelClass}>{resolvedEntityLabel}</span>
+            {embedLayout ? (
+              <Building2 className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+            ) : null}
             <select
               value={entityValue}
               onChange={(e) => onEntityChange?.(e.target.value)}
-              className="h-11 w-full appearance-none rounded-2xl border border-emerald-200/80 bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none ring-emerald-100/50 transition hover:border-emerald-300 focus:ring-2"
-              style={{ borderColor: 'rgba(16, 185, 129, 0.45)' }}
+              className={filterSelectClass}
+              style={embedLayout ? undefined : { borderColor: 'rgba(16, 185, 129, 0.45)' }}
             >
-              {entityOptions!.map((opt) => (
+              {entitySelectOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {opt.label}
-                  {typeof opt.count === 'number' && opt.id !== 'all' ? ` (${opt.count})` : ''}
                 </option>
               ))}
             </select>
-            <ChevronsUpDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <ChevronsUpDown
+              className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`}
+            />
           </label>
         ) : null}
 
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="group inline-flex h-11 min-w-[16rem] flex-1 items-center gap-3 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md transition hover:border-teal-300 hover:shadow-[0_10px_28px_rgba(15,118,110,0.12)] sm:flex-none sm:min-w-[22rem]"
-          aria-expanded={open}
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-50 to-emerald-100 ring-1 ring-teal-100">
-            <CalendarDays className="h-4 w-4 text-teal-700" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Period</span>
-            <span className="block truncate text-sm font-semibold text-slate-900">{summary}</span>
-          </span>
-          {refreshing ? (
-            <span className="text-[11px] font-medium text-teal-700">Updating…</span>
-          ) : (
-            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
-          )}
-        </button>
+        {showCompany ? (
+          <label className={`relative inline-flex flex-col ${embedLayout ? 'w-[10.5rem] shrink-0 sm:w-[12rem]' : 'min-w-[11rem] max-w-[16rem] flex-1 sm:flex-none'}`}>
+            <span className={filterLabelClass}>{resolvedCompanyLabel}</span>
+            {embedLayout ? (
+              <Building2 className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+            ) : null}
+            <select
+              value={companyValue}
+              onChange={(e) => onCompanyChange?.(e.target.value)}
+              className={filterSelectClass}
+              style={embedLayout ? undefined : { borderColor: 'rgba(57, 119, 190, 0.45)' }}
+            >
+              {companySelectOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <ChevronsUpDown
+              className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`}
+            />
+          </label>
+        ) : null}
 
-        {showApplication ? (
-          <label className="relative ml-auto inline-flex min-w-[11rem] max-w-[18rem] flex-1 sm:flex-none">
-            <span className="sr-only">{applicationLabel}</span>
+        {showUser ? (
+          <label className="relative inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[9.75rem]">
+            <span className={filterLabelClass}>User</span>
+            <Users className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+            <select
+              value={userValue}
+              onChange={(e) => onUserChange?.(e.target.value)}
+              className={filterSelectClass}
+            >
+              {userSelectOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <ChevronsUpDown className="pointer-events-none absolute bottom-3.5 right-2.5 h-4 w-4 text-slate-400" />
+          </label>
+        ) : null}
+
+        {embedLayout && showApplication ? (
+          <label className="relative inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[10rem]">
+            {embedLayout ? <span className={filterLabelClass}>Application</span> : <span className="sr-only">{applicationLabel}</span>}
+            {embedLayout ? (
+              <LayoutGrid className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+            ) : null}
             <select
               value={applicationValue}
               onChange={(e) => onApplicationChange?.(e.target.value)}
-              className="h-11 w-full appearance-none rounded-2xl border border-[#D0E0F5] bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition hover:border-[#3977BE]/40 focus:ring-2 focus:ring-[#EAF2FF]"
+              className={embedLayout ? filterSelectClass : 'h-11 w-full appearance-none rounded-2xl border border-[#D0E0F5] bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition hover:border-[#3977BE]/40 focus:ring-2 focus:ring-[#EAF2FF]'}
             >
               {applicationOptions!.map((opt) => (
                 <option key={opt.id} value={opt.id}>
@@ -278,7 +428,78 @@ export default function ExecutiveDateFilterBar({
                 </option>
               ))}
             </select>
-            <ChevronsUpDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <ChevronsUpDown className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`} />
+          </label>
+        ) : null}
+
+        <div className={embedLayout ? 'inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[11rem]' : 'contents'}>
+          {embedLayout ? <span className={filterLabelClass}>Period</span> : null}
+        <button
+          ref={triggerRef}
+          type="button"
+          ref={desktopTriggerRef}
+          className={
+            embedLayout
+              ? embedPeriodBtnClass
+              : `group inline-flex h-11 min-w-[16rem] flex-1 items-center gap-3 rounded-2xl border border-slate-200/90 bg-white/95 px-3.5 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md transition hover:border-teal-300 hover:shadow-[0_10px_28px_rgba(15,118,110,0.12)] sm:flex-none sm:min-w-[22rem]`
+          }
+          aria-expanded={open}
+        >
+          <span className={embedLayout ? embedIconWrap : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-50 to-emerald-100 ring-1 ring-teal-100'}>
+            <CalendarDays className={`h-4 w-4 ${embedLayout ? 'text-[#0f6cbd]' : 'text-teal-700'}`} />
+          </span>
+          <span className="min-w-0 flex-1">
+            {!embedLayout ? (
+              <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Period</span>
+            ) : null}
+            <span className={`block truncate ${embedLayout ? 'text-sm font-medium text-slate-700' : 'text-sm font-semibold text-slate-900'}`}>
+              {embedLayout ? embedSummary : summary}
+            </span>
+          </span>
+          {refreshing ? (
+            <span className="text-[11px] font-medium text-teal-700">Updating…</span>
+          ) : (
+            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+          )}
+        </button>
+        </div>
+
+        {onClearFilters ? (
+          <div className="inline-flex shrink-0 flex-col">
+            {embedLayout ? <span className={filterLabelClass} aria-hidden>&nbsp;</span> : null}
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className={
+                embedLayout
+                  ? 'inline-flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-100 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
+                  : 'inline-flex h-11 items-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
+              }
+            >
+              <X className="h-3.5 w-3.5" />
+              Clear filters
+            </button>
+          </div>
+        ) : null}
+
+        {showApplication && !embedLayout ? (
+          <label className={`relative inline-flex flex-col ${embedLayout ? 'min-w-[10.5rem] max-w-[15rem]' : 'ml-auto min-w-[11rem] max-w-[18rem] flex-1 sm:flex-none'}`}>
+            {embedLayout ? <span className={filterLabelClass}>Application</span> : <span className="sr-only">{applicationLabel}</span>}
+            {embedLayout ? (
+              <LayoutGrid className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+            ) : null}
+            <select
+              value={applicationValue}
+              onChange={(e) => onApplicationChange?.(e.target.value)}
+              className={embedLayout ? filterSelectClass : 'h-11 w-full appearance-none rounded-2xl border border-[#D0E0F5] bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition hover:border-[#3977BE]/40 focus:ring-2 focus:ring-[#EAF2FF]'}
+            >
+              {applicationOptions!.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <ChevronsUpDown className={`pointer-events-none absolute right-3 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-4' : 'top-1/2 -translate-y-1/2'}`} />
           </label>
         ) : null}
       </div>
@@ -289,7 +510,7 @@ export default function ExecutiveDateFilterBar({
               ref={panelRef}
               className="fixed z-[200] rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
               style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
-            >
+              className="fixed z-[10050] rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
           <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
             Choose period type
           </p>
@@ -576,6 +797,62 @@ export default function ExecutiveDateFilterBar({
 
       {period !== 'all' && !hideHints ? (
         <p className="mt-2 text-[11px] text-slate-500">
+      <NeMobileFilterSheet
+        open={sheetOpen}
+        title="Dashboard filters"
+        onClose={() => setSheetOpen(false)}
+        onClear={clearAllFilters}
+        onApply={() => setSheetOpen(false)}
+      >
+        {showEntity ? (
+          <NeMobileFilterField label={resolvedEntityLabel}>
+            <select value={entityValue} onChange={(e) => onEntityChange?.(e.target.value)} className={sheetSelectClass}>
+              {entitySelectOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </NeMobileFilterField>
+        ) : null}
+        {showCompany ? (
+          <NeMobileFilterField label={resolvedCompanyLabel}>
+            <select value={companyValue} onChange={(e) => onCompanyChange?.(e.target.value)} className={sheetSelectClass}>
+              {companySelectOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </NeMobileFilterField>
+        ) : null}
+        {showUser ? (
+          <NeMobileFilterField label="User">
+            <select value={userValue} onChange={(e) => onUserChange?.(e.target.value)} className={sheetSelectClass}>
+              {userSelectOptions.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </NeMobileFilterField>
+        ) : null}
+        {showApplication ? (
+          <NeMobileFilterField label={applicationLabel}>
+            <select value={applicationValue} onChange={(e) => onApplicationChange?.(e.target.value)} className={sheetSelectClass}>
+              {applicationOptions!.map((opt) => (
+                <option key={opt.id} value={opt.id}>{opt.label}</option>
+              ))}
+            </select>
+          </NeMobileFilterField>
+        ) : null}
+        <NeMobileFilterField label="Period">
+          <button
+            ref={mobileTriggerRef}
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="inline-flex h-11 w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-left text-sm font-semibold text-slate-800"
+          >
+            <span className="min-w-0 truncate">{embedLayout ? embedSummary : summary}</span>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 ${open ? 'rotate-180' : ''}`} />
+          </button>
+        </NeMobileFilterField>
+      </NeMobileFilterSheet>
+
           Counts items <strong>created</strong> in this window (activity dates in IST). Sign-in today is always
           current-day and not changed by this filter.
         </p>

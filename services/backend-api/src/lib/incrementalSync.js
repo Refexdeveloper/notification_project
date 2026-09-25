@@ -58,7 +58,9 @@ async function runIncrementalSyncAll({
   );
 
   const results = [];
-  for (const app of apps) {
+  const concurrency = Math.max(1, Number(process.env.INCREMENTAL_SYNC_CONCURRENCY || 2));
+
+  async function syncOneApp(app) {
     const entry = {
       application_id: app.application_id,
       application_name: app.application_name,
@@ -111,7 +113,13 @@ async function runIncrementalSyncAll({
       }
     }
 
-    results.push(entry);
+    return entry;
+  }
+
+  for (let i = 0; i < apps.length; i += concurrency) {
+    const batch = apps.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map((app) => syncOneApp(app)));
+    results.push(...batchResults);
   }
 
   return {

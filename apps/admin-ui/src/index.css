@@ -109,6 +109,29 @@
     font-size: 0.875rem;
   }
 
+  body.embed-shell {
+    font-family: 'Inter', var(--font-body);
+    background-color: #f5f7fa;
+    --embed-accent: #0f6cbd;
+    --embed-accent-soft: #eef3ff;
+    --embed-bg: #f5f7fa;
+    --embed-card-border: #eef2f7;
+    --embed-card-shadow: 0 4px 18px rgba(112, 144, 176, 0.12);
+    font-size: 0.875rem;
+  }
+
+  body.embed-shell .app-canvas {
+    background-color: #f5f7fa;
+    background-image: none;
+  }
+
+  body.embed-shell h1,
+  body.embed-shell h2,
+  body.embed-shell h3,
+  body.embed-shell .font-heading {
+    font-family: 'Inter', var(--font-heading);
+  }
+
   h1, h2, h3, .font-heading {
     font-family: var(--font-heading);
     letter-spacing: -0.02em;
@@ -141,6 +164,25 @@
       );
     background-size: auto, auto, auto, 48px 48px, 48px 48px;
     background-attachment: fixed;
+  }
+
+  /* aasik_ITSM MIS insight-row hover — shared by embed + normal KPI cards */
+  .ne-kpi-card {
+    transition: transform 160ms ease, box-shadow 160ms ease;
+  }
+  .ne-kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 1px 0 rgba(15, 23, 42, 0.05),
+      0 6px 16px rgba(15, 23, 42, 0.10),
+      0 12px 24px rgba(15, 23, 42, 0.06);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ne-kpi-card,
+    .ne-kpi-card:hover {
+      transition: none;
+      transform: none;
+    }
   }
 
   .glass,

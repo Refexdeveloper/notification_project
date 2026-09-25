@@ -3,6 +3,7 @@
 const express = require('express');
 const { ok, fail } = require('../lib/envelope');
 const { getPool, isDatabaseConfigured } = require('../lib/db');
+const { friendlyApplicationName } = require('../lib/dashboardDisplay');
 
 const router = express.Router();
 
@@ -70,7 +71,7 @@ router.get('/', async (req, res) => {
       id: row.report_run_id,
       report_run_id: row.report_run_id,
       application_id: row.application_id,
-      application_name: row.application_name || row.application_id,
+      application_name: friendlyApplicationName(row.application_id, row.application_name || row.application_id),
       process_id: row.process_id || null,
       status: mapSendStatus(row.run_status),
       raw_status: row.run_status,

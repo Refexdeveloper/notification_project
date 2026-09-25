@@ -1,4 +1,5 @@
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type DashboardMetricLabels = {
   sign_in_today: string;
@@ -53,7 +54,21 @@ export type DashboardData = {
   warning?: string;
 };
 
-const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v4';
+function decorateDashboardData(data: DashboardData): DashboardData {
+  return {
+    ...data,
+    applications: (data.applications || []).map((app) => ({
+      ...app,
+      application_name: friendlyApplicationName(app.application_id, app.application_name),
+    })),
+    recent_sends: data.recent_sends?.map((row) => ({
+      ...row,
+      application_name: friendlyApplicationName(row.application_id, row.application_name),
+    })),
+  };
+}
+
+const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v5';
 /** Landing reuse window — skip network if fresher than this (user request: 5 min). */
 export const DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
 
@@ -134,7 +149,7 @@ export async function loadDashboard(
   if (!live && !options?.skipCache) {
     const cached = readDashboardCache(environment);
     if (cached) {
-      return { ok: true, data: cached, fromCache: true };
+      return { ok: true, data: decorateDashboardData(cached), fromCache: true };
     }
   }
 
@@ -146,17 +161,17 @@ export async function loadDashboard(
 
   const res = await apiV1Fetch<DashboardData>(`/dashboard?${params.toString()}`, {
     cache: 'no-store',
-  }, { timeoutMs: 20000 });
+  }, { timeoutMs: 30000 });
 
   if (!res.ok || !res.data) {
     return { ok: false, error: res.error || 'Failed to load dashboard' };
   }
 
   if (!live) {
-    writeDashboardCache(environment, res.data);
+    writeDashboardCache(environment, decorateDashboardData(res.data));
   }
 
-  return { ok: true, data: res.data };
+  return { ok: true, data: decorateDashboardData(res.data) };
 }
 
 /** Soft live refresh: related app users + live item counts (no full directory). */
@@ -173,7 +188,7 @@ export async function refreshDashboardLive(
   const res = await apiV1Fetch<DashboardData & { warnings?: string[]; refreshed_at?: string; applications?: DashboardApplication[] }>(
     `/dashboard/refresh?${params.toString()}`,
     { method: 'POST', body: '{}', cache: 'no-store' },
-    { timeoutMs: 120000 },
+    { timeoutMs: 25000 },
   );
 
   if (!res.ok || !res.data) {
@@ -190,8 +205,9 @@ export async function refreshDashboardLive(
       refresh_mode: 'live',
       warnings: res.data.warnings,
     };
-    writeDashboardCache(environment, data);
-    return { ok: true, data };
+    const decorated = decorateDashboardData(data);
+    writeDashboardCache(environment, decorated);
+    return { ok: true, data: decorated };
   }
 
   return { ok: true, data: res.data as DashboardData };

@@ -46,17 +46,18 @@ function sampleTravelUserTableSectionHtml(usersHtml: string): string {
 }
 
 function sampleTravelProcessSectionsHtml(): string {
-  const row = (n: number, label: string, total: string, pending: string, completed: string) =>
+  const row = (n: number, label: string, total: string, pending: string, completed: string, rejected: string) =>
     `<tr><td style="padding:18px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">${n}. ${label}</div></td></tr>` +
     `<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
-    `<td width="32%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%); border:1px solid #dfe8f2; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${total}</div><div style="font-size:10px; color:#5b7ba3; margin-top:5px;">TOTAL</div></td><td width="2%"></td>` +
-    `<td width="32%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%); border:1px solid #f2e2c4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${pending}</div><div style="font-size:10px; color:#9a7a3a; margin-top:5px;">IN PROGRESS</div></td><td width="2%"></td>` +
-    `<td width="32%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${completed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">COMPLETED</div></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%); border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${total}</div><div style="font-size:10px; color:#5b7ba3; margin-top:5px;">TOTAL</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%); border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${pending}</div><div style="font-size:10px; color:#9a7a3a; margin-top:5px;">IN PROGRESS</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${completed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">COMPLETED</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#fff5f5 0%,#ffe9e9 100%); border:1px solid #f3cccc; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold; color:#c8102e;">${rejected}</div><div style="font-size:10px; color:#a35560; margin-top:5px;">REJECTED</div></td>` +
     `</tr></table></td></tr>`;
   return (
-    row(1, 'Payment Request', '12', '3', '9') +
-    row(2, 'Expense Management', '24', '5', '19') +
-    row(3, 'Travel Management', '12', '1', '11')
+    row(1, 'Travel Request', '12', '3', '9', '0') +
+    row(2, 'Travel Advance', '8', '2', '6', '1') +
+    row(3, 'Travel Expense', '24', '5', '19', '5')
   );
 }
 
@@ -272,7 +273,7 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.EntitySectionsHtml = '';
     base.ProcessSectionsHtml = sampleTravelProcessSectionsHtml();
     base.ReportBody =
-      'Venwind only. Combines Payment Request, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.';
+      'Venwind only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.';
   }
 
   return base;
@@ -281,7 +282,8 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
 export function normalizeTemplateHtmlForPreview(html: string): string {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
-    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+    .replace(/alt="Refex"/gi, 'alt="refexOne"')
+    .replace(/IT Service Management/g, 'IT Helpdesk');
 }
 
 export function applyTemplateVariables(templateBody: string, variables: Record<string, string>): string {

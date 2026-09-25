@@ -38,7 +38,6 @@ const P2P_PO_CLOSED_STATUSES = [
   'paid',
 ];
 const P2P_PO_OPEN_STATUSES = [
-  'draft',
   'imported',
   'pending_approval',
   'pending_buyer_verify',
@@ -47,6 +46,95 @@ const P2P_PO_OPEN_STATUSES = [
 
 function sqlInList(values) {
   return values.map((v) => `'${String(v).replace(/'/g, "''")}'`).join(', ');
+}
+
+function compactPersonKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function isSignedInTodayIst(lastSignIn) {
+  if (!lastSignIn) return false;
+  try {
+    const day = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(lastSignIn));
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    return day === today;
+  } catch {
+    return false;
+  }
+}
+
+/** Overlay Kissflow last_sign_in onto P2P MySQL users when the same person exists in engagement_cache. */
+async function overlayKissflowLastSignIn(environment, users) {
+  if (!Array.isArray(users) || !users.length) return users;
+  try {
+    const { getPool, isDatabaseConfigured } = require('./db');
+    if (!isDatabaseConfigured()) return users;
+    const pool = getPool();
+    if (!pool) return users;
+    const { rows } = await pool.query(
+      `SELECT source_payload->'engagement_cache'->'items' AS items
+       FROM engagement_reporting.application
+       WHERE environment = $1 AND is_current = true
+         AND source_payload->'engagement_cache'->'items' IS NOT NULL`,
+      [environment],
+    );
+    const byEmail = new Map();
+    const byName = new Map();
+    for (const row of rows || []) {
+      const items = Array.isArray(row.items) ? row.items : [];
+      for (const u of items) {
+        const last = u.last_sign_in || u.lastSignIn || null;
+        if (!last) continue;
+        const email = String(u.email || '').trim().toLowerCase();
+        const name = compactPersonKey(u.user_name || u.name || '');
+        if (email) {
+          const prev = byEmail.get(email);
+          if (!prev || new Date(last) > new Date(prev)) byEmail.set(email, last);
+        }
+        if (name.length >= 3) {
+          const prev = byName.get(name);
+          if (!prev || new Date(last) > new Date(prev)) byName.set(name, last);
+        }
+      }
+    }
+    return users.map((u) => {
+      if (u.last_sign_in) return u;
+      const email = String(u.email || '').trim().toLowerCase();
+      const name = compactPersonKey(u.user_name);
+      const last = (email && byEmail.get(email)) || (name.length >= 3 && byName.get(name)) || null;
+      if (!last) return u;
+      return { ...u, last_sign_in: last, ever_logged_in: true };
+    });
+  } catch {
+    return users;
+  }
+}
+
+/** mysql2 may return COLUMN_NAME (uppercase) from information_schema. */
+function mysqlColName(row) {
+  return String(row?.column_name || row?.COLUMN_NAME || '').toLowerCase();
+}
+
+function formatP2pUserLabel(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return s;
+  if (s.includes('@')) return s.split('@')[0];
+  if (/^[a-z0-9]+(\.[a-z0-9]+)+$/i.test(s)) {
+    return s.split('.').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  }
+  return s;
 }
 
 function knownP2pColumns(tableName) {
@@ -67,7 +155,7 @@ function buildP2pStatusSql(tableName, statusCol, amountCol, tableAlias = '') {
     return {
       rejectedExpr: `CASE WHEN ${st} = 'REJECTED' THEN 1 ELSE 0 END`,
       closedExpr: `CASE WHEN ${st} = 'APPROVED' THEN 1 ELSE 0 END`,
-      openExpr: `CASE WHEN ${st} NOT IN ('REJECTED', 'APPROVED') AND ${st} != '' THEN 1 ELSE 0 END`,
+      openExpr: `CASE WHEN ${st} NOT IN ('REJECTED', 'APPROVED', 'DRAFT') AND ${st} != '' THEN 1 ELSE 0 END`,
       amountOpenExpr: amount ? `CASE WHEN ${st} NOT IN ('REJECTED', 'APPROVED') AND ${st} != '' THEN ${amount} ELSE 0 END` : '0',
       amountTotalExpr: amount ? amount : '0',
     };
@@ -98,13 +186,43 @@ const P2P_AUX_TABLE_RE =
  * Register P2P in engagement_reporting so Admin UI lists it.
  * No Kissflow credentials — MySQL RO is configured via env/secrets only.
  */
+const P2P_ENSURE_TTL_MS = 5 * 60 * 1000;
+let p2pEnsureLastAt = 0;
+let p2pEnsureInFlight = null;
+
+async function ensureP2pApplicationCached(client, opts = {}) {
+  const now = Date.now();
+  if (now - p2pEnsureLastAt < P2P_ENSURE_TTL_MS) return null;
+  if (p2pEnsureInFlight) {
+    try {
+      await p2pEnsureInFlight;
+    } catch {
+      /* ignore — listing still proceeds */
+    }
+    return null;
+  }
+  p2pEnsureInFlight = ensureP2pApplication(client, opts)
+    .then((result) => {
+      p2pEnsureLastAt = Date.now();
+      return result;
+    })
+    .finally(() => {
+      p2pEnsureInFlight = null;
+    });
+  try {
+    return await p2pEnsureInFlight;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureP2pApplication(client, { environment = 'production' } = {}) {
   const env = String(environment || 'production').toLowerCase() === 'production'
     ? 'production'
     : String(environment || 'production').toLowerCase();
 
   const sourcePayload = {
-    description: 'Procurement to Pay · direct Cloud SQL MySQL (read-only)',
+    description: 'Procurement to Pay · Cloud SQL MySQL',
     data_source: 'p2p_mysql_readonly',
     integration: 'mysql_readonly',
     process_ids: [P2P_PROCESS_ID],
@@ -140,7 +258,7 @@ async function ensureP2pApplication(client, { environment = 'production' } = {})
       env,
       P2P_PROCESS_ID,
       P2P_APPLICATION_ID,
-      'P2P MySQL (read-only)',
+      'Procurement to Pay',
       JSON.stringify({ data_source: 'p2p_mysql_readonly' }),
     ],
   );
@@ -285,7 +403,7 @@ async function loadP2pDashboard(opts = {}) {
        ORDER BY ordinal_position`,
       [tableName],
     );
-    const colNames = (cols || []).map((c) => String(c.column_name || '').toLowerCase());
+    const colNames = (cols || []).map((c) => mysqlColName(c));
     return {
       statusCol: pickStatusColumn(colNames),
       amountCol: pickAmountColumn(colNames, tableName),
@@ -424,7 +542,7 @@ async function loadP2pDashboard(opts = {}) {
        WHERE table_schema = DATABASE() AND table_name = ?`,
       [tableName],
     );
-    const colSet = new Set((cols || []).map((c) => String(c.column_name || '').toLowerCase()));
+    const colSet = new Set((cols || []).map((c) => mysqlColName(c)));
     const dateCol = [...dateColPrefer, 'submitted_at', 'created_at', 'po_date', 'updated_at']
       .find((c) => colSet.has(c)) || null;
     const hasEntityId = colSet.has('entity_id');
@@ -519,18 +637,25 @@ async function loadP2pDashboard(opts = {}) {
   // Entity picker from entity_masters (+ PR/PO counts).
   let entities = [{ id: 'all', label: 'All entities', count: 0 }];
   let by_entity = [];
+  let schemaHint = { entity_columns: [], user_columns: [], entity_name_col: null, user_name_cols: [], user_login_col: null };
   try {
     const emCols = await p2pQuery(
       `SELECT column_name FROM information_schema.columns
        WHERE table_schema = DATABASE() AND table_name = 'entity_masters'`,
     );
-    const emSet = new Set((emCols || []).map((c) => String(c.column_name || '').toLowerCase()));
-    const emNameCol = ['name', 'entity_name', 'entity', 'label', 'company_name'].find((c) => emSet.has(c));
+    const emSet = new Set((emCols || []).map((c) => mysqlColName(c)));
+    schemaHint.entity_columns = [...emSet].sort();
+    const emNameCol =
+      ['name', 'entity_name', 'entity', 'label', 'company_name', 'company', 'title', 'short_name', 'legal_name', 'display_name', 'code', 'entity_code']
+        .find((c) => emSet.has(c))
+      || [...emSet].find((c) => /name|title|label|company|code/.test(c) && !/id|uuid|created|updated|deleted/.test(c))
+      || null;
+    schemaHint.entity_name_col = emNameCol;
     if (emSet.has('id') && emNameCol) {
       const entityRows = await p2pQuery(
         `SELECT
            em.id AS entity_id,
-           COALESCE(NULLIF(TRIM(em.\`${emNameCol}\`), ''), CONCAT('Entity ', em.id)) AS entity_label,
+           COALESCE(NULLIF(TRIM(CAST(em.\`${emNameCol}\` AS CHAR)), ''), CONCAT('Entity ', em.id)) AS entity_label,
            (
              (SELECT COUNT(*) FROM \`${P2P_PR_TABLE}\` pr WHERE pr.entity_id = em.id)
              + (SELECT COUNT(*) FROM \`${P2P_PO_TABLE}\` po WHERE po.entity_id = em.id)
@@ -606,27 +731,69 @@ async function loadP2pDashboard(opts = {}) {
       `SELECT column_name FROM information_schema.columns
        WHERE table_schema = DATABASE() AND table_name = 'users'`,
     );
-    const uc = new Set((userCols || []).map((c) => String(c.column_name || '').toLowerCase()));
-    const nameCol = ['full_name', 'display_name', 'name', 'username', 'email'].find((c) => uc.has(c));
-    const firstCol = uc.has('first_name') ? 'first_name' : (uc.has('firstname') ? 'firstname' : null);
-    const lastCol = uc.has('last_name') ? 'last_name' : (uc.has('lastname') ? 'lastname' : null);
-    const loginCol = ['last_login', 'last_sign_in', 'last_login_at', 'updated_at'].find((c) => uc.has(c)) || null;
-    const idCol = uc.has('id') ? 'id' : (nameCol || 'id');
+    const uc = new Set((userCols || []).map((c) => mysqlColName(c)));
+    schemaHint.user_columns = [...uc].sort();
+    const nameCol =
+      ['full_name', 'display_name', 'user_name', 'username', 'name', 'employee_name', 'emp_name', 'staff_name']
+        .find((c) => uc.has(c))
+      || [...uc].find((c) => /(^|_)(full_?name|display_?name|user_?name|username|employee_?name|staff_?name|name)$/.test(c)
+        && !/file|table|db_|schema/.test(c))
+      || null;
+    const firstCol = ['first_name', 'firstname', 'fname', 'given_name'].find((c) => uc.has(c)) || null;
+    const lastCol = ['last_name', 'lastname', 'lname', 'surname', 'family_name'].find((c) => uc.has(c)) || null;
+    const loginCol =
+      ['last_login', 'last_sign_in', 'last_login_at', 'last_signin_at', 'last_seen_at', 'last_activity_at', 'logged_in_at', 'updated_at']
+        .find((c) => uc.has(c))
+      || [...uc].find((c) => /last_?(login|sign.?in|seen|activity)/.test(c))
+      || null;
+    const idCol = uc.has('id') ? 'id' : (uc.has('user_id') ? 'user_id' : 'id');
+    schemaHint.user_name_cols = [nameCol, firstCol, lastCol].filter(Boolean);
+    schemaHint.user_login_col = loginCol;
     const loginSelect = loginCol ? `u.\`${loginCol}\`` : 'NULL';
     let nameExpr;
     if (firstCol || lastCol) {
       nameExpr = `NULLIF(TRIM(CONCAT_WS(' ', ${firstCol ? `u.\`${firstCol}\`` : 'NULL'}, ${lastCol ? `u.\`${lastCol}\`` : 'NULL'})), '')`;
     } else if (nameCol) {
-      nameExpr = `NULLIF(TRIM(u.\`${nameCol}\`), '')`;
+      nameExpr = `NULLIF(TRIM(CAST(u.\`${nameCol}\` AS CHAR)), '')`;
     } else {
       nameExpr = 'NULL';
     }
-    const emailExpr = uc.has('email') ? `NULLIF(TRIM(u.email), '')` : 'NULL';
+    const emailExpr = uc.has('email')
+      ? `NULLIF(TRIM(u.email), '')`
+      : (uc.has('email_address') ? `NULLIF(TRIM(u.email_address), '')` : (uc.has('mail') ? `NULLIF(TRIM(u.mail), '')` : 'NULL'));
+
+    // Prefer denormalized requester/creator labels on PR/PO when users.name is blank.
+    const prCols = await p2pQuery(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = '${P2P_PR_TABLE}'`,
+    );
+    const poCols = await p2pQuery(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = DATABASE() AND table_name = '${P2P_PO_TABLE}'`,
+    );
+    const prSet = new Set((prCols || []).map((c) => mysqlColName(c)));
+    const poSet = new Set((poCols || []).map((c) => mysqlColName(c)));
+    const prNameCol = ['requester_name', 'requestor_name', 'created_by_name', 'user_name', 'employee_name', 'raised_by_name']
+      .find((c) => prSet.has(c)) || null;
+    const poNameCol = ['created_by_name', 'buyer_name', 'user_name', 'requester_name', 'employee_name']
+      .find((c) => poSet.has(c)) || null;
+    const prNameSelect = prNameCol
+      ? `(SELECT NULLIF(TRIM(CAST(prx.\`${prNameCol}\` AS CHAR)), '') FROM \`${P2P_PR_TABLE}\` prx
+          WHERE prx.requester_id = u.\`${idCol}\` AND prx.\`${prNameCol}\` IS NOT NULL
+          ORDER BY prx.id DESC LIMIT 1)`
+      : 'NULL';
+    const poNameSelect = poNameCol
+      ? `(SELECT NULLIF(TRIM(CAST(pox.\`${poNameCol}\` AS CHAR)), '') FROM \`${P2P_PO_TABLE}\` pox
+          WHERE pox.created_by = u.\`${idCol}\` AND pox.\`${poNameCol}\` IS NOT NULL
+          ORDER BY pox.id DESC LIMIT 1)`
+      : 'NULL';
+
     const rows = await p2pQuery(
       `SELECT * FROM (
          SELECT
            u.\`${idCol}\` AS user_id,
-           COALESCE(${nameExpr}, ${emailExpr}, CONCAT('User ', u.\`${idCol}\`)) AS user_name,
+           COALESCE(${nameExpr}, ${emailExpr}, ${prNameSelect}, ${poNameSelect}, CONCAT('User ', u.\`${idCol}\`)) AS user_name,
+           ${emailExpr} AS email,
            ${loginSelect} AS last_sign_in,
            (
              (SELECT COUNT(*) FROM \`${P2P_PR_TABLE}\` pr
@@ -662,8 +829,10 @@ async function loadP2pDashboard(opts = {}) {
       const rejected = Number(u.rejected_count || 0);
       return {
         user_id: String(u.user_id),
-        user_name: String(u.user_name || u.user_id),
+        user_name: formatP2pUserLabel(u.user_name || u.user_id),
+        email: u.email || '',
         last_sign_in: u.last_sign_in || null,
+        ever_logged_in: Boolean(u.last_sign_in),
         open,
         pending: open,
         closed,
@@ -672,9 +841,11 @@ async function loadP2pDashboard(opts = {}) {
         total: open + closed + rejected,
       };
     });
-    const userCountRow = await p2pQuery('SELECT COUNT(*) AS total FROM `users`');
-    totalUsers = Number(userCountRow?.[0]?.total || users.length);
-    if (loginCol) {
+    users = await overlayKissflowLastSignIn(environment, users);
+    // Prefer active requesters/creators for "total users" on P2P (not full directory of 2000+).
+    totalUsers = users.length;
+    signedInToday = users.filter((u) => isSignedInTodayIst(u.last_sign_in)).length;
+    if (!signedInToday && loginCol) {
       const todayRow = await p2pQuery(
         `SELECT COUNT(*) AS total FROM \`users\`
          WHERE \`${loginCol}\` IS NOT NULL AND DATE(\`${loginCol}\`) = CURDATE()`,
@@ -686,8 +857,8 @@ async function loadP2pDashboard(opts = {}) {
   }
 
   const docRows = [
-    prMetrics ? { kind: 'PR', label: 'Purchase Requisition', ...prMetrics } : null,
     poMetrics ? { kind: 'PO', label: 'Purchase Order', ...poMetrics } : null,
+    prMetrics ? { kind: 'PR', label: 'Purchase Requisition', ...prMetrics } : null,
   ].filter(Boolean);
 
   const by_process = docRows.length
@@ -736,18 +907,79 @@ async function loadP2pDashboard(opts = {}) {
       closure_ratio: open + closed > 0 ? closed / (open + closed) : 0,
     }];
   } else {
-    // Fill status for selected entity view from aggregate when single-entity filter.
-    by_entity = by_entity.map((e) => ({
-      ...e,
-      open: entityFilter === e.entity_id ? open : e.open,
-      closed: entityFilter === e.entity_id ? closed : e.closed,
-      rejected: entityFilter === e.entity_id ? rejected : e.rejected,
-      total: entityFilter === e.entity_id ? total : e.total,
-      closure_ratio: (entityFilter === e.entity_id ? open + closed : e.open + e.closed) > 0
-        ? (entityFilter === e.entity_id ? closed : e.closed)
-          / (entityFilter === e.entity_id ? open + closed : e.open + e.closed || 1)
-        : 0,
-    }));
+    // Per-entity open/closed/rejected (respects period + entity filters already applied to PR/PO metrics).
+    try {
+      const prStatus = buildP2pStatusSql(P2P_PR_TABLE, 'status', null, 'pr');
+      const poStatus = buildP2pStatusSql(P2P_PO_TABLE, 'status', null, 'po');
+      const prDateCol = 'COALESCE(pr.submitted_at, pr.created_at)';
+      const poDateCol = 'COALESCE(po.created_at, po.po_date)';
+      const prPeriod = effectivePeriod !== 'all' ? `AND ${periodWhereSql(prDateCol)}` : '';
+      const poPeriod = effectivePeriod !== 'all' ? `AND ${periodWhereSql(poDateCol)}` : '';
+      const entityOnly = entityFilter !== 'all' && Number(entityFilter)
+        ? `AND entity_id = ${Number(entityFilter)}`
+        : '';
+      const statusByEntity = await p2pQuery(
+        `SELECT entity_id,
+           SUM(open_n) AS open_n,
+           SUM(closed_n) AS closed_n,
+           SUM(rejected_n) AS rejected_n,
+           SUM(total_n) AS total_n
+         FROM (
+           SELECT pr.entity_id,
+             ${prStatus.openExpr} AS open_n,
+             ${prStatus.closedExpr} AS closed_n,
+             ${prStatus.rejectedExpr} AS rejected_n,
+             1 AS total_n
+           FROM \`${P2P_PR_TABLE}\` pr
+           WHERE pr.entity_id IS NOT NULL ${prPeriod} ${entityOnly.replace('entity_id', 'pr.entity_id')}
+           UNION ALL
+           SELECT po.entity_id,
+             ${poStatus.openExpr} AS open_n,
+             ${poStatus.closedExpr} AS closed_n,
+             ${poStatus.rejectedExpr} AS rejected_n,
+             1 AS total_n
+           FROM \`${P2P_PO_TABLE}\` po
+           WHERE po.entity_id IS NOT NULL ${poPeriod} ${entityOnly.replace('entity_id', 'po.entity_id')}
+         ) x
+         GROUP BY entity_id`,
+      );
+      const byId = new Map((statusByEntity || []).map((r) => [String(r.entity_id), r]));
+      by_entity = by_entity
+        .map((e) => {
+          const hit = byId.get(String(e.entity_id));
+          if (!hit) {
+            return entityFilter !== 'all' && entityFilter !== e.entity_id
+              ? null
+              : { ...e, open: 0, closed: 0, rejected: 0, total: 0, closure_ratio: 0 };
+          }
+          const o = Number(hit.open_n || 0);
+          const c = Number(hit.closed_n || 0);
+          const rj = Number(hit.rejected_n || 0);
+          const t = Number(hit.total_n || o + c + rj);
+          return {
+            ...e,
+            open: o,
+            closed: c,
+            rejected: rj,
+            total: t,
+            closure_ratio: o + c > 0 ? c / (o + c) : 0,
+          };
+        })
+        .filter(Boolean)
+        .filter((e) => Number(e.total || 0) > 0 || entityFilter === e.entity_id);
+    } catch {
+      by_entity = by_entity.map((e) => ({
+        ...e,
+        open: entityFilter === e.entity_id ? open : e.open,
+        closed: entityFilter === e.entity_id ? closed : e.closed,
+        rejected: entityFilter === e.entity_id ? rejected : e.rejected,
+        total: entityFilter === e.entity_id ? total : e.total,
+        closure_ratio: (entityFilter === e.entity_id ? open + closed : e.open + e.closed) > 0
+          ? (entityFilter === e.entity_id ? closed : e.closed)
+            / (entityFilter === e.entity_id ? open + closed : e.open + e.closed || 1)
+          : 0,
+      }));
+    }
   }
 
   const signInRateToday = totalUsers ? Math.round((signedInToday / totalUsers) * 100) : 0;
@@ -797,8 +1029,8 @@ async function loadP2pDashboard(opts = {}) {
         rejected: 'Rejected',
       },
       note: docRows.length
-        ? `Direct MySQL RO · PR/PO mapped${amountTotal ? ` · ₹${Math.round(amountTotal).toLocaleString('en-IN')} total value` : ''}${docRows.some((d) => d.status_unknown) ? ' · status column not found on one or more tables' : ''}`
-        : 'Direct read-only MySQL — PR/PO tables not auto-detected; row counts only (open/closed unavailable).',
+        ? `PR + PO · ${amountTotal ? `₹${Math.round(amountTotal).toLocaleString('en-IN')} total value` : 'live MySQL'}`
+        : 'PR/PO tables not detected yet.',
     },
     filters: {
       entity: entityFilter,
@@ -822,5 +1054,6 @@ module.exports = {
   P2P_PROCESS_ID,
   isP2pApplication,
   ensureP2pApplication,
+  ensureP2pApplicationCached,
   loadP2pDashboard,
 };
