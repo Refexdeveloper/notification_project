@@ -12,6 +12,10 @@ export interface RefexAppDefinition {
   kissflowAppId: string;
   processName: string;
   processId: string;
+  /** Extra Kissflow process IDs (e.g. PM Sub-task) registered on the app */
+  extraProcessIds?: string[];
+  /** Kissflow board IDs (e.g. PM Projects board) */
+  boardIds?: string[];
   /** Remix Icon class, e.g. ri-sun-line */
   icon: string;
   /** Soft tile background + icon color */
@@ -64,6 +68,9 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
     kissflowAppId: 'Project_Management_Tracker_A00',
     processName: 'Project Task',
     processId: 'Project_Sub_Task_A01',
+    // Portfolio email also counts Sub-tasks + Projects board (match schedule-runner)
+    extraProcessIds: ['Sub_Task_Process_A00'],
+    boardIds: ['Project_Management_A01'],
     icon: 'ri-list-check-3',
     tint: 'bg-[#E8F3FC] text-[#0F6CBD]',
   },
@@ -87,7 +94,7 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
   },
   {
     slug: 'itsm',
-    applicationName: 'IT Service Management',
+    applicationName: 'IT Helpdesk',
     kissflowAppId: 'IT_Service_Management_A00',
     processName: 'Live IT Service Request',
     processId: 'Live_IT_Service_Request_A00',
@@ -105,10 +112,10 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
   },
   {
     slug: 'p2p',
-    applicationName: 'P2P',
-    kissflowAppId: 'refex_new_test_A00',
-    processName: 'P2P -One',
-    processId: 'P2P_One_A00',
+    applicationName: 'Procurement to Pay',
+    kissflowAppId: 'Procurement_to_Pay_A00',
+    processName: 'Procurement to Pay',
+    processId: 'p2p_system',
     icon: 'ri-swap-line',
     tint: 'bg-[#ECFDF5] text-[#059669]',
   },

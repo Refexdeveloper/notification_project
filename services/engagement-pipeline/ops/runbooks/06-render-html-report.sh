@@ -74,13 +74,72 @@ if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
   ENTITY_FILTER=""
 fi
 ENTITY_FILTER_SQL="$(printf '%s' "${ENTITY_FILTER}" | sed "s/'/''/g")"
+# Refex scope: match Entity=Refex OR blank/null Entity (Kissflow often leaves Entity empty).
 ENTITY_SCOPE_SQL="(
   '${ENTITY_FILTER_SQL}' = ''
-  OR i.entity = '${ENTITY_FILTER_SQL}'
+  OR lower(trim(coalesce(i.entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    '${ENTITY_FILTER_SQL}' <> ''
+    AND lower(trim('${ENTITY_FILTER_SQL}')) = 'refex'
+    AND coalesce(nullif(trim(i.entity), ''), '') = ''
+    AND (
+      i.source_payload->'Entity' IS NULL
+      OR i.source_payload->>'Entity' IS NULL
+      OR nullif(trim(coalesce(
+           CASE WHEN jsonb_typeof(i.source_payload->'Entity') = 'object'
+             THEN coalesce(i.source_payload->'Entity'->>'Name', i.source_payload->'Entity'->>'Value', i.source_payload->'Entity'->>'v', '')
+             ELSE coalesce(i.source_payload->>'Entity', '')
+           END,
+           ''
+         )), '') IS NULL
+    )
+  )
+  OR (
+    jsonb_typeof(i.source_payload->'Entity') = 'object'
+    AND lower(trim(coalesce(
+      i.source_payload->'Entity'->>'Name',
+      i.source_payload->'Entity'->>'Value',
+      i.source_payload->'Entity'->>'v',
+      ''
+    ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
+  OR (
+    jsonb_typeof(i.source_payload->'Entity') = 'string'
+    AND lower(trim(coalesce(i.source_payload->>'Entity', ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
 )"
 ENTITY_SCOPE_SQL_BARE="(
   '${ENTITY_FILTER_SQL}' = ''
-  OR entity = '${ENTITY_FILTER_SQL}'
+  OR lower(trim(coalesce(entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  OR (
+    '${ENTITY_FILTER_SQL}' <> ''
+    AND lower(trim('${ENTITY_FILTER_SQL}')) = 'refex'
+    AND coalesce(nullif(trim(entity), ''), '') = ''
+    AND (
+      source_payload->'Entity' IS NULL
+      OR source_payload->>'Entity' IS NULL
+      OR nullif(trim(coalesce(
+           CASE WHEN jsonb_typeof(source_payload->'Entity') = 'object'
+             THEN coalesce(source_payload->'Entity'->>'Name', source_payload->'Entity'->>'Value', source_payload->'Entity'->>'v', '')
+             ELSE coalesce(source_payload->>'Entity', '')
+           END,
+           ''
+         )), '') IS NULL
+    )
+  )
+  OR (
+    jsonb_typeof(source_payload->'Entity') = 'object'
+    AND lower(trim(coalesce(
+      source_payload->'Entity'->>'Name',
+      source_payload->'Entity'->>'Value',
+      source_payload->'Entity'->>'v',
+      ''
+    ))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
+  OR (
+    jsonb_typeof(source_payload->'Entity') = 'string'
+    AND lower(trim(coalesce(source_payload->>'Entity', ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
+  )
 )"
 
 # Total Users = members of this process's Kissflow app roles only
@@ -117,16 +176,7 @@ fi
 SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${ITSM_APP_ID}'
-    AND process_id = '${ITSM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 sla AS (
   SELECT
     instance_id,
@@ -135,25 +185,81 @@ sla AS (
     (source_payload->'Closure_Time'->>'Closure_Time')::numeric AS sla_target_minutes,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
-    -- ITSM: Completed OR InProgress on step "IT Tech Reopen" counts as Closed (not Open).
+    -- Admin All Closed (aasik_ITSM isRefexServiceClosedTicket): NOT Rejected AND
+    -- (reopen hold step OR Kissflow process Completed). Not Statu_1/Validation Closed. No Closed By.
     (
-      process_status = 'Completed'
-      OR (
-        process_status = 'InProgress'
-        AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+      NOT (
+        lower(regexp_replace(coalesce(process_status, source_payload->>'_status', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+        OR lower(regexp_replace(coalesce(source_payload->>'Statu_1', source_payload->>'Validation', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+      )
+      AND (
+        process_status = 'Completed'
+        OR lower(coalesce(process_status, '')) IN ('completed', 'complete')
+        OR (
+          process_status = 'InProgress'
+          AND (
+            lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%reopen window%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee feedback%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee verification%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) = 'ticket reopen'
+          )
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent pickup%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent solution%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%dependency%'
+        )
       )
     ) AS is_closed,
+    -- Base Open: not Closed, not Rejected, not Cancelled (dashboard isRefexServiceOpenTicket).
     (
-      process_status = 'InProgress'
-      AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it tech reopen%'
+      NOT (
+        lower(regexp_replace(coalesce(process_status, source_payload->>'_status', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined')
+        OR lower(regexp_replace(coalesce(source_payload->>'Statu_1', source_payload->>'Validation', ''), '[\\s_-]+', '', 'g'))
+          IN ('rejected', 'reject', 'declined', 'cancelled', 'canceled')
+      )
+      AND NOT (
+        process_status = 'Completed'
+        OR lower(coalesce(process_status, '')) IN ('completed', 'complete')
+        OR (
+          process_status = 'InProgress'
+          AND (
+            lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%it tech reopen%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%reopen window%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee feedback%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) LIKE '%employee verification%'
+            OR lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) = 'ticket reopen'
+          )
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent pickup%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%it agent solution%'
+          AND lower(trim(coalesce(current_step, source_payload->>'_current_step', ''))) NOT LIKE '%dependency%'
+        )
+      )
     ) AS is_open,
-    -- Kissflow Source field (Email / WhatsApp / Mobile / Web).
+    -- Kissflow Source (native name + report Column_* ids from aasik_ITSM profiles).
     lower(trim(coalesce(
       NULLIF(trim(source_payload->>'Source'), ''),
       NULLIF(trim(source_payload->'Source'->>'Name'), ''),
       NULLIF(trim(source_payload->'Source'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Source'->>'v'), ''),
       NULLIF(trim(source_payload->>'Ticket_Source'), ''),
       NULLIF(trim(source_payload->>'Channel'), ''),
+      NULLIF(trim(source_payload->>'Raised_By'), ''),
+      NULLIF(trim(source_payload->'Raised_By'->>'Name'), ''),
+      NULLIF(trim(source_payload->>'Entity_Source'), ''),
+      NULLIF(trim(source_payload->'Entity_Source'->>'Name'), ''),
+      -- Refex process/report Source column
+      NULLIF(trim(source_payload->>'Column_BDSZ_sAHys'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'Name'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Column_BDSZ_sAHys'->>'v'), ''),
+      -- Extrovis process/report Source column
+      NULLIF(trim(source_payload->>'Column_hFjGV8lRrn'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'Name'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'Value'), ''),
+      NULLIF(trim(source_payload->'Column_hFjGV8lRrn'->>'v'), ''),
       ''
     ))) AS source_raw
   FROM engagement_reporting.item i, latest l
@@ -164,9 +270,11 @@ sla_sourced AS (
     *,
     CASE
       WHEN source_raw LIKE '%whats%' THEN 'WhatsApp'
-      WHEN source_raw LIKE '%email%' OR source_raw LIKE '%e-mail%' OR source_raw LIKE '%e mail%' THEN 'Email'
-      WHEN source_raw LIKE '%mobile%' OR source_raw LIKE '%android%' OR source_raw LIKE '%ios%' THEN 'Mobile'
-      WHEN source_raw LIKE '%web%' OR source_raw LIKE '%portal%' OR source_raw LIKE '%browser%' THEN 'Web'
+      WHEN source_raw LIKE '%email%' OR source_raw LIKE '%e-mail%' OR source_raw LIKE '%e mail%' OR source_raw = 'mail' THEN 'Email'
+      WHEN source_raw LIKE '%mobile%' OR source_raw LIKE '%android%' OR source_raw LIKE '%ios%'
+        OR source_raw LIKE '%phone%' OR source_raw LIKE '%sms%' OR source_raw LIKE '%app%' THEN 'Mobile'
+      WHEN source_raw LIKE '%web%' OR source_raw LIKE '%portal%' OR source_raw LIKE '%browser%'
+        OR source_raw LIKE '%desktop%' OR source_raw LIKE '%kissflow%' THEN 'Web'
       ELSE 'Other'
     END AS source_channel
   FROM sla
@@ -240,8 +348,10 @@ SELECT json_build_object(
     JOIN app_members am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
-  'opened_today', (SELECT count(*) FROM sla WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
-  'closed_today', (SELECT count(*) FROM sla WHERE completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'opened_today', (SELECT count(*) FROM sla WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'closed_today', (SELECT count(*) FROM sla WHERE is_closed AND completed_at IS NOT NULL AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
+  'open_tickets', (SELECT count(*) FROM sla WHERE is_open),
+  'closed_tickets', (SELECT count(*) FROM sla WHERE is_closed),
   'total_tickets', (SELECT count(*) FROM sla),
   'sla_breached_open', (SELECT count(*) FROM sla WHERE is_open AND sla_target_minutes IS NOT NULL AND EXTRACT(EPOCH FROM (now() - created_at)) / 60 > sla_target_minutes),
   'sla_breached_closed', (SELECT count(*) FROM sla WHERE is_closed AND sla_target_minutes IS NOT NULL AND completed_at IS NOT NULL AND EXTRACT(EPOCH FROM (completed_at - created_at)) / 60 > sla_target_minutes),
@@ -260,11 +370,11 @@ SELECT json_build_object(
     'Other', (SELECT count(*) FROM sla_sourced WHERE is_open AND source_channel = 'Other')
   ),
   'source_opened_today', json_build_object(
-    'Email', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Email'),
-    'WhatsApp', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'WhatsApp'),
-    'Mobile', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Mobile'),
-    'Web', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Web'),
-    'Other', (SELECT count(*) FROM sla_sourced WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Other')
+    'Email', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Email'),
+    'WhatsApp', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'WhatsApp'),
+    'Mobile', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Mobile'),
+    'Web', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Web'),
+    'Other', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Other')
   )
 );
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
@@ -281,16 +391,7 @@ fi
 USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${ITSM_APP_ID}'
-    AND process_id = '${ITSM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${ITSM_APP_ID}'" "'${ITSM_PROCESS_ID}'"),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
@@ -461,9 +562,17 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 log "Rendering HTML report"
 
-ROWS_HTML="$(jq -r '
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
   def is_kissflow_id:
     type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
+  def signed_today:
+    ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg:
+    if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style:
+    if signed_today then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;"
+    else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   [ .[]
     | select((.user_name // "") | tostring | length > 0)
     | select((.user_name | is_kissflow_id | not))
@@ -472,9 +581,9 @@ ROWS_HTML="$(jq -r '
     "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"5\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No users with open or closed tickets in this snapshot.</td></tr>"
   else
     $rows | to_entries | map(
-      "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+      "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+      "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;\" align=\"center\"><b>" + ((.value.sla_breached_count // 0) | tostring) + "</b></td>" +
@@ -482,8 +591,6 @@ ROWS_HTML="$(jq -r '
     ) | join("")
   end
 ' <<< "${USERS_JSON}")"
-
-TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
 MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   def is_kissflow_id:
     type == "string" and test("^[Uu][Ss][A-Za-z0-9_-]{6,}$");
@@ -508,10 +615,21 @@ SIGNIN_RATE_TODAY="${SIGNIN_PCT}"
 NEVER_LOGGED_IN="$(jq -r '.never_logged_in' <<< "${SUMMARY_JSON}")"
 OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SUMMARY_JSON}")"
 CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SUMMARY_JSON}")"
+# KPI cards must use the same sla snapshot counts (not MIS user-row sums).
+TOTAL_TICKETS="$(jq -r '.total_tickets // 0' <<< "${SUMMARY_JSON}")"
+TOTAL_OPEN="$(jq -r '.open_tickets // 0' <<< "${SUMMARY_JSON}")"
+TOTAL_CLOSED="$(jq -r '.closed_tickets // 0' <<< "${SUMMARY_JSON}")"
+if report_live_today_kpis "${ITSM_PROCESS_ID}" "${ITSM_APP_ID}" "${ENTITY_FILTER}"; then
+  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?} closed_today=${REPORT_LIVE_CLOSED_TODAY:-?} (sql total=${TOTAL_TICKETS} open=${TOTAL_OPEN} closed=${TOTAL_CLOSED})"
+  OPENED_TODAY="$(report_prefer_live_today "${OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  CLOSED_TODAY="$(report_prefer_live_today "${CLOSED_TODAY}" "${REPORT_LIVE_CLOSED_TODAY}")"
+  TOTAL_TICKETS="$(report_prefer_live_today "${TOTAL_TICKETS}" "${REPORT_LIVE_TOTAL_TICKETS}")"
+  TOTAL_OPEN="$(report_prefer_live_today "${TOTAL_OPEN}" "${REPORT_LIVE_OPEN_TICKETS}")"
+  TOTAL_CLOSED="$(report_prefer_live_today "${TOTAL_CLOSED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
+else
+  log "Live Kissflow ticket KPI overlay unavailable — using PostgreSQL snapshot counts"
+fi
 
-TOTAL_OPEN="$(jq '[.[].open_count] | add // 0' <<< "${USERS_JSON}")"
-TOTAL_CLOSED="$(jq '[.[].closed_count] | add // 0' <<< "${USERS_JSON}")"
-TOTAL_TICKETS="$(jq -r '.total_tickets' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_OPEN="$(jq -r '.sla_breached_open' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_CLOSED="$(jq -r '.sla_breached_closed' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_TOTAL="$(( SLA_BREACHED_OPEN + SLA_BREACHED_CLOSED ))"
@@ -531,7 +649,37 @@ SOURCE_WHATSAPP_TODAY="$(jq -r '.source_opened_today.WhatsApp // 0' <<< "${SUMMA
 SOURCE_MOBILE_TODAY="$(jq -r '.source_opened_today.Mobile // 0' <<< "${SUMMARY_JSON}")"
 SOURCE_WEB_TODAY="$(jq -r '.source_opened_today.Web // 0' <<< "${SUMMARY_JSON}")"
 SOURCE_OTHER_TODAY="$(jq -r '.source_opened_today.Other // 0' <<< "${SUMMARY_JSON}")"
+
+# Prefer live Source classification when SQL mapped Email+Mobile+Web+WhatsApp is all zero
+# but tickets exist (legacy Source field empty; real values live on Column_* ids).
+if [[ -n "${REPORT_LIVE_SOURCE_JSON:-}" ]]; then
+  sql_mapped=$(( SOURCE_EMAIL_ALL + SOURCE_WHATSAPP_ALL + SOURCE_MOBILE_ALL + SOURCE_WEB_ALL ))
+  live_mapped="$(jq -r '(.source_all.Email//0)+(.source_all.WhatsApp//0)+(.source_all.Mobile//0)+(.source_all.Web//0)' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+  if [[ "${sql_mapped}" -eq 0 && "${live_mapped}" =~ ^[0-9]+$ && "${live_mapped}" -gt 0 ]] \
+    || [[ "${live_mapped}" =~ ^[0-9]+$ && "${live_mapped}" -ge "${sql_mapped}" && "${TOTAL_TICKETS}" -gt 0 ]]; then
+    log "Live Kissflow source overlay: email=$(jq -r '.source_all.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}") mobile=$(jq -r '.source_all.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}") (sql mapped=${sql_mapped})"
+    SOURCE_EMAIL_ALL="$(jq -r '.source_all.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_ALL="$(jq -r '.source_all.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_ALL="$(jq -r '.source_all.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_ALL="$(jq -r '.source_all.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_ALL="$(jq -r '.source_all.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_EMAIL_OPEN="$(jq -r '.source_open.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_OPEN="$(jq -r '.source_open.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_OPEN="$(jq -r '.source_open.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_OPEN="$(jq -r '.source_open.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_OPEN="$(jq -r '.source_open.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_EMAIL_TODAY="$(jq -r '.source_opened_today.Email // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WHATSAPP_TODAY="$(jq -r '.source_opened_today.WhatsApp // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_MOBILE_TODAY="$(jq -r '.source_opened_today.Mobile // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_WEB_TODAY="$(jq -r '.source_opened_today.Web // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+    SOURCE_OTHER_TODAY="$(jq -r '.source_opened_today.Other // 0' <<< "${REPORT_LIVE_SOURCE_JSON}")"
+  fi
+fi
 SOURCE_TODAY_TOTAL="$(( SOURCE_EMAIL_TODAY + SOURCE_WHATSAPP_TODAY + SOURCE_MOBILE_TODAY + SOURCE_WEB_TODAY + SOURCE_OTHER_TODAY ))"
+# Keep Today-open panel total aligned with Opened Today KPI when overlay is present.
+if [[ "${OPENED_TODAY}" =~ ^[0-9]+$ && "${OPENED_TODAY}" -gt 0 ]]; then
+  SOURCE_TODAY_TOTAL="${OPENED_TODAY}"
+fi
 
 # Compact All | Today-open source panel (email-safe). Built in Node (same markup as Admin UI preview)
 # so jq never JSON-escapes style="..." attributes (that made Extrovis/Refex panels look unstyled).

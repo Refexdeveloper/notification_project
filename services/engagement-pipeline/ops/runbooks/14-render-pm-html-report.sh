@@ -76,16 +76,7 @@ log "Querying Project Management task summary"
 PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${PM_APP_ID}'
-    AND process_id = '${PM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 tasks AS (
   SELECT
     instance_id,
@@ -183,16 +174,7 @@ log "Querying Project Management per-user breakdown"
 PM_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${PM_APP_ID}'
-    AND process_id = '${PM_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
@@ -266,18 +248,20 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 log "Rendering PM HTML report"
 
-PM_ROWS_HTML="$(jq -r '
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+PM_ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
+  def signed_today: ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg: if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style: if signed_today then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   to_entries | map(
-    "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+    "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-    "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+    "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.pending_count | tostring) + "</b></td>" +
     "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.completed_count | tostring) + "</td>" +
     "</tr>"
   ) | join("")
 ' <<< "${PM_USERS_JSON}")"
-
-TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
 PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {
@@ -287,11 +271,57 @@ PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
       )
     }
 ' <<< "${PM_USERS_JSON}")"
-PM_TOTAL="$(jq -r '.total_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_PENDING="$(jq -r '.pending_tasks' <<< "${PM_SUMMARY_JSON}")"
-PM_COMPLETED="$(jq -r '.completed_tasks' <<< "${PM_SUMMARY_JSON}")"
+PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
+# Defaults until live portfolio overlay runs
+PM_TOTAL_PROJECTS="0"
+PM_OPEN_PROJECTS="0"
+PM_COMPLETED_PROJECTS="0"
+PM_LINKED_TASKS="0"
+PM_INDIVIDUAL="0"
+PM_INDIVIDUAL_PENDING="0"
+PM_INDIVIDUAL_COMPLETED="0"
+PM_TOTAL_SUBTASKS="0"
+PM_PENDING_SUBTASKS="0"
+PM_COMPLETED_SUBTASKS="0"
+
+PM_PORTFOLIO_SCRIPT="${REPO_ROOT}/services/engagement-pipeline/scripts/count-pm-portfolio-kpis.js"
+if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
+  if PM_PORTFOLIO_JSON="$(
+    PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_TASK_PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}" \
+    PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}" \
+    node "${PM_PORTFOLIO_SCRIPT}" 2>/dev/null
+  )"; then
+    log "Live PM portfolio: projects=$(jq -r '.total_projects' <<< "${PM_PORTFOLIO_JSON}") tasks=$(jq -r '.total_tasks' <<< "${PM_PORTFOLIO_JSON}") individual=$(jq -r '.individual_tasks' <<< "${PM_PORTFOLIO_JSON}") subtasks=$(jq -r '.total_subtasks' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_PROJECTS="$(jq -r '.total_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_OPEN_PROJECTS="$(jq -r '.open_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_PROJECTS="$(jq -r '.completed_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_LINKED_TASKS="$(jq -r '.linked_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL="$(jq -r '.individual_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_PENDING="$(jq -r '.individual_pending // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_COMPLETED="$(jq -r '.individual_completed // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_SUBTASKS="$(jq -r '.total_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING_SUBTASKS="$(jq -r '.pending_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_SUBTASKS="$(jq -r '.completed_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+  else
+    log "Live PM portfolio overlay unavailable — using snapshot task totals only"
+  fi
+fi
+if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" ""; then
+  log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?}"
+  PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then
+    PM_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
+  fi
+fi
 PM_TOTAL_USERS="$(jq -r '.total' <<< "${PM_MIS_COUNTS}")"
 PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${PM_MIS_COUNTS}")"
 
@@ -304,31 +334,59 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
+# Prefer portfolio seed when published Admin HTML is still the old tasks-only layout.
+if ! grep -q '{{TotalProjects}}' "${TEMPLATE_SRC}" 2>/dev/null; then
+  PM_SEED="$(report_template_repo_root)/db/seeds/pm-engagement-template.html"
+  if [[ -f "${PM_SEED}" ]]; then
+    log "Published PM template lacks portfolio placeholders — using seed ${PM_SEED}"
+    cp "${PM_SEED}" "${TEMPLATE_SRC}"
+  fi
+fi
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
-  REPORT_TITLE="${SUBJECT:-Project Management Task Report}"
+  REPORT_TITLE="${SUBJECT:-Project Management Portfolio Report}"
 fi
 
 jq -n \
   --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg TotalProjects "${PM_TOTAL_PROJECTS}" \
+  --arg OpenProjects "${PM_OPEN_PROJECTS}" \
+  --arg CompletedProjects "${PM_COMPLETED_PROJECTS}" \
   --arg TotalTasks "${PM_TOTAL}" \
   --arg PendingTasks "${PM_PENDING}" \
   --arg CompletedTasks "${PM_COMPLETED}" \
+  --arg LinkedTasks "${PM_LINKED_TASKS}" \
+  --arg IndividualTasks "${PM_INDIVIDUAL}" \
+  --arg IndividualPending "${PM_INDIVIDUAL_PENDING}" \
+  --arg IndividualCompleted "${PM_INDIVIDUAL_COMPLETED}" \
+  --arg TotalSubTasks "${PM_TOTAL_SUBTASKS}" \
+  --arg PendingSubTasks "${PM_PENDING_SUBTASKS}" \
+  --arg CompletedSubTasks "${PM_COMPLETED_SUBTASKS}" \
   --arg OpenedToday "${PM_OPENED_TODAY}" \
   --arg ClosedToday "${PM_CLOSED_TODAY}" \
   --arg TotalUsers "${PM_TOTAL_USERS}" \
   --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${PM_ROWS_HTML}" \
-  --arg ReportBody "Project Tracker covers all entities group-wide." \
+  --arg ReportBody "Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
+    TotalProjects: $TotalProjects,
+    OpenProjects: $OpenProjects,
+    CompletedProjects: $CompletedProjects,
     TotalTasks: $TotalTasks,
     PendingTasks: $PendingTasks,
     CompletedTasks: $CompletedTasks,
+    LinkedTasks: $LinkedTasks,
+    IndividualTasks: $IndividualTasks,
+    IndividualPending: $IndividualPending,
+    IndividualCompleted: $IndividualCompleted,
+    TotalSubTasks: $TotalSubTasks,
+    PendingSubTasks: $PendingSubTasks,
+    CompletedSubTasks: $CompletedSubTasks,
     OpenedToday: $OpenedToday,
     ClosedToday: $ClosedToday,
     TotalUsers: $TotalUsers,

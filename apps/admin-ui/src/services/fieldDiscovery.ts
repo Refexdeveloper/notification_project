@@ -10,6 +10,8 @@ export interface FieldSyncResult {
   sampled: number;
   error?: string;
   status?: number;
+  skipped?: boolean;
+  message?: string;
 }
 
 const SYSTEMISH = new Set([
@@ -138,6 +140,22 @@ export async function syncFieldsFromAdminItems(
   options?: { processId?: string },
 ): Promise<FieldSyncResult> {
   const appId = (options?.processId || app.appId || '').trim();
+  const name = String(app.applicationName || app.name || '');
+  // Procurement to Pay is Cloud SQL MySQL — never call Kissflow Admin Get-all-items.
+  if (
+    /procurement|p2p/i.test(appId)
+    || /procurement|p2p/i.test(name)
+    || appId === 'Procurement_to_Pay_A00'
+  ) {
+    return {
+      ok: true,
+      fields: [],
+      itemCount: 0,
+      sampled: 0,
+      skipped: true,
+      message: 'Procurement to Pay uses MySQL read-only metrics — Kissflow field sync is not required.',
+    };
+  }
   if (!appId) {
     return {
       ok: false,

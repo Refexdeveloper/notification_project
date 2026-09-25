@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ops/runbooks/33-test-schedule-send.sh
 #
-# Manual test: render + send one PostgreSQL schedule (override recipient optional).
+# Manual test: ingest (optional full) → render → send one PostgreSQL schedule.
 #
 # Usage:
 #   SCHEDULE_ID=dddd1111-1111-4111-8111-111111111002 bash ops/runbooks/33-test-schedule-send.sh
 #   SCHEDULE_ID=... TEST_RECIPIENT=you@refex.co.in bash ops/runbooks/33-test-schedule-send.sh
+#   SCHEDULE_ID=... TEST_RECIPIENT=you@refex.co.in FULL_INGEST=true bash ops/runbooks/33-test-schedule-send.sh
 #
 set -euo pipefail
 
@@ -19,6 +20,7 @@ DRY_RUN="${DRY_RUN:-false}"
 [[ -n "${SCHEDULE_ID}" ]] || { echo "SCHEDULE_ID is required"; exit 1; }
 
 export SCHEDULE_ID
+export FULL_INGEST="${FULL_INGEST:-false}"
 export PGDATABASE="${PGDATABASE:-engagement_reporting}"
 export PGUSER="${PGUSER:-postgres}"
 export PGPASSWORD="${PGPASSWORD:-}"
@@ -32,8 +34,8 @@ if [[ -n "${TEST_RECIPIENT}" ]]; then
 fi
 
 if [[ "${DRY_RUN}" == "true" ]]; then
-  echo "[33] DRY_RUN — would execute runbook 18 with SCHEDULE_ID=${SCHEDULE_ID}"
+  echo "[33] DRY_RUN — would execute runbook 19 with SCHEDULE_ID=${SCHEDULE_ID} FULL_INGEST=${FULL_INGEST}"
   exit 0
 fi
 
-exec bash "${REPO_ROOT}/ops/runbooks/18-render-and-send-lead-tracker-report.sh"
+exec bash "${REPO_ROOT}/ops/runbooks/19-dispatch-scheduled-report.sh"

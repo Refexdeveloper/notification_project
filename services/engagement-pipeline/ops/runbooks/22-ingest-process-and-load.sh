@@ -34,6 +34,8 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
 
+ingest_force_full_for_schedule
+
 ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
 
 HEADERS=(
@@ -275,6 +277,9 @@ echo "
 CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_items (instance_id text, snapshot_at text, process_status text, current_step text, stage text, request_number text, request_id text, criticality text, entity text, requester_email text, source_payload text);
 CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_assignments (instance_id text, snapshot_at text, principal_id text, principal_kind text, assignment_source text);
 CREATE TABLE IF NOT EXISTS engagement_reporting.stg_process_users (user_id text, snapshot_at text, user_name text, email text, user_type text, active_status text, last_sign_in text, ever_logged_in text, source_payload text);
+-- Staging columns must stay text (CSV copy + ::jsonb on load). Older DBs may have jsonb.
+ALTER TABLE engagement_reporting.stg_process_items ALTER COLUMN source_payload TYPE text USING source_payload::text;
+ALTER TABLE engagement_reporting.stg_process_users ALTER COLUMN source_payload TYPE text USING source_payload::text;
 TRUNCATE engagement_reporting.stg_process_items, engagement_reporting.stg_process_assignments, engagement_reporting.stg_process_users;
 " | run_sql
 
@@ -300,9 +305,12 @@ fi
 
 PREV_SNAPSHOT_RUN_ID=""
 if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
-  PREV_SNAPSHOT_RUN_ID="$(ingest_get_previous_completed_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
+  # Prefer high-volume base (same as ITSM 09) — chronologically-latest can be a sparse delta.
+  PREV_SNAPSHOT_RUN_ID="$(ingest_get_best_base_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
   if [[ -n "${PREV_SNAPSHOT_RUN_ID}" ]]; then
     log "Incremental merge: carrying forward items from snapshot ${PREV_SNAPSHOT_RUN_ID}"
+  else
+    log "Incremental merge: no previous completed snapshot to carry forward"
   fi
 fi
 

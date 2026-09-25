@@ -6,6 +6,14 @@ export const TRAVEL_COMBINED_PROCESS_IDS = [
   'Travel_Management_A02',
 ] as const;
 
+/** PM portfolio: tasks + sub-tasks (projects board is separate). */
+export const PM_PORTFOLIO_PROCESS_IDS = [
+  'Project_Sub_Task_A01',
+  'Sub_Task_Process_A00',
+] as const;
+
+export const PM_PROJECT_BOARD_ID = 'Project_Management_A01';
+
 export function processLabel(processId: string): string {
   const pid = (processId || '').trim();
   if (!pid) return '';
@@ -15,15 +23,17 @@ export function processLabel(processId: string): string {
     return `${pid} · Travel Request (combined into entity report)`;
   }
   if (pid === 'Travel_Management_A02') {
-    return `${pid} · Travel Management (combined with Advance Payment + Expense)`;
+    return `${pid} · Travel Management (combined with Payment Request + Expense)`;
   }
   if (pid === 'Advance_Payment_Request_Process_A01') {
-    return `${pid} · Advance Payment (combined into Travel entity report)`;
+    return `${pid} · Payment Request (combined into Travel entity report)`;
   }
   if (pid === 'Expense_Management_A03') {
     return `${pid} · Expense Management (combined into Travel entity report)`;
   }
-  if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Management`;
+  if (pid === 'Project_Sub_Task_A01') return `${pid} · Project Tasks (portfolio)`;
+  if (pid === 'Sub_Task_Process_A00') return `${pid} · Sub-tasks (portfolio)`;
+  if (pid === 'Project_Management_A01') return `${pid} · Projects board (portfolio)`;
   if (pid === 'Technician_Reimbursement__YTLM') return `${pid} · Reinvestment Request (Solar)`;
   if (/lead_tracker/i.test(pid)) return `${pid} · Lead Tracker`;
   return pid;
@@ -33,10 +43,45 @@ export function isExtrovisProcess(processId: string | undefined | null): boolean
   return /extrovis/i.test(String(processId || ''));
 }
 
+export const ITSM_DISPLAY_NAME = 'IT Helpdesk';
+
+/** Kissflow app id stays IT_Service_Management_A00; UI label is IT Helpdesk. */
+export function friendlyApplicationName(
+  appId?: string | null,
+  appName?: string | null,
+): string {
+  const id = String(appId || '').trim();
+  const name = String(appName || '').trim();
+  if (
+    id === 'IT_Service_Management_A00' ||
+    /it[_-]?service[_-]?management/i.test(id) ||
+    /^it\s*service\s*management$/i.test(name)
+  ) {
+    return ITSM_DISPLAY_NAME;
+  }
+  return name || id;
+}
+
 export function isItsmApp(appId: string | undefined | null, appName?: string): boolean {
   const id = String(appId || '').toLowerCase();
   const name = String(appName || '').toLowerCase();
-  return id.includes('it_service') || id.includes('itsm') || name.includes('it service');
+  return (
+    id.includes('it_service') ||
+    id.includes('itsm') ||
+    name.includes('it service') ||
+    name.includes('helpdesk') ||
+    name.includes('help desk')
+  );
+}
+
+export function isPmApp(appId: string | undefined | null, appName?: string): boolean {
+  const id = String(appId || '').toLowerCase();
+  const name = String(appName || '').toLowerCase();
+  return (
+    id.includes('project_management') ||
+    id.includes('project_sub_task') ||
+    name.includes('project management')
+  );
 }
 
 export function isTravelApp(appId: string | undefined | null, appName?: string): boolean {

@@ -18,7 +18,16 @@ latest_runs AS (
       sr.application_id = $2
       OR sr.process_id IN (SELECT process_id FROM app_processes)
     )
-  ORDER BY sr.process_id, sr.created_at DESC
+    AND sr.status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY sr.process_id,
+    CASE
+      WHEN COALESCE(sr.load_completed_at, sr.extraction_completed_at, sr.created_at)
+           > now() - interval '14 days'
+        THEN COALESCE(sr.item_record_count, 0)
+      ELSE -1
+    END DESC,
+    COALESCE(sr.load_completed_at, sr.extraction_completed_at, sr.created_at) DESC,
+    sr.created_at DESC
 ),
 latest_user_snap AS (
   SELECT DISTINCT ON (u.user_id)

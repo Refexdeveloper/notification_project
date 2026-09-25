@@ -1,0 +1,35 @@
+---
+description: Engagement report KPI logic, scheduled vs test-send, and handoff docs for new agents
+globs: ops/runbooks/**/*.sh,services/engagement-pipeline/**/*,archive/prototype-mysql-api/services/leadReportService.js,docs/release-notes/**/*
+alwaysApply: false
+---
+
+# Engagement report KPIs
+
+Before changing Opened/Closed Today, Total/Open/Closed, ingest, or schedule-runner render paths, read:
+
+**`docs/release-notes/2026-08-21-report-kpi-fixes.md`** and **`AGENTS.md`**.
+
+## Constraints
+
+- Prefer fixing **scheduled** email path (`19-dispatch` → ingest → render → send).
+- Do **not** change test-send conditions unless the user explicitly asks.
+- Email KPI deploy target is **`refex-schedule-runner`** (`ops/runbooks/32-deploy-schedule-runner.sh`), not admin-ui alone.
+
+## Closed Today (ITSM) — Admin All dashboard parity
+
+Aligned to `aasik_ITSM` `isRefexServiceClosedTicket` + `isDashboardRowClosedToday` (no Me/Team/Closed By):
+
+- Closed = NOT Rejected AND (IT Tech Reopen / ReOpen Window / Employee Feedback **or** Kissflow process **Completed**). Not Statu_1 Closed alone.
+- Closed-at: reopen → prefer `_modified_at`; Completed → completed/closed fields then `_modified_at`.
+- Today Closed = Closed AND closed-at is today IST.
+- Today Open = created today AND still open (not Closed/Rejected/Cancelled).
+
+Live: `services/engagement-pipeline/scripts/count-live-today-kpis.js`  
+SQL: `06-render-html-report.sh` + `report_item_completed_at_sql` in `ops/runbooks/report-template-lib.sh`
+
+See `docs/release-notes/2026-08-21-report-kpi-fixes.md`.
+
+## Refex Entity scope
+
+When `ENTITY_FILTER=Refex`, include blank/null Entity as well as Entity=Refex. Do not apply that blank-Entity rule to Extrovis or other entities.

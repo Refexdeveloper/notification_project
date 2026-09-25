@@ -48,7 +48,7 @@ export const LEAD_TRACKER_REPORT_HTML = `<!DOCTYPE html>
 <tr><td style="background-color:#ffffff; padding:24px 32px; border-bottom:3px solid #c8102e;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td width="180" valign="middle">
-<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" height="32" style="display:block; max-width:168px; height:auto;">
 </td>
 <td align="right" valign="middle" style="font-size:12px; color:#888888;">Lead Tracker &middot; {{GroupName}}</td>
 </tr></table></td></tr>

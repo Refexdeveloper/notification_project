@@ -10,6 +10,8 @@ const {
   isEngagementCacheFresh,
   loadApplicationEngagementCache,
 } = require('../lib/engagementCache');
+const { filterDisplayablePeople } = require('../lib/dashboardDisplay');
+const { isP2pApplication, loadP2pDashboard } = require('../lib/p2pDashboard');
 
 const router = express.Router({ mergeParams: true });
 
@@ -257,6 +259,13 @@ function isLoggedInTodayLegacy(lastSignIn) {
   return isLoggedInToday(lastSignIn);
 }
 
+function sanitizeEngagementItems(items) {
+  return filterDisplayablePeople(items || [], ['user_name', 'name']).map((row) => {
+    const { name, ...rest } = row;
+    return { ...rest, user_name: row.user_name || name };
+  });
+}
+
 function buildTotals(rows) {
   return {
     total_users: rows.length,
@@ -270,10 +279,6 @@ function buildTotals(rows) {
 }
 
 router.get('/', async (req, res) => {
-  if (!isDatabaseConfigured()) {
-    return dbNotConfigured(res, req.correlationId);
-  }
-
   const environment = normalizeEnvironment(req.query.environment);
   if (!environment) {
     return fail(res, req.correlationId, 'ENVIRONMENT_REQUIRED', 'Query parameter environment is required', 400);
@@ -282,6 +287,58 @@ router.get('/', async (req, res) => {
   const applicationId = req.params.applicationId;
   if (!applicationId) {
     return fail(res, req.correlationId, 'APPLICATION_ID_REQUIRED', 'Application id is required', 400);
+  }
+
+  // Procurement to Pay — MySQL users (not Kissflow engagement / not PG required).
+  if (isP2pApplication(applicationId)) {
+    try {
+      const dash = await loadP2pDashboard({
+        environment,
+        period: 'all',
+        entity: req.query.entity || 'all',
+      });
+      const items = sanitizeEngagementItems(
+        (dash.users || []).map((u) => ({
+          user_id: String(u.user_id),
+          user_name: u.user_name,
+          email: u.email || null,
+          user_type: null,
+          active_status: null,
+          last_sign_in: u.last_sign_in || null,
+          ever_logged_in: Boolean(u.last_sign_in),
+          assigned: Number(u.total || 0),
+          open: Number(u.open || u.pending || 0),
+          completed: Number(u.closed || u.completed || 0),
+          rejected: Number(u.rejected || 0),
+          role_names: [],
+          has_assignment: Number(u.total || 0) > 0,
+          has_app_role: true,
+          source_payload: {},
+        })),
+      );
+      return ok(res, req.correlationId, {
+        items,
+        count: items.length,
+        totals: {
+          ...buildTotals(items),
+          total_users: Number(dash.metrics?.total_users || items.length),
+          active_today: Number(dash.metrics?.signed_in_today || 0),
+        },
+        generated_at: new Date().toISOString(),
+        snapshot_at: dash.snapshot_at || null,
+        environment,
+        application_id: applicationId,
+        scope: 'application',
+        data_source: 'p2p_mysql',
+        cache_ttl_ms: ENGAGEMENT_CACHE_TTL_MS,
+      });
+    } catch (err) {
+      return fail(res, req.correlationId, err.code || 'P2P_USERS_FAILED', err.message, 500, true);
+    }
+  }
+
+  if (!isDatabaseConfigured()) {
+    return dbNotConfigured(res, req.correlationId);
   }
 
   const liveRefresh = String(req.query.refresh || '').toLowerCase() === 'live';
@@ -306,16 +363,12 @@ router.get('/', async (req, res) => {
     }));
 
   const respondLive = (live, dataSource = 'live') => {
-    const items = mapLiveUsers(live);
+    const items = sanitizeEngagementItems(mapLiveUsers(live));
     return ok(res, req.correlationId, {
       items,
       count: items.length,
       totals: {
-        total_users: live.metrics.total_users,
-        active_today: live.metrics.sign_in_today,
-        inactive: items.filter((row) => row.last_sign_in && !isLoggedInTodayLegacy(row.last_sign_in)).length,
-        never_logged_in: items.filter((row) => !row.ever_logged_in && !row.last_sign_in).length,
-        total_assigned: items.reduce((sum, row) => sum + Number(row.assigned || 0), 0),
+        ...buildTotals(items),
         open_tickets: live.metrics.open_tickets,
         closed_tickets: live.metrics.closed_tickets,
         sign_in_rate_overall: live.metrics.sign_in_rate_overall,
@@ -351,28 +404,30 @@ router.get('/', async (req, res) => {
     const { rows } = await getPool().query(APP_ENGAGEMENT_QUERY, [environment, applicationId]);
     if (rows.length) {
       const snapshotAt = rows[0]?.snapshot_at || null;
-      const items = rows.map((row) => ({
-        user_id: row.user_id,
-        user_name: row.user_name,
-        email: row.email,
-        user_type: row.user_type,
-        active_status: row.active_status,
-        last_sign_in: row.last_sign_in,
-        ever_logged_in: row.ever_logged_in,
-        assigned: row.assigned,
-        open: row.open_count,
-        completed: row.completed_count,
-        rejected: row.rejected_count,
-        role_names: row.role_names || [],
-        has_assignment: row.has_assignment,
-        has_app_role: row.has_app_role,
-        source_payload: row.source_payload,
-      }));
+      const items = sanitizeEngagementItems(
+        rows.map((row) => ({
+          user_id: row.user_id,
+          user_name: row.user_name,
+          email: row.email,
+          user_type: row.user_type,
+          active_status: row.active_status,
+          last_sign_in: row.last_sign_in,
+          ever_logged_in: row.ever_logged_in,
+          assigned: row.assigned,
+          open: row.open_count,
+          completed: row.completed_count,
+          rejected: row.rejected_count,
+          role_names: row.role_names || [],
+          has_assignment: row.has_assignment,
+          has_app_role: row.has_app_role,
+          source_payload: row.source_payload,
+        })),
+      );
 
       return ok(res, req.correlationId, {
         items,
         count: items.length,
-        totals: buildTotals(rows),
+        totals: buildTotals(items),
         generated_at: new Date().toISOString(),
         snapshot_at: snapshotAt,
         environment,
@@ -386,10 +441,11 @@ router.get('/', async (req, res) => {
     // No ingest snapshot — use application engagement_cache (2h) before hitting Kissflow.
     const cached = await loadApplicationEngagementCache(getPool(), environment, applicationId);
     if (isEngagementCacheFresh(cached)) {
+      const items = sanitizeEngagementItems(cached.items || []);
       return ok(res, req.correlationId, {
-        items: cached.items,
-        count: cached.items.length,
-        totals: cached.totals || buildTotals([]),
+        items,
+        count: items.length,
+        totals: { ...(cached.totals || {}), ...buildTotals(items) },
         generated_at: cached.fetched_at,
         snapshot_at: cached.snapshot_at || cached.fetched_at,
         environment,

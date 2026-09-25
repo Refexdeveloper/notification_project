@@ -63,6 +63,15 @@ class Handler(BaseHTTPRequestHandler):
                 env["TEST_RECIPIENT"] = str(test_recipient).strip()
                 print(f"Test send to TEST_RECIPIENT={env['TEST_RECIPIENT']}", flush=True)
 
+            full_ingest = (
+                (query.get("full_ingest") or [None])[0]
+                or (query.get("fullIngest") or [None])[0]
+                or env.get("FULL_INGEST")
+            )
+            if full_ingest and str(full_ingest).lower() in ("1", "true", "yes"):
+                env["FULL_INGEST"] = "true"
+                print("Forcing FULL_INGEST=true for this dispatch", flush=True)
+
             result = subprocess.run(
                 ["bash", f"./ops/runbooks/{RUNBOOK}"],
                 capture_output=True, text=True, timeout=890, env=env,

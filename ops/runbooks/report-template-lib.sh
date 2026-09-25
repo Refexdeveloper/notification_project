@@ -91,6 +91,14 @@ report_kf_ts_sql() {
   local col="${1:?jsonb datetime expression required}"
   cat <<EOF
 CASE
+  WHEN jsonb_typeof(${col}) = 'number' THEN
+    CASE
+      WHEN (${col} #>> '{}')::numeric > 1000000000000
+        THEN to_timestamp(((${col} #>> '{}')::numeric) / 1000.0)
+      WHEN (${col} #>> '{}')::numeric > 1000000000
+        THEN to_timestamp((${col} #>> '{}')::numeric)
+      ELSE NULL
+    END
   WHEN jsonb_typeof(${col}) = 'string'
    AND (${col} #>> '{}') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
     CASE
@@ -134,31 +142,57 @@ EOF
 }
 
 # Item completed-at. Kissflow process list payloads omit _completed_at —
-# use _modified_at when the item is business-closed (Completed / IT Tech Reopen / Closed).
+# use _modified_at when the item is business-closed (Completed / reopen hold).
+# ITSM reopen hold (IT Tech Reopen / ReOpen Window / Employee Feedback) prefers
+# _modified_at first — matches aasik_ITSM getRefexClosedAtRaw.
 # Arg1: source_payload expression. Arg2: table qualifier prefix (e.g. "i." or "").
 report_item_completed_at_sql() {
   local src="${1:-source_payload}"
   local q="${2:-}"
+  local step_expr="lower(trim(coalesce(${q}current_step, ${src}->>'_current_step', '')))"
+  local reopen_sql="(
+    ${q}process_status = 'InProgress'
+    AND (
+      ${step_expr} LIKE '%it tech reopen%'
+      OR ${step_expr} LIKE '%reopen window%'
+      OR ${step_expr} LIKE '%employee feedback%'
+      OR ${step_expr} LIKE '%employee verification%'
+      OR ${step_expr} = 'ticket reopen'
+      OR (${step_expr} LIKE '%ticket reopen%' AND ${step_expr} NOT LIKE '%reopened%')
+    )
+    AND ${step_expr} NOT LIKE '%it agent pickup%'
+    AND ${step_expr} NOT LIKE '%it agent solution%'
+    AND ${step_expr} NOT LIKE '%dependency%'
+  )"
   cat <<EOF
-COALESCE(
-  $(report_kf_ts_sql "${src}->'_completed_at'"),
-  $(report_kf_ts_sql "${src}->'_closed_at'"),
-  $(report_kf_ts_sql "${src}->'Completed_On'"),
-  $(report_kf_ts_sql "${src}->'Closed_On'"),
-  $(report_kf_ts_sql "${src}->'Completed_Date'"),
-  $(report_kf_ts_sql "${src}->'Closed_Date'"),
-  CASE
-    WHEN ${q}process_status IN ('Completed', 'Closed')
-      OR lower(coalesce(${q}process_status, '')) IN ('completed', 'closed', 'done')
-      OR (
-        ${q}process_status = 'InProgress'
-        AND lower(trim(coalesce(${q}current_step, ${src}->>'_current_step', ''))) LIKE '%it tech reopen%'
-      )
-      OR lower(trim(coalesce(${src}->>'Lead_Status', ${src}->>'Status', ''))) IN ('close', 'closed', 'completed', 'done')
-    THEN $(report_kf_ts_sql "${src}->'_modified_at'")
-    ELSE NULL
-  END
-)
+CASE
+  WHEN ${reopen_sql} THEN
+    COALESCE(
+      $(report_kf_ts_sql "${src}->'_modified_at'"),
+      $(report_kf_ts_sql "${src}->'_completed_at'"),
+      $(report_kf_ts_sql "${src}->'_closed_at'"),
+      $(report_kf_ts_sql "${src}->'Completed_On'"),
+      $(report_kf_ts_sql "${src}->'Closed_On'"),
+      $(report_kf_ts_sql "${src}->'Completed_Date'"),
+      $(report_kf_ts_sql "${src}->'Closed_Date'")
+    )
+  ELSE
+    COALESCE(
+      $(report_kf_ts_sql "${src}->'_completed_at'"),
+      $(report_kf_ts_sql "${src}->'_closed_at'"),
+      $(report_kf_ts_sql "${src}->'Completed_On'"),
+      $(report_kf_ts_sql "${src}->'Closed_On'"),
+      $(report_kf_ts_sql "${src}->'Completed_Date'"),
+      $(report_kf_ts_sql "${src}->'Closed_Date'"),
+      CASE
+        WHEN ${q}process_status = 'Completed'
+          OR lower(coalesce(${q}process_status, '')) IN ('completed', 'complete')
+          OR lower(trim(coalesce(${src}->>'Lead_Status', ''))) IN ('close', 'closed', 'completed', 'done')
+        THEN $(report_kf_ts_sql "${src}->'_modified_at'")
+        ELSE NULL
+      END
+    )
+END
 EOF
 }
 
@@ -167,6 +201,83 @@ REPORT_ITEM_COMPLETED_AT_SQL="$(report_item_completed_at_sql source_payload '')"
 REPORT_ITEM_CREATED_AT_I_SQL="$(report_item_created_at_sql i.source_payload)"
 REPORT_ITEM_COMPLETED_AT_I_SQL="$(report_item_completed_at_sql i.source_payload 'i.')"
 REPORT_IST_TODAY_SQL="(now() AT TIME ZONE 'Asia/Kolkata')::date"
+
+# Overlay ticket KPIs from live Kissflow list (Lead Tracker pattern).
+# Sets REPORT_LIVE_* counts and REPORT_LIVE_SOURCE_JSON (source_all / source_opened_today).
+# Args: process_id, application_id (optional), entity_filter (optional).
+report_live_today_kpis() {
+  local process_id="${1:-}"
+  local application_id="${2:-}"
+  local entity_filter="${3:-}"
+  REPORT_LIVE_OPENED_TODAY=""
+  REPORT_LIVE_CLOSED_TODAY=""
+  REPORT_LIVE_TOTAL_TICKETS=""
+  REPORT_LIVE_OPEN_TICKETS=""
+  REPORT_LIVE_CLOSED_TICKETS=""
+  REPORT_LIVE_SOURCE_JSON=""
+  [[ -n "${process_id}" ]] || return 1
+  local script="${REPO_ROOT:-}/services/engagement-pipeline/scripts/count-live-today-kpis.js"
+  if [[ ! -f "${script}" ]]; then
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/services/engagement-pipeline/scripts/count-live-today-kpis.js"
+  fi
+  [[ -f "${script}" ]] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  local json
+  if ! json="$(
+    PROCESS_ID="${process_id}" \
+    APPLICATION_ID="${application_id}" \
+    ENTITY_FILTER="${entity_filter}" \
+    node "${script}" 2>/dev/null
+  )"; then
+    return 1
+  fi
+  REPORT_LIVE_OPENED_TODAY="$(jq -r '.opened_today // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_CLOSED_TODAY="$(jq -r '.closed_today // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_TOTAL_TICKETS="$(jq -r '.total_tickets // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_OPEN_TICKETS="$(jq -r '.open_tickets // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_CLOSED_TICKETS="$(jq -r '.closed_tickets // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_SOURCE_JSON="$(jq -c '{source_all:(.source_all//{}),source_open:(.source_open//{}),source_opened_today:(.source_opened_today//{})}' <<< "${json}" 2>/dev/null || true)"
+  [[ -n "${REPORT_LIVE_OPENED_TODAY}${REPORT_LIVE_CLOSED_TODAY}${REPORT_LIVE_TOTAL_TICKETS}" ]] || return 1
+  return 0
+}
+
+# Prefer live overlay when present; keep SQL value as fallback.
+report_prefer_live_today() {
+  local sql_val="${1:-0}"
+  local live_val="${2:-}"
+  if [[ -n "${live_val}" && "${live_val}" =~ ^[0-9]+$ ]]; then
+    printf '%s' "${live_val}"
+  else
+    printf '%s' "${sql_val:-0}"
+  fi
+}
+
+# Prefer the newest completed snapshot (scheduled ingest writes this just before render).
+# item_record_count is only a tie-breaker so a sparse same-second run cannot win over a fuller one.
+# Arg1: application_id SQL literal (already quoted). Arg2: process_id SQL literal.
+report_latest_snapshot_cte() {
+  local app_lit="${1:?application_id literal required}"
+  local proc_lit="${2:?process_id literal required}"
+  cat <<EOF
+latest AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.snapshot_run
+  WHERE application_id = ${app_lit}
+    AND process_id = ${proc_lit}
+    AND environment = 'production'
+    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
+  ORDER BY
+    COALESCE(load_completed_at, extraction_completed_at, created_at) DESC,
+    COALESCE(item_record_count, 0) DESC
+  LIMIT 1
+)
+EOF
+}
+
+# MIS table row background: green when last_sign_in (YYYY-MM-DD …) is today IST.
+# Usage inside jq with --arg today "${TODAY_IST}".
+REPORT_MIS_ROW_BG_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end)'
+REPORT_MIS_SIGNIN_CELL_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end)'
 
 report_template_seed_for_app() {
   case "${1:-}" in
@@ -182,7 +293,14 @@ report_template_seed_for_app() {
     Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
     Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
     EMS_001_A00) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
-    Expense_and_Travel_Management_A00) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
+    Expense_and_Travel_Management_A00)
+      # Entity-scoped Travel seeds (Refex / Venwind schedulers).
+      case "${ENTITY_FILTER:-${ENTITY_NAME:-}}" in
+        [Rr]efex*) printf '%s' 'db/seeds/travel-refex-template.html' ;;
+        [Vv]enwind*) printf '%s' 'db/seeds/travel-venwind-template.html' ;;
+        *) printf '%s' 'db/seeds/travel-engagement-template.html' ;;
+      esac
+      ;;
     *) return 1 ;;
   esac
 }

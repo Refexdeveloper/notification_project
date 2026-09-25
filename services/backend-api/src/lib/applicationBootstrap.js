@@ -15,17 +15,26 @@ const { ensureConnectReportArtifacts } = require('./connectReportArtifacts');
 async function bootstrapApplication({ environment, applicationId }) {
   const env = normalizeEnvironment(environment);
   const pool = getPool();
+  let isP2p = false;
+  try {
+    const { isP2pApplication } = require('./p2pDashboard');
+    isP2p = isP2pApplication(applicationId);
+  } catch {
+    isP2p = false;
+  }
 
-  const fieldSync = await syncAllProcessFields(pool, {
-    environment: env,
-    applicationId,
-    options: {
-      // First connect: sample open items for fields; later syncs stay incremental.
-      incremental: false,
-      inProgressOnly: true,
-      pageSize: 500,
-    },
-  });
+  const fieldSync = isP2p
+    ? [{ ok: true, skipped: true, application_id: applicationId, reason: 'p2p_mysql_readonly' }]
+    : await syncAllProcessFields(pool, {
+        environment: env,
+        applicationId,
+        options: {
+          // First connect: sample open items for fields; later syncs stay incremental.
+          incremental: false,
+          inProgressOnly: true,
+          pageSize: 500,
+        },
+      });
 
   let engagement = null;
   let engagementError = null;

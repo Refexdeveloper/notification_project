@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   Home,
+  LayoutDashboard,
   Radar,
   Mail,
   CalendarClock,
@@ -9,15 +10,18 @@ import {
   Plug,
   Layers,
   Settings,
+  Table2,
 } from 'lucide-react';
 import { navigationItems, type NavItem } from '@/mocks/navigation';
 import { isBackendApiMode } from '@/services/backendApi';
 
 export type AppDetailTabId =
   | 'overview'
+  | 'dashboard'
   | 'connection'
   | 'discovery'
   | 'resources'
+  | 'records'
   | 'engagement'
   | 'templates'
   | 'schedulers'
@@ -34,6 +38,8 @@ export type AppDetailTab = {
 
 /** All application detail tabs (prototype mode). */
 export const APP_DETAIL_TABS: AppDetailTab[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'records', label: 'Records', icon: Table2 },
   { id: 'overview', label: 'Overview', icon: Home },
   { id: 'connection', label: 'Connect', icon: Plug, prototypeOnly: true },
   { id: 'discovery', label: 'Sync fields', icon: Radar },
@@ -46,11 +52,24 @@ export const APP_DETAIL_TABS: AppDetailTab[] = [
 ];
 
 /** Sidebar routes hidden in backend-api mode (prototype / localStorage only, or Kissflow-owned). */
-const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings', 'platform-users', 'users']);
+/** Keep Users (User management) visible in backend mode for CEO/CTO workload view. */
+const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings', 'platform-users']);
 
 export function applicationDetailTabs(): AppDetailTab[] {
   if (!isBackendApiMode()) return APP_DETAIL_TABS;
   return APP_DETAIL_TABS.filter((tab) => !tab.prototypeOnly);
+}
+
+/** Refexone embed: Dashboard + Records; Project Tracker also gets Users. */
+const EMBED_TAB_IDS = new Set<AppDetailTabId>(['dashboard', 'records']);
+
+export function applicationDetailTabsForEmbed(applicationId?: string): AppDetailTab[] {
+  const ids = new Set<AppDetailTabId>(EMBED_TAB_IDS);
+  const hay = String(applicationId || '').toLowerCase();
+  if (hay.includes('project_management') || hay.includes('project_management_tracker')) {
+    ids.add('engagement'); // Users
+  }
+  return APP_DETAIL_TABS.filter((tab) => ids.has(tab.id));
 }
 
 export function sidebarNavigationItems(): NavItem[] {
@@ -64,5 +83,5 @@ export function isPrototypeOnlyAppTab(tabId: string): boolean {
 }
 
 export function defaultApplicationTab(): AppDetailTabId {
-  return 'overview';
+  return 'dashboard';
 }

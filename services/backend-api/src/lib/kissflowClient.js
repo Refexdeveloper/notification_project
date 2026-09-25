@@ -311,9 +311,18 @@ async function fetchAllProcessItems({ environment, accountId, processId, credent
 }
 
 function pickString(obj, keys) {
+  // Kissflow person fields are often null; typeof null === 'object', so guard explicitly.
+  // Task_ID / Project_ID are frequently numbers — coerce those instead of falling through to _id.
+  if (obj == null || typeof obj !== 'object') return '';
   for (const key of keys) {
     const val = obj[key];
     if (typeof val === 'string' && val.trim()) return val.trim();
+    if (typeof val === 'number' && Number.isFinite(val)) return String(val);
+    if (val && typeof val === 'object') {
+      const nested = val.Name || val.name || val.v || val.value || val.Id || val.id;
+      if (typeof nested === 'string' && nested.trim()) return nested.trim();
+      if (typeof nested === 'number' && Number.isFinite(nested)) return String(nested);
+    }
   }
   return '';
 }
@@ -373,15 +382,20 @@ function pickCurrentStep(raw) {
 }
 
 /**
- * ITSM business-closed: Completed, or InProgress parked on step "IT Tech Reopen".
+ * ITSM business-closed: Completed/Closed, or InProgress parked on Admin-All
+ * reopen / feedback steps (same as dashboard SQL + aasik_ITSM).
  * Those reopen-step tickets must not count as Open.
  */
 function isItsmBusinessClosed(raw) {
   const status = normalizeProcessStatus(raw);
-  if (status === 'Completed') return true;
+  if (status === 'Completed' || status === 'Closed') return true;
   if (status === 'InProgress') {
     const step = pickCurrentStep(raw).toLowerCase();
-    return step === 'it tech reopen' || step.includes('it tech reopen');
+    return (
+      step.includes('it tech reopen')
+      || step.includes('reopen window')
+      || step.includes('employee feedback')
+    );
   }
   return false;
 }

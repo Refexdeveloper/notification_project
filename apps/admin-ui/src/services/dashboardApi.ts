@@ -1,4 +1,5 @@
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type DashboardMetricLabels = {
   sign_in_today: string;
@@ -15,8 +16,11 @@ export type DashboardAppMetrics = {
   sign_in_rate_today: number;
   open_tickets: number;
   closed_tickets: number;
+  rejected?: number;
+  total_items?: number;
   opened_today?: number;
   closed_today?: number;
+  in_progress?: number;
 };
 
 export type DashboardApplication = {
@@ -50,8 +54,23 @@ export type DashboardData = {
   warning?: string;
 };
 
-const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v1';
-const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
+function decorateDashboardData(data: DashboardData): DashboardData {
+  return {
+    ...data,
+    applications: (data.applications || []).map((app) => ({
+      ...app,
+      application_name: friendlyApplicationName(app.application_id, app.application_name),
+    })),
+    recent_sends: data.recent_sends?.map((row) => ({
+      ...row,
+      application_name: friendlyApplicationName(row.application_id, row.application_name),
+    })),
+  };
+}
+
+const DASHBOARD_CACHE_PREFIX = 'ne_dashboard_snapshot_v5';
+/** Landing reuse window — skip network if fresher than this (user request: 5 min). */
+export const DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
 
 type DashboardCacheEntry = {
   ts: number;
@@ -71,13 +90,41 @@ export function readDashboardCache(environment: 'production' | 'development'): D
       sessionStorage.removeItem(cacheKey(environment));
       return null;
     }
-    if (Date.now() - parsed.ts > DASHBOARD_CACHE_TTL_MS) {
-      sessionStorage.removeItem(cacheKey(environment));
+    if (Date.now() - parsed.ts > DASHBOARD_CACHE_STALE_MS) {
       return null;
     }
     return parsed.data;
   } catch {
     return null;
+  }
+}
+
+/** Soft paint — returns last snapshot even when older than 5 minutes. */
+export function readDashboardCacheSoft(environment: 'production' | 'development'): DashboardData | null {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(environment));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DashboardCacheEntry;
+    if (!parsed?.data || !Array.isArray(parsed.data.applications) || parsed.data.applications.length === 0) {
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+export function isDashboardCacheFresh(
+  environment: 'production' | 'development',
+  maxAgeMs = DASHBOARD_CACHE_STALE_MS,
+): boolean {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(environment));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as DashboardCacheEntry;
+    return Boolean(parsed?.ts && Date.now() - parsed.ts <= maxAgeMs);
+  } catch {
+    return false;
   }
 }
 
@@ -102,7 +149,7 @@ export async function loadDashboard(
   if (!live && !options?.skipCache) {
     const cached = readDashboardCache(environment);
     if (cached) {
-      return { ok: true, data: cached, fromCache: true };
+      return { ok: true, data: decorateDashboardData(cached), fromCache: true };
     }
   }
 
@@ -114,15 +161,54 @@ export async function loadDashboard(
 
   const res = await apiV1Fetch<DashboardData>(`/dashboard?${params.toString()}`, {
     cache: 'no-store',
-  });
+  }, { timeoutMs: 30000 });
 
   if (!res.ok || !res.data) {
     return { ok: false, error: res.error || 'Failed to load dashboard' };
   }
 
   if (!live) {
-    writeDashboardCache(environment, res.data);
+    writeDashboardCache(environment, decorateDashboardData(res.data));
   }
 
-  return { ok: true, data: res.data };
+  return { ok: true, data: decorateDashboardData(res.data) };
+}
+
+/** Soft live refresh: related app users + live item counts (no full directory). */
+export async function refreshDashboardLive(
+  environment: 'production' | 'development' = 'production',
+  options?: { applicationId?: string },
+): Promise<{ ok: boolean; data?: DashboardData & { warnings?: string[]; refreshed_at?: string }; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+  const params = new URLSearchParams({ environment });
+  if (options?.applicationId) params.set('application_id', options.applicationId);
+
+  const res = await apiV1Fetch<DashboardData & { warnings?: string[]; refreshed_at?: string; applications?: DashboardApplication[] }>(
+    `/dashboard/refresh?${params.toString()}`,
+    { method: 'POST', body: '{}', cache: 'no-store' },
+    { timeoutMs: 25000 },
+  );
+
+  if (!res.ok || !res.data) {
+    return { ok: false, error: res.error || 'Failed to refresh dashboard' };
+  }
+
+  // refresh endpoint returns applications on the payload
+  const apps = (res.data as { applications?: DashboardApplication[] }).applications;
+  if (apps && Array.isArray(apps)) {
+    const data: DashboardData = {
+      environment,
+      applications: apps,
+      generated_at: (res.data as { refreshed_at?: string }).refreshed_at || new Date().toISOString(),
+      refresh_mode: 'live',
+      warnings: res.data.warnings,
+    };
+    const decorated = decorateDashboardData(data);
+    writeDashboardCache(environment, decorated);
+    return { ok: true, data: decorated };
+  }
+
+  return { ok: true, data: res.data as DashboardData };
 }

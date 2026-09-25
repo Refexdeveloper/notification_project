@@ -1,5 +1,6 @@
 import type { RefexEnvironment } from '@/seeds/refexAppCatalog';
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
+import { friendlyApplicationName } from '@/lib/processLabels';
 
 export type BackendUserRow = {
   user_id: string;
@@ -100,5 +101,85 @@ export async function loadWorkspaceUsers(environment: RefexEnvironment): Promise
     totals: res.data.totals,
     generatedAt: res.data.generated_at,
     warning: res.data.warning || res.data.hint,
+  };
+}
+
+export type UserManagementApp = {
+  application_id: string;
+  application_name: string;
+  open: number;
+  closed: number;
+  rejected: number;
+};
+
+export type UserManagementRow = {
+  user_id: string;
+  user_name: string;
+  email: string;
+  last_sign_in: string | null;
+  signed_in_today: boolean;
+  ever_logged_in: boolean;
+  applications: UserManagementApp[];
+  open: number;
+  closed: number;
+  rejected: number;
+  total: number;
+};
+
+export type UserManagementResponse = {
+  environment: string;
+  generated_at?: string;
+  count: number;
+  totals: {
+    total_users: number;
+    active_today: number;
+    open: number;
+    closed: number;
+    rejected: number;
+  };
+  items: UserManagementRow[];
+  warning?: string;
+};
+
+export type UserManagementLoadResult = {
+  items: UserManagementRow[];
+  totals: UserManagementResponse['totals'];
+  generatedAt?: string;
+  error?: string;
+  warning?: string;
+};
+
+export async function loadUserManagement(environment: RefexEnvironment): Promise<UserManagementLoadResult> {
+  if (!isBackendApiMode()) {
+    return {
+      items: [],
+      totals: { total_users: 0, active_today: 0, open: 0, closed: 0, rejected: 0 },
+      error: 'Backend API mode is disabled',
+    };
+  }
+
+  const env = toDbEnvironment(environment);
+  const res = await apiV1Fetch<UserManagementResponse>(
+    `/users/management?environment=${encodeURIComponent(env)}`,
+  );
+  if (!res.ok || !res.data) {
+    return {
+      items: [],
+      totals: { total_users: 0, active_today: 0, open: 0, closed: 0, rejected: 0 },
+      error: res.error || 'Failed to load user management',
+    };
+  }
+
+  return {
+    items: (res.data.items || []).map((item) => ({
+      ...item,
+      applications: (item.applications || []).map((app) => ({
+        ...app,
+        application_name: friendlyApplicationName(app.application_id, app.application_name),
+      })),
+    })),
+    totals: res.data.totals,
+    generatedAt: res.data.generated_at,
+    warning: res.data.warning,
   };
 }

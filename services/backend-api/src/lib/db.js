@@ -24,12 +24,21 @@ function isDatabaseConfigured() {
   return Boolean(process.env.PGPASSWORD || process.env.PG_PASS || process.env.PG_CONNECT === 'true');
 }
 
+function poolOptions(extra = {}) {
+  return {
+    max: Math.max(2, Number(process.env.PG_POOL_MAX || 15)),
+    idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
+    connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 20000),
+    ...extra,
+  };
+}
+
 async function initDatabase() {
   if (pool) return pool;
   if (!isDatabaseConfigured()) return null;
 
   if (process.env.DATABASE_URL) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new Pool(poolOptions({ connectionString: process.env.DATABASE_URL }));
     return pool;
   }
 
@@ -41,22 +50,22 @@ async function initDatabase() {
       instanceConnectionName: instance,
       ipType: IpAddressTypes.PUBLIC,
     });
-    pool = new Pool({
+    pool = new Pool(poolOptions({
       ...clientOpts,
       user: process.env.PGUSER || 'postgres',
       password: resolvePassword(),
       database: process.env.PGDATABASE || 'engagement_reporting',
-    });
+    }));
     return pool;
   }
 
-  pool = new Pool({
+  pool = new Pool(poolOptions({
     host: process.env.PGHOST || 'localhost',
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER || 'postgres',
     password: resolvePassword(),
     database: process.env.PGDATABASE || 'engagement_reporting',
-  });
+  }));
   return pool;
 }
 

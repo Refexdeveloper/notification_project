@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { sidebarNavigationItems } from '@/config/backendSurface';
-import { useAuth } from '@/hooks/AuthContext';
 import { REFEXONE_LOGO_URL } from '@/constants/branding';
 import { duration, easeOutExpo } from '@/lib/motion';
 
@@ -35,7 +34,6 @@ function SidebarToggleButton({
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [hovered, setHovered] = useState<string | null>(null);
 
   const isActive = useCallback(
@@ -47,13 +45,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     },
     [location.pathname],
   );
-
-  const initials = (user?.name || 'U')
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
 
   return (
     <motion.aside
@@ -97,13 +88,13 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 collapsed ? 'justify-center h-11' : 'gap-3 px-3 py-2.5 min-h-[44px]'
               } ${
                 active
-                  ? 'bg-[#E8F3FC] text-[#0A5A9E]'
+                  ? 'bg-[#EEF5FF] text-[#3977BE]'
                   : 'text-[#64748B] hover:text-[#1E293B] hover:bg-[#F8FAFC]'
               }`}
             >
               {active && (
                 <span
-                  className={`absolute w-[3px] rounded-r-full bg-[#0F6CBD] ${
+                  className={`absolute w-[3px] rounded-r-full bg-[#3977BE] ${
                     collapsed
                       ? 'left-0 top-[10px] bottom-[10px]'
                       : 'left-0 top-2 bottom-2'
@@ -139,34 +130,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </nav>
 
       <div className="shrink-0 mt-auto border-t border-[#EEF2F7]">
-        {collapsed ? (
-          <>
-            <div className="h-[52px] flex items-center justify-center">
-              <div
-                className="w-10 h-10 rounded-xl bg-[#E8F3FC] flex items-center justify-center text-[#0A5A9E] text-[11px] font-bold"
-                title={user?.name || 'User'}
-              >
-                {initials}
-              </div>
-            </div>
-            <div className="h-12 flex items-center justify-center border-t border-[#EEF2F7]">
-              <SidebarToggleButton collapsed={collapsed} onToggle={onToggle} />
-            </div>
-          </>
-        ) : (
-          <div className="h-[52px] flex items-center px-2.5">
-            <div className="flex items-center gap-3 w-full min-w-0">
-              <div className="w-9 h-9 rounded-[10px] bg-[#E8F3FC] flex items-center justify-center text-[#0A5A9E] text-xs font-bold shrink-0">
-                {initials}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-[#1E293B] truncate">{user?.name || 'User'}</p>
-                <p className="text-[11px] text-[#64748B] truncate">{user?.role || 'Member'}</p>
-              </div>
-              <SidebarToggleButton collapsed={collapsed} onToggle={onToggle} />
-            </div>
-          </div>
-        )}
+        <div className={`h-12 flex items-center ${collapsed ? 'justify-center' : 'justify-end px-2.5'}`}>
+          <SidebarToggleButton collapsed={collapsed} onToggle={onToggle} />
+        </div>
       </div>
     </motion.aside>
   );

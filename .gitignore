@@ -23,6 +23,13 @@ venv/
 *.log
 dist/
 out/
+test-results/
+playwright-report/
+blob-report/
+
+# Local scratch / noisy runbook dumps (never commit)
+ops/tmp/
+data/audit/
 
 # Customer / generated artifacts (Runbook 02b)
 **/data/discovery/

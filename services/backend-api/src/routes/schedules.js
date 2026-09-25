@@ -6,11 +6,18 @@ const { getPool, isDatabaseConfigured } = require('../lib/db');
 const { resolveSession } = require('../lib/session');
 const { createSchedule, deleteSchedule } = require('../lib/scheduleRepository');
 const { assertTemplateForApplication } = require('../lib/templateRepository');
-const { invokeScheduleRunner } = require('../lib/scheduleRunnerClient');
-const { syncScheduleCloudJob } = require('../lib/cloudSchedulerSync');
+const { invokeScheduleRunner, dispatchScheduleRunnerAsync } = require('../lib/scheduleRunnerClient');
+const { syncScheduleCloudJob, resolveLegacySchedulerId } = require('../lib/cloudSchedulerSync');
 const { validateScheduleFromEmail } = require('../lib/smtpFromValidation');
 
 const router = express.Router({ mergeParams: true });
+
+const TRAVEL_APP_ID = 'Expense_and_Travel_Management_A00';
+
+function isTravelApplicationId(applicationId) {
+  const id = String(applicationId || '').toLowerCase();
+  return id === TRAVEL_APP_ID.toLowerCase() || id.includes('travel');
+}
 
 function isValidCronExpression(expr) {
   const parts = String(expr || '').trim().split(/\s+/);
@@ -291,6 +298,7 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
     await assertTemplateForApplication(getPool(), { environment, applicationId, templateId });
+    const legacySchedulerId = resolveLegacySchedulerId(applicationId, body.entity_filter);
     const scheduleId = await createSchedule(client, {
       environment,
       applicationId,
@@ -308,6 +316,7 @@ router.post('/', async (req, res) => {
       userGroupFilter: body.user_group_filter || null,
       entityFilter: body.entity_filter || null,
       isActive,
+      configExtras: legacySchedulerId ? { legacy_scheduler_id: legacySchedulerId } : undefined,
     });
     await client.query('COMMIT');
 
@@ -363,6 +372,17 @@ router.post('/:scheduleId/test-send', async (req, res) => {
   const scheduleId = req.params.scheduleId;
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   const testRecipient = normalizeSingleEmail(body.test_recipient || body.testRecipient);
+  const fullIngest =
+    body.full_ingest === true
+    || body.fullIngest === true
+    || String(body.full_ingest || body.fullIngest || '').trim() === '1';
+  const waitForRunner =
+    body.wait === true
+    || body.wait_for_runner === true
+    || String(body.wait || '').trim() === '1';
+  const useAsyncRunner =
+    !waitForRunner
+    && (fullIngest || isTravelApplicationId(applicationId) || body.async === true);
 
   if (!testRecipient) {
     return fail(
@@ -408,10 +428,28 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       );
     }
 
-    const runnerResult = await invokeScheduleRunner(scheduleId, { testRecipient });
+    const runnerOpts = { testRecipient, fullIngest };
+
+    if (useAsyncRunner) {
+      dispatchScheduleRunnerAsync(scheduleId, runnerOpts);
+      return ok(res, req.correlationId, {
+        schedule_id: scheduleId,
+        application_id: applicationId,
+        template_name: row.template_name,
+        test_recipient: testRecipient,
+        full_ingest: fullIngest,
+        dispatched: true,
+        async: true,
+        status: 'queued',
+        message:
+          'Travel/full-ingest test queued on schedule-runner (5–15 min). Check Sent history and your inbox.',
+      }, 202);
+    }
+
+    const runnerResult = await invokeScheduleRunner(scheduleId, runnerOpts);
 
     if (!runnerResult.ok) {
-      const excerpt = (runnerResult.body || '').slice(0, 500);
+      const excerpt = (runnerResult.body || '').slice(-4000);
       return fail(
         res,
         req.correlationId,
@@ -427,6 +465,7 @@ router.post('/:scheduleId/test-send', async (req, res) => {
       application_id: applicationId,
       template_name: row.template_name,
       test_recipient: testRecipient,
+      full_ingest: fullIngest,
       dispatched: true,
       status: 'delivered',
       log_excerpt: (runnerResult.body || '').slice(0, 1200),
@@ -738,6 +777,8 @@ router.patch('/:scheduleId', async (req, res) => {
         const filter = String(body.entity_filter || '').trim();
         if (filter) configPatch.entity_filter = filter;
         else configPatch.entity_filter = null;
+        const legacySchedulerId = resolveLegacySchedulerId(applicationId, filter);
+        if (legacySchedulerId) configPatch.legacy_scheduler_id = legacySchedulerId;
       }
       if (hasSubject) {
         const subject = String(body.subject || '').trim();
@@ -761,12 +802,10 @@ router.patch('/:scheduleId', async (req, res) => {
 
     const updatedRow = rows[0];
     let cloudScheduler = null;
-    if (hasIsActive || hasCronExpression || hasTimezone) {
-      try {
-        cloudScheduler = await syncScheduleCloudJob(updatedRow);
-      } catch (syncErr) {
-        cloudScheduler = { ok: false, error: syncErr.message };
-      }
+    try {
+      cloudScheduler = await syncScheduleCloudJob(updatedRow);
+    } catch (syncErr) {
+      cloudScheduler = { ok: false, error: syncErr.message };
     }
 
     const fromEmailAuth = validateScheduleFromEmail(updatedRow.from_email || effectiveFromEmail);

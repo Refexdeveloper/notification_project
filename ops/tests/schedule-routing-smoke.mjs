@@ -21,7 +21,7 @@ const APPS = {
   },
   itsm: {
     path: '/applications/production-IT_Service_Management_A00?tab=schedulers',
-    label: 'IT Service Management',
+    label: 'IT Helpdesk',
     expectTemplate: /itsm|engagement|signin|service/i,
     rejectTemplate: /project task engagement/i,
   },

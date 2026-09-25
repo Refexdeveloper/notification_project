@@ -8,7 +8,7 @@ NORM_DIR="${DATA_DIR}/normalized"
 BASE_URL="https://refexgroup.kissflow.com"
 PROCESS_ID="${PROCESS_ID:-Live_IT_Service_Request_A00}"
 APPLICATION_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
-APPLICATION_NAME="IT Service Management"
+APPLICATION_NAME="IT Helpdesk"
 if [[ "${PROCESS_ID}" == *[Ee]xtrovis* ]]; then
   PROCESS_NAME="${PROCESS_NAME:-Live IT Service Request Extrovis}"
 else
@@ -37,6 +37,8 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 [[ -f "${INGEST_LIB}" ]] || INGEST_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
+
+ingest_force_full_for_schedule
 
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ingest_wait_for_snapshot_slot "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}" \
@@ -458,7 +460,7 @@ SELECT
   COALESCE(prev.criticality, ''),
   COALESCE(prev.entity, ''),
   COALESCE(prev.requester_email, ''),
-  prev.source_payload::text
+  prev.source_payload
 FROM engagement_reporting.item prev
 WHERE prev.snapshot_run_id = '${PREV_SNAPSHOT_RUN_ID}'
   AND prev.process_id = '${PROCESS_ID}'

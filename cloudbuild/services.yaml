@@ -48,8 +48,8 @@ images:
 substitutions:
   _API_BASE_URL: /api/v1
   _VITE_USE_BACKEND_API: "true"
-  _BACKEND_UPSTREAM: https://refex-backend-api-645830234926.asia-south1.run.app
-  _BACKEND_HOST: refex-backend-api-645830234926.asia-south1.run.app
+  _BACKEND_UPSTREAM: https://refex-backend-api-dhwffeu7pq-el.a.run.app
+  _BACKEND_HOST: refex-backend-api-dhwffeu7pq-el.a.run.app
 
 options:
   logging: CLOUD_LOGGING_ONLY

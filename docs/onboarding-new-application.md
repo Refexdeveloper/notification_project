@@ -289,7 +289,7 @@ Registration and field sync do **not** load engagement data (users, tickets, tas
 
 | Runbook | Application type |
 |---------|------------------|
-| `services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh` | IT Service Management |
+| `services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh` | IT Helpdesk |
 | `services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh` | Project Management Tracker |
 | `services/engagement-pipeline/ops/runbooks/16-ingest-lead-tracker-and-load.sh` | Lead Tracker |
 
@@ -313,7 +313,7 @@ For ITSM, PM, and Lead Tracker, seed scripts can pre-create templates and schedu
 
 | Runbook | App |
 |---------|-----|
-| `ops/runbooks/23-seed-itsm-report-config.sh` | IT Service Management |
+| `ops/runbooks/23-seed-itsm-report-config.sh` | IT Helpdesk |
 | `ops/runbooks/24-seed-pm-report-config.sh` | Project Management |
 | `ops/runbooks/25-seed-lead-tracker-report-config.sh` | Lead Tracker |
 

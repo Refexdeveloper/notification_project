@@ -1,7 +1,7 @@
 # Refex Adoption User Report — Project Configuration
 
 ## Kissflow
-- App Name: IT Service Management
+- App Name: IT Helpdesk
 - App ID: IT_Service_Management_A00
 - Process Name: Live IT Service Request
 - Process ID: Live_IT_Service_Request_A00

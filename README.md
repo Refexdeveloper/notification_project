@@ -93,6 +93,8 @@ Do **not** activate schedulers or delete the legacy full-pipeline service withou
 
 | Doc | Purpose |
 |-----|---------|
+| [AGENTS.md](AGENTS.md) | **Start here for a new agent** — constraints, deploy, links |
+| [Report KPI fixes (Aug 2026)](docs/release-notes/2026-08-21-report-kpi-fixes.md) | Opened/Closed Today, Total tickets, Closed Today conditions, schedule-runner deploy |
 | [Onboarding a new application](docs/onboarding-new-application.md) | Connect Kissflow app, APIs called, PostgreSQL records, ingest |
 | [Production hardening (Jul 2026)](docs/release-notes/2026-07-31-production-hardening.md) | CORS fix, dashboard perf, template sync, PM ingest |
 | [Deployment and cutover](docs/architecture/deployment-and-cutover.md) | Shadow deploy → scheduler cutover |

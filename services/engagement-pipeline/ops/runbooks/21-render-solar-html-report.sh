@@ -76,23 +76,30 @@ log "Querying Solar Reinvestment Request summary"
 SOLAR_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${SOLAR_APP_ID}'
-    AND process_id = '${SOLAR_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${SOLAR_APP_ID}'" "'${SOLAR_PROCESS_ID}'"),
 tasks AS (
   SELECT
     instance_id,
     process_status,
     current_step,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
-    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
+    CASE
+      WHEN lower(trim(concat_ws(' ',
+        coalesce(current_step, ''),
+        coalesce(source_payload->>'Service_Category', ''),
+        coalesce(source_payload->'Service_Category'->>'Name', ''),
+        coalesce(source_payload->>'Expense_Type', ''),
+        coalesce(source_payload->'Expense_Type'->>'Name', ''),
+        coalesce(source_payload->>'Category', ''),
+        coalesce(source_payload->'Category'->>'Name', ''),
+        coalesce(source_payload->>'Department', ''),
+        coalesce(source_payload->'Department'->>'Name', ''),
+        coalesce(source_payload->>'Cost_Center', ''),
+        coalesce(source_payload->>'Request_Type', '')
+      ))) ~ '(financ|account|treasury|audit|invoice)' THEN 'finance'
+      ELSE 'operation'
+    END AS cat
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${SOLAR_PROCESS_ID}'
@@ -152,6 +159,20 @@ SELECT json_build_object(
     WHERE completed_at IS NOT NULL
       AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
   ),
+  'operation_total', (SELECT count(*) FROM tasks WHERE cat = 'operation'),
+  'operation_open', (SELECT count(*) FROM tasks WHERE cat = 'operation'
+      AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
+      AND lower(coalesce(process_status, '')) !~ '(reject|cancel|withdraw)'),
+  'operation_closed', (SELECT count(*) FROM tasks WHERE cat = 'operation'
+      AND (process_status IN ('Completed', 'Closed')
+        OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
+  'finance_total', (SELECT count(*) FROM tasks WHERE cat = 'finance'),
+  'finance_open', (SELECT count(*) FROM tasks WHERE cat = 'finance'
+      AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
+      AND lower(coalesce(process_status, '')) !~ '(reject|cancel|withdraw)'),
+  'finance_closed', (SELECT count(*) FROM tasks WHERE cat = 'finance'
+      AND (process_status IN ('Completed', 'Closed')
+        OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
   'total_app_users', (SELECT count(*) FROM solar_app_users),
   'signed_in_users', (
     SELECT count(*)
@@ -183,16 +204,7 @@ log "Querying Solar Reinvestment Request per-user breakdown"
 SOLAR_USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
-WITH latest AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.snapshot_run
-  WHERE application_id = '${SOLAR_APP_ID}'
-    AND process_id = '${SOLAR_PROCESS_ID}'
-    AND environment = 'production'
-    AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
-  ORDER BY COALESCE(load_completed_at, extraction_completed_at, created_at) DESC
-  LIMIT 1
-),
+WITH $(report_latest_snapshot_cte "'${SOLAR_APP_ID}'" "'${SOLAR_PROCESS_ID}'"),
 latest_users AS (
   SELECT snapshot_run_id
   FROM engagement_reporting.\"user\"
@@ -266,14 +278,18 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 log "Rendering Solar HTML report"
 
-SOLAR_ROWS_HTML="$(jq -r '
+TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+SOLAR_ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
+  def signed_today: ((.value.last_sign_in // "") | tostring | startswith($today));
+  def row_bg: if signed_today then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end;
+  def signin_style: if signed_today then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end;
   if length == 0 then
     "<tr style=\"background-color:#ffffff;\" bgcolor=\"#ffffff\"><td colspan=\"4\" style=\"padding:16px 14px; border-bottom:1px solid #ececea; color:#64748b !important; text-align:center;\">No users with open or closed requests in this snapshot.</td></tr>"
   else
     to_entries | map(
-      "<tr style=\"background-color:" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + ";\" bgcolor=\"" + (if (.key % 2 == 0) then "#faf9f7" else "#ffffff" end) + "\">" +
+      "<tr style=\"background-color:" + row_bg + ";\" bgcolor=\"" + row_bg + "\">" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + (.value.user_name // "Unknown") + "</td>" +
-      "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
+      "<td style=\"" + signin_style + "\">" + ((.value.last_sign_in // "") | if . == "" or . == "Never" then "-" else . end) + "</td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\"><b>" + (.value.open_count | tostring) + "</b></td>" +
       "<td style=\"padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;\" align=\"center\">" + (.value.closed_count | tostring) + "</td>" +
       "</tr>"
@@ -281,7 +297,6 @@ SOLAR_ROWS_HTML="$(jq -r '
   end
 ' <<< "${SOLAR_USERS_JSON}")"
 
-TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
 SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {
@@ -291,11 +306,21 @@ SOLAR_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
       )
     }
 ' <<< "${SOLAR_USERS_JSON}")"
-SOLAR_TOTAL="$(jq -r '.total_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_OPEN="$(jq -r '.open_requests' <<< "${SOLAR_SUMMARY_JSON}")"
-SOLAR_CLOSED="$(jq -r '.closed_requests' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_TOTAL="$(jq -r '.total_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_OPEN="$(jq -r '.open_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_CLOSED="$(jq -r '.closed_requests // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${SOLAR_SUMMARY_JSON}")"
+if report_live_today_kpis "${SOLAR_PROCESS_ID}" "${SOLAR_APP_ID}" ""; then
+  log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?}"
+  SOLAR_OPENED_TODAY="$(report_prefer_live_today "${SOLAR_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+  SOLAR_TOTAL="$(report_prefer_live_today "${SOLAR_TOTAL}" "${REPORT_LIVE_TOTAL_TICKETS}")"
+  SOLAR_OPEN="$(report_prefer_live_today "${SOLAR_OPEN}" "${REPORT_LIVE_OPEN_TICKETS}")"
+  SOLAR_CLOSED="$(report_prefer_live_today "${SOLAR_CLOSED}" "${REPORT_LIVE_CLOSED_TICKETS}")"
+  if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${SOLAR_CLOSED_TODAY}" ]]; then
+    SOLAR_CLOSED_TODAY="${REPORT_LIVE_CLOSED_TODAY}"
+  fi
+fi
 SOLAR_TOTAL_USERS="$(jq -r '.total' <<< "${SOLAR_MIS_COUNTS}")"
 SOLAR_SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${SOLAR_MIS_COUNTS}")"
 SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
@@ -307,6 +332,22 @@ SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
+log "Building Operation vs Finance category sections (dashboard parity)"
+CATEGORY_JSON="$(jq -c '{
+  operation: {
+    total: (.operation_total // 0),
+    open: (.operation_open // 0),
+    closed: (.operation_closed // 0)
+  },
+  finance: {
+    total: (.finance_total // 0),
+    open: (.finance_open // 0),
+    closed: (.finance_closed // 0)
+  }
+}' <<< "${SOLAR_SUMMARY_JSON}")"
+SOLAR_CATEGORY_HTML="$(printf '%s' "${CATEGORY_JSON}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-solar-category-html.js")"
+[[ -n "${SOLAR_CATEGORY_HTML}" ]] || SOLAR_CATEGORY_HTML=""
+
 log "Rendering Solar HTML from published template (PostgreSQL or seed fallback)"
 
 TEMPLATE_SRC="$(mktemp)"
@@ -315,6 +356,15 @@ trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load Solar report template HTML."
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
+
+SEED_TEMPLATE="${REPO_ROOT}/db/seeds/solar-reinvestment-template.html"
+# Force seed layout when published Admin UI HTML is missing Operation vs Finance addon.
+if [[ -f "${SEED_TEMPLATE}" ]]; then
+  if ! grep -qF '{{CategorySectionsHtml}}' "${TEMPLATE_SRC}"; then
+    log "Published Solar template missing CategorySectionsHtml — using seed layout (Operation vs Finance)"
+    cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+  fi
+fi
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
@@ -332,7 +382,8 @@ jq -n \
   --arg TotalUsers "${SOLAR_TOTAL_USERS}" \
   --arg SignedInToday "${SOLAR_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${SOLAR_ROWS_HTML}" \
-  --arg ReportBody "Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status." \
+  --arg CategorySectionsHtml "${SOLAR_CATEGORY_HTML}" \
+  --arg ReportBody "Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation)." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
@@ -344,6 +395,7 @@ jq -n \
     TotalUsers: $TotalUsers,
     SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
+    CategorySectionsHtml: $CategorySectionsHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 

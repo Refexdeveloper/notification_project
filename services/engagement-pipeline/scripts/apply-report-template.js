@@ -6,7 +6,8 @@ const fs = require('fs');
 function normalizeReportTemplateHtml(html) {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
-    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+    .replace(/alt="Refex"/gi, 'alt="refexOne"')
+    .replace(/IT Service Management/g, 'IT Helpdesk');
 }
 
 function applyTemplateVariables(templateBody, variables = {}) {

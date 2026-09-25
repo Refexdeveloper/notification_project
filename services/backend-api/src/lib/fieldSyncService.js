@@ -183,6 +183,20 @@ async function syncProcessFields(pool, {
 
 async function syncAllProcessFields(pool, { environment, applicationId, options = {} }) {
   const env = normalizeEnvironment(environment);
+  // Procurement to Pay is MySQL-only — never call Kissflow Admin Get-all-items.
+  try {
+    const { isP2pApplication } = require('./p2pDashboard');
+    if (isP2pApplication(applicationId)) {
+      return [{
+        ok: true,
+        skipped: true,
+        application_id: applicationId,
+        reason: 'p2p_mysql_readonly',
+      }];
+    }
+  } catch {
+    /* continue */
+  }
   const { rows } = await pool.query(
     `SELECT process_id
      FROM engagement_reporting.process

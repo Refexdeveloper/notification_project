@@ -31,6 +31,8 @@ INGEST_LIB="${REPO_ROOT}/ops/runbooks/ingest-sync-lib.sh"
 # shellcheck source=/dev/null
 source "${INGEST_LIB}"
 
+ingest_force_full_for_schedule
+
 ENVIRONMENT="${ENVIRONMENT:-production}"
 ITEMS_RESOURCE_KEY="$(ingest_resource_key items)"
 
@@ -201,7 +203,7 @@ echo "\copy engagement_reporting.stg_pm_assignments FROM '${COPY_NORM_DIR}/pm-as
 
 PREV_SNAPSHOT_RUN_ID=""
 if [[ -n "${WATERMARK_ISO:-}" && "${FULL_INGEST:-false}" != "true" ]]; then
-  PREV_SNAPSHOT_RUN_ID="$(ingest_get_previous_completed_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
+  PREV_SNAPSHOT_RUN_ID="$(ingest_get_best_base_snapshot_run_id "${ENVIRONMENT}" "${APPLICATION_ID}" "${PROCESS_ID}")"
   if [[ -n "${PREV_SNAPSHOT_RUN_ID}" ]]; then
     log "Incremental merge: carrying forward items from snapshot ${PREV_SNAPSHOT_RUN_ID}"
   fi

@@ -7,7 +7,8 @@ import {
   type BackendProcessRow,
   type ProcessesListResponse,
 } from './backendApi';
-import { REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
+import { catalogEntryForApp, REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
+import { friendlyApplicationName, isPmApp } from '@/lib/processLabels';
 
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
@@ -37,6 +38,19 @@ export function resolveBackendApplicationId(app: KissflowApplication): string {
 
   if (isLeadTracker) {
     return 'Lead_Trcaker_A00';
+  }
+
+  const catalog = catalogEntryForApp({
+    appId,
+    processIds: app.processIds,
+  });
+  if (
+    isPmApp(appId, app.displayName || app.name) ||
+    catalog?.slug === 'pmt' ||
+    appId === 'Project_Sub_Task_A01' ||
+    appId === 'Sub_Task_Process_A00'
+  ) {
+    return catalog?.kissflowAppId || 'Project_Management_Tracker_A00';
   }
 
   if (appId && !/^production-/i.test(appId) && !/^development-/i.test(appId)) {
@@ -86,13 +100,15 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
   const boardIds = asIdList(row.board_ids);
   const datasetIds = asIdList(row.dataset_ids);
 
+  const applicationName = friendlyApplicationName(row.application_id, row.application_name);
+
   return {
     id: `${row.environment}-${row.application_id}`,
     accountId: row.kissflow_account_id || envConfig.accountId,
     appId: row.application_id,
     subdomain: row.subdomain || envConfig.subdomain,
-    name: row.application_name,
-    displayName: row.application_name,
+    name: applicationName,
+    displayName: applicationName,
     description: row.description || `Synced from engagement_reporting · ${row.environment}`,
     region: (row.region as 'com' | 'eu') || 'com',
     environment,
@@ -131,8 +147,43 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     return { applications: [], source: 'local' };
   }
 
-  const res = await apiV1Fetch<ApplicationsListResponse>('/applications');
+  const APPS_CACHE_KEY = 'ne_applications_list_v1';
+  const APPS_CACHE_MS = 3 * 60 * 1000;
+  try {
+    const raw = sessionStorage.getItem(APPS_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { ts: number; applications: KissflowApplication[]; warning?: string };
+      if (parsed?.applications?.length && Date.now() - parsed.ts <= APPS_CACHE_MS) {
+        return {
+          applications: parsed.applications,
+          source: 'backend',
+          warning: parsed.warning,
+        };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const res = await apiV1Fetch<ApplicationsListResponse>('/applications', { cache: 'no-store' }, { timeoutMs: 25000 });
   if (!res.ok || !res.data) {
+    try {
+      const raw = sessionStorage.getItem(APPS_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { applications: KissflowApplication[]; warning?: string };
+        if (parsed?.applications?.length) {
+          return {
+            applications: parsed.applications,
+            source: 'backend',
+            warning: parsed.warning,
+            stale: true,
+            error: res.error || 'Failed to refresh applications',
+          };
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     return {
       applications: [],
       source: 'backend',
@@ -141,8 +192,18 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     };
   }
 
+  const applications = res.data.items.map(mapRowToApplication);
+  try {
+    sessionStorage.setItem(
+      APPS_CACHE_KEY,
+      JSON.stringify({ ts: Date.now(), applications, warning: res.data.warning || res.data.hint }),
+    );
+  } catch {
+    /* ignore */
+  }
+
   return {
-    applications: res.data.items.map(mapRowToApplication),
+    applications,
     source: 'backend',
     warning: res.data.warning || res.data.hint,
   };
@@ -191,7 +252,10 @@ function attachProcesses(
 }
 
 /** Load one application (and its processes) from backend-api by route id. */
-export async function loadApplicationFromBackend(routeId: string): Promise<ApplicationLoadResult> {
+export async function loadApplicationFromBackend(
+  routeId: string,
+  options?: { includeFields?: boolean },
+): Promise<ApplicationLoadResult> {
   if (!isBackendApiMode()) {
     return { application: null };
   }
@@ -201,23 +265,20 @@ export async function loadApplicationFromBackend(routeId: string): Promise<Appli
     return { application: null, error: 'Invalid application id' };
   }
 
-  const appsRes = await apiV1Fetch<ApplicationsListResponse>('/applications');
-  if (!appsRes.ok || !appsRes.data) {
+  const includeFields = options?.includeFields === true;
+  const envParam = encodeURIComponent(toDbEnvironment(mapEnvironment(parsed.environment)));
+
+  const appRes = await apiV1Fetch<{ item: BackendApplicationRow }>(
+    `/applications/${encodeURIComponent(parsed.applicationId)}?environment=${envParam}`,
+  );
+  if (!appRes.ok || !appRes.data?.item) {
     return {
       application: null,
-      error: appsRes.error || 'Failed to load applications',
+      error: appRes.error || 'Application not found in database',
     };
   }
 
-  const row = appsRes.data.items.find(
-    (item) =>
-      item.application_id === parsed.applicationId &&
-      item.environment.toLowerCase() === parsed.environment.toLowerCase(),
-  );
-  if (!row) {
-    return { application: null, error: 'Application not found in database' };
-  }
-
+  const row = appRes.data.item;
   const processesRes = await apiV1Fetch<ProcessesListResponse>(
     `/applications/${encodeURIComponent(parsed.applicationId)}/processes`,
   );
@@ -225,25 +286,40 @@ export async function loadApplicationFromBackend(routeId: string): Promise<Appli
   let application = mapRowToApplication(row);
   if (processesRes.ok && processesRes.data) {
     application = attachProcesses(application, parsed.environment, processesRes.data.items);
-  }
 
-  const primaryProcessId = application.processIds?.[0];
-  if (primaryProcessId) {
-    const { loadFieldsFromBackend } = await import('./fieldsApi');
-    const fieldsRes = await loadFieldsFromBackend(application, primaryProcessId);
-    if (fieldsRes.ok && fieldsRes.fields.length) {
-      application = {
-        ...application,
-        discoveredFields: fieldsRes.fields,
-        discoveredItemCount: fieldsRes.itemCount,
-        lastFieldSyncAt: fieldsRes.syncedAt,
-      };
+    if (includeFields) {
+      const { loadFieldsFromBackend } = await import('./fieldsApi');
+      const fieldsByResourceId: NonNullable<KissflowApplication['fieldsByResourceId']> = {};
+      for (const processId of application.processIds || []) {
+        const fieldsRes = await loadFieldsFromBackend(application, processId);
+        if (fieldsRes.ok) {
+          fieldsByResourceId[processId] = {
+            fields: fieldsRes.fields,
+            syncedAt: fieldsRes.syncedAt || new Date().toISOString(),
+            itemCount: fieldsRes.itemCount,
+            adminProcessId: processId,
+          };
+        }
+      }
+      if (Object.keys(fieldsByResourceId).length) {
+        application = { ...application, fieldsByResourceId };
+        const primaryProcessId = application.processIds?.[0];
+        const primaryFields = primaryProcessId ? fieldsByResourceId[primaryProcessId] : undefined;
+        if (primaryFields) {
+          application = {
+            ...application,
+            discoveredFields: primaryFields.fields,
+            discoveredItemCount: primaryFields.itemCount,
+            lastFieldSyncAt: primaryFields.syncedAt,
+          };
+        }
+      }
     }
   }
 
   return {
     application,
-    warning: processesRes.data?.warning || processesRes.data?.hint || appsRes.data.warning,
+    warning: processesRes.data?.warning || processesRes.data?.hint,
     error: !processesRes.ok ? processesRes.error : undefined,
   };
 }
@@ -484,6 +560,14 @@ export type AttachResourcesResult = {
   dataform_ids?: string[];
   board_ids?: string[];
   dataset_ids?: string[];
+  field_sync?: Array<{
+    process_id: string;
+    ok: boolean;
+    field_count?: number;
+    item_count?: number;
+    synced_at?: string;
+    error?: string;
+  }>;
   warnings?: string[];
   error?: string;
 };
@@ -505,6 +589,7 @@ export async function attachResourcesOnBackend(
     dataform_ids: string[];
     board_ids: string[];
     dataset_ids: string[];
+    field_sync?: AttachResourcesResult['field_sync'];
     warnings?: string[];
   }>(
     `/applications/${encodeURIComponent(applicationId)}/resources?environment=${encodeURIComponent(environment)}`,
@@ -531,6 +616,7 @@ export async function attachResourcesOnBackend(
     dataform_ids: res.data.dataform_ids,
     board_ids: res.data.board_ids,
     dataset_ids: res.data.dataset_ids,
+    field_sync: res.data.field_sync,
     warnings: res.data.warnings,
   };
 }

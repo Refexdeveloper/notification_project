@@ -286,17 +286,22 @@ async function validateAndDiscoverRegistrationInput(input) {
     }
   }
 
+  const { recommendedResourcesForApp } = require('./reportStarters');
+  const recommended = recommendedResourcesForApp(input.applicationId) || {};
+  const processIdsForDiscovery = mergeIds(input.processIds, recommended.process_ids || []);
+  const boardIdsForDiscovery = mergeIds(input.boardIds, recommended.board_ids || []);
+
   const processDiscovery = await tryDiscoverProcesses({
     baseUrl,
     accountId,
     keyId,
     secret,
     applicationId: input.applicationId,
-    processIds: input.processIds,
+    processIds: processIdsForDiscovery,
   });
   warnings.push(...processDiscovery.warnings);
 
-  const requestedProcesses = normalizeIdList(input.processIds);
+  const requestedProcesses = normalizeIdList(processIdsForDiscovery);
   if (requestedProcesses.length > 0 && processDiscovery.process_ids.length === 0) {
     const err = new Error(
       `Could not access process Admin API for: ${requestedProcesses.join(', ')}. ` +
@@ -314,10 +319,15 @@ async function validateAndDiscoverRegistrationInput(input) {
     ok: connectionOk,
     environment,
     base_url: baseUrl,
-    process_ids: mergeIds(input.processIds, processDiscovery.process_ids),
+    process_ids: mergeIds(processIdsForDiscovery, processDiscovery.process_ids),
     dataform_ids: mergeIds(input.dataformIds, optional.dataform_ids),
-    board_ids: mergeIds(input.boardIds, optional.board_ids),
+    board_ids: mergeIds(boardIdsForDiscovery, optional.board_ids),
     dataset_ids: mergeIds(input.datasetIds, optional.dataset_ids),
+    recommended_resources:
+      (recommended.process_ids && recommended.process_ids.length) ||
+      (recommended.board_ids && recommended.board_ids.length)
+        ? recommended
+        : null,
     warnings: warnings.filter(Boolean),
   };
 }

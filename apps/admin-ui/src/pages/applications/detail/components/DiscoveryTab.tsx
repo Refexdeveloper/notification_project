@@ -5,8 +5,9 @@ import {
 } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
 import { isBackendApiMode } from '@/services/backendApi';
-import { syncAllFieldsOnBackend, syncFieldsOnBackend } from '@/services/fieldsApi';
-import { processLabel } from '@/lib/processLabels';
+import { loadFieldsFromBackend, syncAllFieldsOnBackend, syncFieldsOnBackend } from '@/services/fieldsApi';
+import { isPmApp, processLabel } from '@/lib/processLabels';
+import { shouldShowPmSetup } from '@/lib/pmPortfolioSetup';
 
 interface DiscoveryTabProps {
   app: KissflowApplication;
@@ -18,6 +19,10 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
   const processOptions = useMemo(
     () => (app.processIds || []).map((id) => id.trim()).filter(Boolean),
     [app.processIds],
+  );
+  const boardOptions = useMemo(
+    () => (app.boardIds || []).map((id) => id.trim()).filter(Boolean),
+    [app.boardIds],
   );
   const [selectedProcessId, setSelectedProcessId] = useState(
     () => processOptions[0] || app.appId || '',
@@ -45,6 +50,27 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
       setSelectedProcessId(processOptions[0]);
     }
   }, [processOptions, selectedProcessId, app.appId]);
+
+  useEffect(() => {
+    if (!backendMode || !selectedProcessId) return;
+    let cancelled = false;
+    const cached = app.fieldsByResourceId?.[selectedProcessId];
+    if (cached?.fields?.length) {
+      setFields(cached.fields);
+      setItemCount(cached.itemCount || 0);
+      setLastSyncAt(cached.syncedAt);
+      return;
+    }
+    loadFieldsFromBackend(app, selectedProcessId).then((result) => {
+      if (cancelled || !result.ok) return;
+      setFields(result.fields);
+      setItemCount(result.itemCount);
+      setLastSyncAt(result.syncedAt);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [app, backendMode, selectedProcessId]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -129,14 +155,17 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
   );
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="space-y-4 w-full max-w-none">
       <div className="bg-white border border-background-300/60 rounded-xl p-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-semibold text-foreground-900">Field sync</h3>
             <p className="text-xs text-foreground-500 mt-0.5">
-              Calls Admin Get-all-items for a registered process and derives fields from the response.
-              Add more processes under App settings → Processes & resources.
+              Field sync runs on <b>processes</b> (Project Tasks + Sub-tasks). Boards are linked for
+              project counts in the portfolio email — they do not have a Kissflow field catalog here.
+              {shouldShowPmSetup(app)
+                ? ' PM portfolio needs both processes and Project_Management_A01 board under App settings.'
+                : ' Add more processes under App settings → Processes & resources.'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -211,6 +240,39 @@ export default function DiscoveryTab({ app, onSynced }: DiscoveryTabProps) {
         {!selectedProcessId && (
           <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-800">
             No process linked yet. Open App settings → Processes & resources, add a Process ID, then sync.
+          </div>
+        )}
+
+        {boardOptions.length > 0 && (
+          <div className="mt-3 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700">
+            <span className="font-semibold text-slate-900">Linked boards: </span>
+            {boardOptions.map((id) => processLabel(id)).join(' · ')}
+            {isPmApp(app.appId, app.displayName || app.name) && (
+              <span className="block mt-1 text-slate-600">
+                Used by scheduled PM reports for Total / In Progress / Completed project counts.
+              </span>
+            )}
+          </div>
+        )}
+
+        {processOptions.length > 1 && backendMode && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {processOptions.map((pid) => {
+              const cached = app.fieldsByResourceId?.[pid];
+              const count = cached?.fields?.length ?? 0;
+              return (
+                <span
+                  key={pid}
+                  className={`text-[10px] px-2 py-1 rounded-md border ${
+                    pid === selectedProcessId
+                      ? 'border-primary-300 bg-primary-50 text-primary-800'
+                      : 'border-background-200 text-foreground-600'
+                  }`}
+                >
+                  {processLabel(pid)} · {count ? `${count} fields` : 'not synced'}
+                </span>
+              );
+            })}
           </div>
         )}
 

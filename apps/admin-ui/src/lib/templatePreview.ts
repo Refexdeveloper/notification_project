@@ -23,24 +23,64 @@ function samplePmUserTableHtml(): string {
 
 function sampleTravelUserTableHtml(): string {
   return (
-    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>2</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>1</b></td></tr>` +
-    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Finance Review</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`
+    `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Priya Sharma</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-19 09:40</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;" align="center"><b>2</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#3f8f63 !important;" align="center"><b>5</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">8 days · Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>1</b></td></tr>` +
+    `<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Arun Kumar</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-08-18 16:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;" align="center"><b>1</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#3f8f63 !important;" align="center"><b>3</b></td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#9a7a3a !important;">3 days · Finance Review</td><td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`
   );
 }
 
 function sampleTravelUserTableSectionHtml(usersHtml: string): string {
   return (
-    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">Users with pending travel requests</td></tr>' +
+    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a !important;" bgcolor="#ffffff">MIS · Users (Pending &amp; Completed)</td></tr>' +
     '<tr><td style="padding:8px 32px 28px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:11.5px;">' +
     '<tr style="background:linear-gradient(90deg,#14503a 0%,#1a8c5c 100%) !important;" bgcolor="#14503a">' +
     '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">User</td>' +
     '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Last Signed In</td>' +
     '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">Pending</td>' +
+    '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">Completed</td>' +
     '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;">Pending Duration</td>' +
     '<td style="padding:10px 8px; color:#ffffff !important; font-weight:bold;" align="center">SLA Breached</td>' +
     '</tr>' +
     usersHtml +
     '</table></td></tr>'
+  );
+}
+
+function sampleTravelProcessSectionsHtml(): string {
+  const row = (n: number, label: string, total: string, pending: string, completed: string, rejected: string) =>
+    `<tr><td style="padding:18px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">${n}. ${label}</div></td></tr>` +
+    `<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#ffffff 0%,#f2f6fb 100%); border:1px solid #dfe8f2; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${total}</div><div style="font-size:10px; color:#5b7ba3; margin-top:5px;">TOTAL</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%); border:1px solid #f2e2c4; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${pending}</div><div style="font-size:10px; color:#9a7a3a; margin-top:5px;">IN PROGRESS</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold;">${completed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">COMPLETED</div></td><td width="2%"></td>` +
+    `<td width="23%" align="center" style="background:linear-gradient(180deg,#fff5f5 0%,#ffe9e9 100%); border:1px solid #f3cccc; border-radius:8px; padding:16px 4px;"><div style="font-size:22px; font-weight:bold; color:#c8102e;">${rejected}</div><div style="font-size:10px; color:#a35560; margin-top:5px;">REJECTED</div></td>` +
+    `</tr></table></td></tr>`;
+  return (
+    row(1, 'Travel Request', '12', '3', '9', '0') +
+    row(2, 'Travel Advance', '8', '2', '6', '1') +
+    row(3, 'Travel Expense', '24', '5', '19', '5')
+  );
+}
+
+function sampleSolarCategorySectionsHtml(): string {
+  const section = (title: string, subtitle: string, accent: string, total: string, open: string, closed: string) => {
+    const header = accent === 'finance' ? '#92400e' : '#075985';
+    const totalTone =
+      accent === 'finance'
+        ? 'background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%); border:1px solid #fde68a;'
+        : 'background:linear-gradient(180deg,#f0f9ff 0%,#e0f2fe 100%); border:1px solid #bae6fd;';
+    return (
+      `<tr><td style="padding:18px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:${header} !important; text-transform:uppercase; letter-spacing:0.5px;">${title}</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:2px;">${subtitle}</div></td></tr>` +
+      `<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
+      `<td width="32%" align="center" style="${totalTone} border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${total}</div><div style="font-size:10px; margin-top:5px;">TOTAL</div></td><td width="2%"></td>` +
+      `<td width="32%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%); border:1px solid #f2e2c4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${open}</div><div style="font-size:10px; color:#9a7a3a; margin-top:5px;">OPEN</div></td><td width="2%"></td>` +
+      `<td width="32%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${closed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">CLOSED</div></td>` +
+      `</tr></table></td></tr>`
+    );
+  };
+  return (
+    '<tr><td style="padding:22px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Operation vs Finance</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Same split as Solar Expense Hub dashboard</div></td></tr>' +
+    section('Operation', 'Field / site / technician and all non-finance requests', 'operation', '48', '14', '34') +
+    section('Finance', 'Finance · accounts · treasury · audit · invoice', 'finance', '12', '3', '9')
   );
 }
 
@@ -154,6 +194,16 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     AssignedTasks: '180',
     PendingTasks: '42',
     CompletedTasks: '198',
+    TotalProjects: '18',
+    OpenProjects: '11',
+    CompletedProjects: '7',
+    LinkedTasks: '212',
+    IndividualTasks: '28',
+    IndividualPending: '9',
+    IndividualCompleted: '19',
+    TotalSubTasks: '22',
+    PendingSubTasks: '8',
+    CompletedSubTasks: '14',
     TotalRequests: '48',
     AssignedRequests: '36',
     OpenRequests: '12',
@@ -183,13 +233,17 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
     base.TotalUsers = '2';
-    base.ReportBody = 'Project Tracker covers all entities group-wide.';
+    base.OpenedToday = '6';
+    base.ClosedToday = '4';
+    base.ReportBody =
+      "Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks.";
   } else if (kind === 'solar') {
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
     base.TotalUsers = '2';
+    base.CategorySectionsHtml = sampleSolarCategorySectionsHtml();
     base.ReportBody =
-      'Solar Expense Hub · Reinvestment Request process. Open/Closed Requests from Kissflow status.';
+      'Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation).';
   } else if (kind === 'lead') {
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
@@ -206,7 +260,6 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.UserTableSectionHtml = sampleTravelUserTableSectionHtml(travelUsers);
     base.PendingDetailsHtml = '';
     base.SlaAnalysisHtml = '';
-    base.SlaAnalysisHtml = '';
     base.SignedInToday = '1';
     base.TotalUsers = '2';
     base.UsersWithPending = '2';
@@ -218,8 +271,9 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.EntityName = 'Venwind';
     base.OverallSummaryHtml = '';
     base.EntitySectionsHtml = '';
+    base.ProcessSectionsHtml = sampleTravelProcessSectionsHtml();
     base.ReportBody =
-      'Venwind only. Combines Advance Payment, Expense Management, and Travel Management from live Kissflow data. Refex and Venwind are never mixed.';
+      'Venwind only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.';
   }
 
   return base;
@@ -228,7 +282,8 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
 export function normalizeTemplateHtmlForPreview(html: string): string {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
-    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+    .replace(/alt="Refex"/gi, 'alt="refexOne"')
+    .replace(/IT Service Management/g, 'IT Helpdesk');
 }
 
 export function applyTemplateVariables(templateBody: string, variables: Record<string, string>): string {
@@ -305,13 +360,23 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
   pm: [
     'ReportTitle',
     'ReportDate',
+    'OpenedToday',
+    'ClosedToday',
+    'TotalProjects',
+    'OpenProjects',
+    'CompletedProjects',
     'TotalTasks',
     'PendingTasks',
     'CompletedTasks',
+    'LinkedTasks',
+    'IndividualTasks',
+    'IndividualPending',
+    'IndividualCompleted',
+    'TotalSubTasks',
+    'PendingSubTasks',
+    'CompletedSubTasks',
     'TotalUsers',
     'SignedInToday',
-    'OpenedToday',
-    'ClosedToday',
     'UserTableHtml',
     'ReportBody',
   ],
@@ -325,6 +390,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
+    'CategorySectionsHtml',
     'UserTableHtml',
     'ReportBody',
   ],
@@ -373,6 +439,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
+    'ProcessSectionsHtml',
     'UserTableHtml',
     'UserTableSectionHtml',
     'PendingDetailsHtml',

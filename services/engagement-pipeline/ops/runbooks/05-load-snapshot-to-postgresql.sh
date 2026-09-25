@@ -12,7 +12,7 @@ PGUSER="postgres"
 
 ENVIRONMENT="development"
 APPLICATION_ID="IT_Service_Management_A00"
-APPLICATION_NAME="IT Service Management"
+APPLICATION_NAME="IT Helpdesk"
 PROCESS_ID="Live_IT_Service_Request_A00"
 PROCESS_NAME="Live IT Service Request"
 

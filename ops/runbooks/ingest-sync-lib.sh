@@ -9,6 +9,26 @@ WATERMARK_OVERLAP_SECONDS="${WATERMARK_OVERLAP_SECONDS:-300}"
 
 ingest_log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 
+# Scheduled Cloud Run dispatches set SCHEDULE_ID. Default full-ingest for single-process
+# reports (ITSM/PM/Solar Today KPIs). Travel combines 3 processes — use incremental
+# watermark sync only (same watermarks as 22-ingest); full pull times out on schedule-runner.
+# Does not change TEST_SEND / manual FULL_INGEST=true.
+ingest_force_full_for_schedule() {
+  if [[ "${FULL_INGEST:-false}" == "true" ]]; then
+    return 0
+  fi
+  if [[ -n "${SCHEDULE_ID:-}" && "${TEST_SEND:-false}" != "true" ]]; then
+    local app_id="${APPLICATION_ID:-}"
+    if [[ "${app_id}" == "Expense_and_Travel_Management_A00" ]]; then
+      export FULL_INGEST=false
+      ingest_log "Schedule ${SCHEDULE_ID}: Travel incremental ingest (3 processes, watermark delta)"
+      return 0
+    fi
+    export FULL_INGEST=true
+    ingest_log "Schedule ${SCHEDULE_ID}: forcing FULL_INGEST=true (today KPIs require complete snapshot)"
+  fi
+}
+
 ingest_sql_escape() { printf "%s" "$1" | sed "s/'/''/g"; }
 
 ingest_psql() {
@@ -35,12 +55,14 @@ CREATE TABLE IF NOT EXISTS engagement_reporting.sync_watermark (
 ingest_get_watermark_iso() {
   local resource_key="$1"
   ingest_ensure_sync_tables
+  # Keep the space between date and time (e.g. "2026-08-25 11:20:47+00").
+  # tr -d '[:space:]' used to collapse that into "2026-08-2511:20:47+00" and break incremental filters.
   ingest_psql -t -A -c "
-SELECT COALESCE(last_success_at::text, '')
+SELECT COALESCE(to_char(last_success_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '')
 FROM engagement_reporting.sync_watermark
 WHERE resource_key = '$(ingest_sql_escape "${resource_key}")'
 LIMIT 1;
-" | tr -d '[:space:]'
+" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 ingest_set_watermark_now() {

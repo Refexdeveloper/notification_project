@@ -16,7 +16,8 @@ const APPLICATION_SEED_FILES = {
 function normalizeReportTemplateHtml(html) {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
-    .replace(/alt="Refex"/gi, 'alt="refexOne"');
+    .replace(/alt="Refex"/gi, 'alt="refexOne"')
+    .replace(/IT Service Management/g, 'IT Helpdesk');
 }
 
 function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) {
@@ -38,6 +39,17 @@ function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) 
 
   if (!html || !html.trim()) {
     return { synced: false, reason: 'empty_template_html' };
+  }
+
+  // Never clobber improved seeds with an older published layout missing required placeholders.
+  if (applicationId === 'Solar_Site_Expense_Governance_Syst_A00' && !html.includes('{{CategorySectionsHtml}}')) {
+    return { synced: false, reason: 'published_missing_CategorySectionsHtml' };
+  }
+  if (
+    applicationId === 'Expense_and_Travel_Management_A00'
+    && (!html.includes('{{ProcessSectionsHtml}}') || !html.includes('{{UserTableSectionHtml}}'))
+  ) {
+    return { synced: false, reason: 'published_missing_travel_placeholders' };
   }
 
   const absPath = path.join(repoRoot(), relPath);

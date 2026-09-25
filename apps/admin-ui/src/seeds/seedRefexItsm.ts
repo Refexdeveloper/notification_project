@@ -39,7 +39,7 @@ export const REFEX_ITSM_SNAPSHOT = {
   kissflowAppId: 'IT_Service_Management_A00',
   processId: 'Live_IT_Service_Request_A00',
   processName: 'Live IT Service Request',
-  applicationName: 'IT Service Management',
+  applicationName: 'IT Helpdesk',
   subdomain: REFEX_ENV_CONFIG.Development.subdomain,
   baseUrl: `https://${REFEX_ENV_CONFIG.Development.subdomain}.kissflow.com`,
   environment: 'Development' as const,
@@ -75,11 +75,11 @@ const REFEX_ENGAGEMENT_HTML = `<!DOCTYPE html>
 <tr><td style="background:linear-gradient(180deg,#ffffff 0%,#f7f7f6 100%) !important; padding:26px 32px;" bgcolor="#ffffff">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td width="180" valign="middle">
-<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" style="display:block; max-width:168px; height:auto;">
+<img src="https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png" alt="refexOne" width="168" height="32" style="display:block; max-width:168px; height:auto;">
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">{{ReportTitle}}</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; IT Service Management</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; IT Helpdesk</div>
 <div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated {{ReportDate}} &middot; Refex tickets only</div>
 </td>
 </tr></table>

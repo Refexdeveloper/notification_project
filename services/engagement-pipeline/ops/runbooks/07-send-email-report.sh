@@ -40,7 +40,9 @@ SMTP_APP_PASSWORD="${SMTP_APP_PASSWORD:-}"
 log "Building MIME email"
 
 MIME_FILE="$(mktemp)"
-trap 'rm -f "${MIME_FILE}"; unset SMTP_USER SMTP_APP_PASSWORD' EXIT
+HTML_BODY="$(mktemp)"
+LOGO_FETCH_TMP=""
+trap 'rm -f "${MIME_FILE}" "${HTML_BODY}" ${LOGO_FETCH_TMP:+"${LOGO_FETCH_TMP}"}; unset SMTP_USER SMTP_APP_PASSWORD' EXIT
 
 CC_LIST="${CC:-}"
 CC_RECIPIENTS=()
@@ -82,7 +84,56 @@ if [[ -z "${CC_LIST}" && -z "${SCHEDULE_ID:-}" ]]; then
   )
 fi
 
-{
+# --- CID logo inlining (Outlook) ---
+# Seed templates / Admin UI preview keep HTTPS logo URLs.
+# At send time only: rewrite logo <img> to cid:refexone-logo and attach PNG as multipart/related.
+# Other assets (shimmer GIF, etc.) stay remote. If logo cannot be resolved, fall back to plain HTML.
+REFEXONE_LOGO_URL="${REFEXONE_LOGO_URL:-https://storage.googleapis.com/aasik-refex-report-assets/refexone-logo.png}"
+REFEXONE_LOGO_FILE="${REFEXONE_LOGO_FILE:-${REPO_ROOT}/db/seeds/assets/refexone-logo.png}"
+REWRITE_SCRIPT="${REPO_ROOT}/services/engagement-pipeline/scripts/rewrite-report-logo-cid.py"
+LOGO_CID="refexone-logo"
+USE_CID_LOGO=0
+RESOLVED_LOGO=""
+
+resolve_refexone_logo() {
+  if [[ -f "${REFEXONE_LOGO_FILE}" && -s "${REFEXONE_LOGO_FILE}" ]]; then
+    printf '%s' "${REFEXONE_LOGO_FILE}"
+    return 0
+  fi
+  LOGO_FETCH_TMP="$(mktemp)"
+  if curl --silent --show-error --fail --location \
+    --max-time 20 \
+    -o "${LOGO_FETCH_TMP}" \
+    "${REFEXONE_LOGO_URL}" \
+    && [[ -s "${LOGO_FETCH_TMP}" ]]; then
+    printf '%s' "${LOGO_FETCH_TMP}"
+    return 0
+  fi
+  rm -f "${LOGO_FETCH_TMP}"
+  LOGO_FETCH_TMP=""
+  return 1
+}
+
+if [[ -f "${REWRITE_SCRIPT}" ]] && command -v python3 >/dev/null 2>&1; then
+  if RESOLVED_LOGO="$(resolve_refexone_logo)"; then
+    if python3 "${REWRITE_SCRIPT}" "${REPORT_FILE}" > "${HTML_BODY}" \
+      && grep -q "cid:${LOGO_CID}" "${HTML_BODY}"; then
+      USE_CID_LOGO=1
+      log "Inlining Refex One logo as cid:${LOGO_CID} (Outlook multipart/related)"
+    else
+      log "Logo CID rewrite skipped (no matching logo <img> in report HTML)"
+      cp "${REPORT_FILE}" "${HTML_BODY}"
+    fi
+  else
+    log "Logo file unavailable — sending remote HTTPS logo URL (Gmail OK; Outlook may block)"
+    cp "${REPORT_FILE}" "${HTML_BODY}"
+  fi
+else
+  log "CID rewrite helper missing — sending plain HTML"
+  cp "${REPORT_FILE}" "${HTML_BODY}"
+fi
+
+write_headers() {
   echo "From: ${FROM_EMAIL}"
   echo "To: ${TO_HEADER_VALUE}"
   if [[ -n "${CC_LIST}" ]]; then
@@ -92,10 +143,44 @@ fi
   fi
   echo "Subject: ${SUBJECT}"
   echo "MIME-Version: 1.0"
-  echo "Content-Type: text/html; charset=UTF-8"
-  echo ""
-  cat "${REPORT_FILE}"
-} > "${MIME_FILE}"
+}
+
+if [[ "${USE_CID_LOGO}" -eq 1 ]]; then
+  BOUNDARY="=_RefexReport_${TIMESTAMP}_$$"
+  if base64 --help 2>&1 | grep -q -- '-w'; then
+    LOGO_B64="$(base64 -w 0 "${RESOLVED_LOGO}")"
+  else
+    LOGO_B64="$(base64 < "${RESOLVED_LOGO}" | tr -d '\n')"
+  fi
+  {
+    write_headers
+    echo "Content-Type: multipart/related; boundary=\"${BOUNDARY}\"; type=\"text/html\""
+    echo ""
+    echo "--${BOUNDARY}"
+    echo "Content-Type: text/html; charset=UTF-8"
+    echo "Content-Transfer-Encoding: 8bit"
+    echo ""
+    cat "${HTML_BODY}"
+    echo ""
+    echo "--${BOUNDARY}"
+    echo "Content-Type: image/png; name=\"refexone-logo.png\""
+    echo "Content-Transfer-Encoding: base64"
+    echo "Content-ID: <${LOGO_CID}>"
+    echo "Content-Disposition: inline; filename=\"refexone-logo.png\""
+    echo ""
+    # RFC 2045: soft line breaks at 76 chars
+    printf '%s' "${LOGO_B64}" | fold -w 76
+    echo ""
+    echo "--${BOUNDARY}--"
+  } > "${MIME_FILE}"
+else
+  {
+    write_headers
+    echo "Content-Type: text/html; charset=UTF-8"
+    echo ""
+    cat "${HTML_BODY}"
+  } > "${MIME_FILE}"
+fi
 
 log "Sending via Gmail SMTP"
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   defaultEntityFilterForProcess,
   formatEntityFilterLabel,
+  friendlyApplicationName,
+  isItsmApp,
   isTravelApp,
   isTravelProcess,
   preferredTravelProcessId,
@@ -36,5 +38,16 @@ describe('processLabels travel usage', () => {
 
   it('labels leftover both-entity schedules as Venwind default', () => {
     expect(formatEntityFilterLabel('both')).toContain('Venwind');
+  });
+});
+
+describe('IT Helpdesk display name', () => {
+  it('renames IT Service Management by Kissflow id and by label', () => {
+    expect(friendlyApplicationName('IT_Service_Management_A00', 'IT Service Management')).toBe(
+      'IT Helpdesk',
+    );
+    expect(friendlyApplicationName('', 'IT Service Management')).toBe('IT Helpdesk');
+    expect(friendlyApplicationName('Lead_Trcaker_A00', 'Lead Tracker')).toBe('Lead Tracker');
+    expect(isItsmApp('IT_Service_Management_A00', 'IT Helpdesk')).toBe(true);
   });
 });

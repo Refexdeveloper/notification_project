@@ -124,13 +124,12 @@ VALUES (
   '${REPORT_DEF_VERSION_ID}'::uuid,
   '${CRON_EXPRESSION}',
   '${TIMEZONE}',
-  false,
+  true,
   'daily:${APPLICATION_ID}:venwind:${ENVIRONMENT}'
 )
 ON CONFLICT (report_schedule_id) DO UPDATE
   SET cron_expression = EXCLUDED.cron_expression,
       timezone = EXCLUDED.timezone,
-      is_active = EXCLUDED.is_active,
       report_definition_version_id = EXCLUDED.report_definition_version_id;
 
 INSERT INTO engagement_reporting.report_definition (
@@ -187,13 +186,12 @@ VALUES (
   '${REPORT_DEF_VERSION_ID_REFEX}'::uuid,
   '${CRON_EXPRESSION}',
   '${TIMEZONE}',
-  false,
+  true,
   'daily:${APPLICATION_ID}:refex:${ENVIRONMENT}'
 )
 ON CONFLICT (report_schedule_id) DO UPDATE
   SET cron_expression = EXCLUDED.cron_expression,
       timezone = EXCLUDED.timezone,
-      is_active = EXCLUDED.is_active,
       report_definition_version_id = EXCLUDED.report_definition_version_id;
 
 COMMIT;

@@ -15,6 +15,16 @@ import type { CredentialsStatusResult } from '@/services/applicationsApi';
 import { isBackendApiMode } from '@/services/backendApi';
 import Modal from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
+import { isPmApp } from '@/lib/processLabels';
+import {
+  missingPmBoardIds,
+  missingPmProcessIds,
+  pmPortfolioResourcesComplete,
+  pmRecommendedBoardIds,
+  pmRecommendedProcessIds,
+  shouldShowPmSetup,
+  syncPmPortfolioProcessFields,
+} from '@/lib/pmPortfolioSetup';
 
 interface SettingsTabProps {
   app: KissflowApplication;
@@ -48,6 +58,7 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
   const [deleting, setDeleting] = useState(false);
   const [credentialsStatus, setCredentialsStatus] = useState<CredentialsStatusResult | null>(null);
   const [credentialsLoading, setCredentialsLoading] = useState(false);
+  const [attachingPmPortfolio, setAttachingPmPortfolio] = useState(false);
   const [savingResources, setSavingResources] = useState(false);
   const [resourceMessage, setResourceMessage] = useState('');
 
@@ -198,6 +209,50 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
     onSaved?.();
   };
 
+  const addPmPortfolioResources = async () => {
+    if (!backendMode || !shouldShowPmSetup(app)) return;
+    const nextProcesses = [
+      ...processIds.map((id) => id.trim()).filter(Boolean),
+      ...pmRecommendedProcessIds(),
+    ].filter((id, idx, arr) => arr.indexOf(id) === idx);
+    const nextBoards = [
+      ...boardIds.map((id) => id.trim()).filter(Boolean),
+      ...pmRecommendedBoardIds(),
+    ].filter((id, idx, arr) => arr.indexOf(id) === idx);
+    setProcessIds(toRows(nextProcesses));
+    setBoardIds(toRows(nextBoards));
+    setAttachingPmPortfolio(true);
+    setError('');
+    setResourceMessage('');
+    const result = await attachResourcesOnBackend(app, {
+      process_ids: nextProcesses,
+      dataform_ids: dataformIds.map((id) => id.trim()).filter(Boolean),
+      board_ids: nextBoards,
+      dataset_ids: datasetIds.map((id) => id.trim()).filter(Boolean),
+      sync_fields: true,
+    });
+    setAttachingPmPortfolio(false);
+    if (!result.ok) {
+      setError(result.error || 'Could not add PM portfolio resources.');
+      return;
+    }
+    if (result.process_ids) setProcessIds(toRows(result.process_ids));
+    if (result.board_ids) setBoardIds(toRows(result.board_ids));
+    const fieldNote =
+      result.field_sync?.length
+        ? ` Field sync: ${result.field_sync.filter((f) => f.ok).length}/${result.field_sync.length} process(es).`
+        : '';
+    const syncAll = await syncPmPortfolioProcessFields({
+      ...app,
+      processIds: result.process_ids || nextProcesses,
+      boardIds: result.board_ids || nextBoards,
+    });
+    setResourceMessage(
+      `PM portfolio resources saved.${fieldNote} ${syncAll.message}`.trim(),
+    );
+    onSaved?.();
+  };
+
   const remove = async () => {
     setDeleting(true);
     setError('');
@@ -316,7 +371,31 @@ export default function SettingsTab({ app, onSaved }: SettingsTabProps) {
             {backendMode
               ? 'Add Kissflow Process / Dataform / Board / Dataset IDs to this connected app. New processes are validated in Kissflow and field-synced automatically.'
               : 'Add one ID per row. Use + to add more.'}
+            {isPmApp(app.appId, app.displayName || app.name)
+              ? ' Project Management portfolio needs Process: Project_Sub_Task_A01 + Sub_Task_Process_A00, and Board: Project_Management_A01.'
+              : ''}
           </p>
+          {backendMode && shouldShowPmSetup(app) && !pmPortfolioResourcesComplete(app) && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 space-y-2">
+              <p className="text-xs text-sky-950">
+                Missing for portfolio email:{' '}
+                {[...missingPmProcessIds(app), ...missingPmBoardIds(app)].join(', ') || 'resources'}
+              </p>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={attachingPmPortfolio || savingResources}
+                onClick={() => void addPmPortfolioResources()}
+              >
+                {attachingPmPortfolio ? 'Adding…' : 'Add PM portfolio resources'}
+              </Button>
+            </div>
+          )}
+          {backendMode && shouldShowPmSetup(app) && pmPortfolioResourcesComplete(app) && (
+            <p className="text-[11px] text-emerald-700">
+              PM portfolio processes and Projects board are linked.
+            </p>
+          )}
           <IdRowList
             label="Process IDs"
             icon="ri-git-branch-line"

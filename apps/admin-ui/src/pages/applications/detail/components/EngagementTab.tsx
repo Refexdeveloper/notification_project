@@ -18,17 +18,17 @@ import {
 } from '@/services/kissflowUserDisplay';
 import { REFEX_ENV_CONFIG } from '@/seeds/refexAppCatalog';
 import Sheet from '@/components/ui/Sheet';
+import { resolvePersonDisplayName } from '@/lib/personName';
 
 interface EngagementTabProps {
   app: KissflowApplication;
 }
 
-type LoginFilter = 'all' | 'today' | 'inactive' | 'never' | 'assigned' | 'role';
+type LoginFilter = 'all' | 'today' | 'inactive' | 'never' | 'assigned';
 
 const FILTER_PILLS: { value: LoginFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'assigned', label: 'Has assignments' },
-  { value: 'role', label: 'App role' },
   { value: 'today', label: 'Logged in today' },
   { value: 'inactive', label: 'Inactive' },
   { value: 'never', label: 'Never' },
@@ -110,7 +110,6 @@ function matchesFilter(u: UserEngagementRow, filter: LoginFilter): boolean {
   if (filter === 'inactive') return !u.loggedInToday && !!u.lastLogin;
   if (filter === 'never') return !u.lastLogin;
   if (filter === 'assigned') return u.assigned > 0;
-  if (filter === 'role') return Boolean(u.hasAppRole || (u.appRoleNames && u.appRoleNames.length > 0));
   return true;
 }
 
@@ -118,6 +117,11 @@ export default function EngagementTab({ app }: EngagementTabProps) {
   const [report, setReport] = useState<EngagementReport | null>(() => loadCachedEngagement(app.id));
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+
+  const safeUserDisplayName = (u: UserEngagementRow): string => {
+    // Fallback guard: never show Kissflow-like internal IDs as "names".
+    return resolvePersonDisplayName(u.name, u.email, u.userId) || '—';
+  };
   const [loginFilter, setLoginFilter] = useState<LoginFilter>('all');
   const [selected, setSelected] = useState<UserEngagementRow | null>(null);
   const [errorBanner, setErrorBanner] = useState('');
@@ -197,13 +201,6 @@ export default function EngagementTab({ app }: EngagementTabProps) {
       void refresh();
     }
   }, [app.id, refresh]);
-
-  const appRoleCount = useMemo(() => {
-    if (!report) return 0;
-    return report.users.filter(
-      (u) => u.hasAppRole || (u.appRoleNames && u.appRoleNames.length > 0),
-    ).length;
-  }, [report]);
 
   const rows = useMemo(() => {
     if (!report) return [];
@@ -362,15 +359,6 @@ export default function EngagementTab({ app }: EngagementTabProps) {
             onClick={() => setLoginFilter('assigned')}
             hint="Users with ≥1 assignment"
           />
-          {isBackendApiMode() && (
-            <Stat
-              label="App role"
-              value={appRoleCount}
-              active={loginFilter === 'role'}
-              onClick={() => setLoginFilter('role')}
-              hint="Users with a Kissflow app role on this application"
-            />
-          )}
         </div>
       )}
 
@@ -433,7 +421,6 @@ export default function EngagementTab({ app }: EngagementTabProps) {
               <tr className="border-b border-background-200/70 bg-background-50 text-left text-[11px] uppercase tracking-wide text-foreground-400">
                 <th className="px-3 py-2.5 font-medium">User</th>
                 <th className="px-3 py-2.5 font-medium">Email</th>
-                {isBackendApiMode() && <th className="px-3 py-2.5 font-medium">App roles</th>}
                 <th className="px-3 py-2.5 font-medium text-right">Assigned</th>
                 <th className="px-3 py-2.5 font-medium text-right">Open</th>
                 <th className="px-3 py-2.5 font-medium text-right">Pending</th>
@@ -454,7 +441,7 @@ export default function EngagementTab({ app }: EngagementTabProps) {
                   }`}
                 >
                   <td className="px-3 py-2.5">
-                    <div className="font-medium text-foreground-900">{u.name}</div>
+                    <div className="font-medium text-foreground-900">{safeUserDisplayName(u)}</div>
                     {(u.role || u.department) && (
                       <div className="text-[11px] text-foreground-400">
                         {[u.role, u.department].filter(Boolean).join(' · ')}
@@ -474,20 +461,6 @@ export default function EngagementTab({ app }: EngagementTabProps) {
                       <span className="text-foreground-400">—</span>
                     )}
                   </td>
-                  {isBackendApiMode() && (
-                    <td className="px-3 py-2.5 text-xs text-foreground-600 max-w-[180px]">
-                      {u.appRoleNames?.length ? (
-                        <span className="line-clamp-2" title={u.appRoleNames.join(', ')}>
-                          {u.appRoleNames.slice(0, 2).join(', ')}
-                          {u.appRoleNames.length > 2 ? ` +${u.appRoleNames.length - 2}` : ''}
-                        </span>
-                      ) : u.assigned > 0 ? (
-                        <span className="chip-muted">Assigned only</span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  )}
                   <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{u.assigned}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-foreground-700">{u.open}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-foreground-700">{u.pending}</td>
