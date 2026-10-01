@@ -28,18 +28,23 @@ import {
   resolveDateScope,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
-import { buildAppOpenPath, readEmbedFromSearch, withEmbedParams } from '@/lib/embedMode';
+import {
+  buildAppOpenPath,
+  openResolvedHref,
+  readEmbedFromSearch,
+  resolveEmbedOpenUrl,
+  withEmbedParams,
+} from '@/lib/embedMode';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
 import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
-import { buildEntityBucketOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
+import { buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
 import { loadApplicationRecordInventory } from '@/services/appRecordsApi';
 import type { AppRecordRow } from '@/services/appRecordsApi';
 import {
   companyCountsFromRecords,
   countTodayActivity,
   ensureFilterOption,
-  entityCountsFromRecords,
   filterAppRecords,
   summarizeAppRecords,
 } from '@/lib/appDashboardClientFilter';
@@ -250,6 +255,7 @@ export default function DashboardPage() {
   const [refreshMode, setRefreshMode] = useState<'live' | 'snapshot' | null>(null);
   const [refreshWarnings, setRefreshWarnings] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [fullRefreshing, setFullRefreshing] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState<string | 'all'>(() => {
     const fromUrl = searchParams.get('app');
     return fromUrl && fromUrl !== 'all' ? fromUrl : 'all';
@@ -285,7 +291,11 @@ export default function DashboardPage() {
   );
 
   const applyDashboardData = useCallback((data: NonNullable<Awaited<ReturnType<typeof loadDashboard>>['data']>) => {
-    setApplications(data.applications);
+    setApplications(
+      (data.applications || []).filter(
+        (app) => !/vindview|lead tracker venwind/i.test(`${app.application_id || ''} ${app.application_name || ''}`),
+      ),
+    );
     setGeneratedAt(data.generated_at || null);
     setRefreshMode(data.refresh_mode || 'snapshot');
     setRefreshWarnings(data.warnings || []);
@@ -343,12 +353,29 @@ export default function DashboardPage() {
     setRefreshing(false);
   }, [applyDashboardData]);
 
+  const fullRefresh = useCallback(async () => {
+    setFullRefreshing(true);
+    setError('');
+    const result = await refreshDashboardLive('production', { live: true });
+    if (result.ok && result.data) applyDashboardData(result.data);
+    else if (result.error) setError(result.error);
+    setFullRefreshing(false);
+  }, [applyDashboardData]);
+
   useEffect(() => {
     void load(false);
   }, [load]);
 
+  const needsCatalog = entity !== 'all' || company !== 'all';
+
   useEffect(() => {
-    if (!applications.length || !backendMode) return;
+    // Snapshot KPIs land first. Full inventories are only for Entity / Company filters.
+    if (!needsCatalog) {
+      setCatalogRecords([]);
+      setCatalogReady(false);
+      return;
+    }
+    if (loading || !applications.length || !backendMode) return;
     let cancelled = false;
     void (async () => {
       const batchSize = 3;
@@ -383,16 +410,9 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [applications, backendMode]);
+  }, [applications, backendMode, loading, needsCatalog]);
 
   useEffect(() => {
-    // All time + All entities/companies: use overview snapshot.
-    if (period === 'all' && entity === 'all' && company === 'all') {
-      setFilteredApplications(null);
-      setFilterLoading(false);
-      return;
-    }
-
     if (!applications.length) return;
 
     // Today with no entity/company: opened_today / closed_today on the overview payload.
@@ -413,6 +433,13 @@ export default function DashboardPage() {
           } satisfies DashboardApplication;
         }),
       );
+      return;
+    }
+
+    // All entities/companies: incremental overview snapshot — do not wait on 7 inventories.
+    if (entity === 'all' && company === 'all') {
+      setFilteredApplications(null);
+      setFilterLoading(false);
       return;
     }
 
@@ -440,6 +467,7 @@ export default function DashboardPage() {
       });
       const sum = summarizeAppRecords(filtered);
       const today = countTodayActivity(filtered, istTodayYmd());
+      const idle = sum.total === 0;
       return {
         ...app,
         metrics: {
@@ -450,30 +478,30 @@ export default function DashboardPage() {
           total_items: sum.total,
           opened_today: today.opened,
           closed_today: today.closed,
+          ...(idle ? {
+            sign_in_today: 0,
+            sign_in_rate_overall: 0,
+            sign_in_rate_today: 0,
+          } : {}),
         },
       } satisfies DashboardApplication;
     });
     setFilteredApplications(scoped);
   }, [applications, catalogReady, catalogRecords, period, resolvedDates, entity, company]);
 
-  const entityOptions = useMemo(() => {
-    const rows = entityCountsFromRecords(catalogRecords);
+  const companyOptions = useMemo(() => {
+    const rows = companyCountsFromRecords(catalogRecords, { entity: 'all' });
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.id] = r.count;
-    return ensureFilterOption(
-      buildEntityBucketOptions(counts, { mode: 'all_buckets', allLabel: 'All entities' }),
-      entity,
-    );
-  }, [catalogRecords, entity]);
-  const companyOptions = useMemo(() => {
-    const rows = companyCountsFromRecords(catalogRecords, { entity });
     return sortCompanyFilterOptions(ensureFilterOption(
-      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      buildRefexCompanyOptions(counts, { includeAll: true, allLabel: 'All companies', entity: 'all' }),
       company,
     ));
-  }, [catalogRecords, company, entity]);
+  }, [catalogRecords, company]);
 
-  const displayApplications = filteredApplications ?? applications;
+  const displayApplications = (filteredApplications ?? applications).filter(
+    (app) => !/vindview|lead tracker venwind/i.test(`${app.application_id || ''} ${app.application_name || ''}`),
+  );
 
   const applicationFilterOptions = useMemo(
     () => [
@@ -485,11 +513,6 @@ export default function DashboardPage() {
     ],
     [displayApplications],
   );
-
-  const handleEntityChange = (next: string) => {
-    setEntity(next);
-    setCompany('all');
-  };
 
   const dashboardFilterBar = (
     <ExecutiveDateFilterBar
@@ -503,10 +526,6 @@ export default function DashboardPage() {
       dateTo={dateTo}
       onDateFromChange={setDateFrom}
       onDateToChange={setDateTo}
-      entity={entity}
-      onEntityChange={handleEntityChange}
-      entityOptions={entityOptions}
-      entityLabel="Entity"
       company={company}
       onCompanyChange={setCompany}
       companyOptions={companyOptions}
@@ -572,15 +591,9 @@ export default function DashboardPage() {
     <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
       <div className="relative rounded-3xl border border-slate-100 bg-transparent shadow-none">
         <DashboardLoadingOverlay
-          show={Boolean(refreshing || filterLoading || (loading && applications.length === 0))}
+          show={Boolean(loading && applications.length === 0)}
           mode="fixed"
-          label={
-            refreshing
-              ? 'Updating dashboard…'
-              : filterLoading
-                ? 'Applying date filters…'
-                : 'Loading dashboard…'
-          }
+          label="Loading dashboard…"
         />
         <div className="relative space-y-4 px-0 py-0 md:px-0">
           {refreshWarnings.length > 0 && (
@@ -603,15 +616,26 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <EmbedDashboardHero
                 actions={
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void load(true)}
-                    disabled={loading || refreshing}
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                    {refreshing ? 'Updating…' : 'Refresh'}
-                  </Button>
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void load(true)}
+                      disabled={loading || refreshing || fullRefreshing}
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                      {refreshing ? 'Updating…' : 'Refresh'}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void fullRefresh()}
+                      disabled={loading || refreshing || fullRefreshing}
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${fullRefreshing ? 'animate-spin' : ''}`} />
+                      {fullRefreshing ? 'Refreshing all…' : 'Full refresh'}
+                    </Button>
+                  </>
                 }
                 filters={dashboardFilterBar}
               />
@@ -637,6 +661,7 @@ export default function DashboardPage() {
                       sub="Signed in today ÷ total users"
                       themes={[EMBED_ADOPTION_THEME]}
                       styleIndex={0}
+                      surface="white"
                     />
                     <KpiCard label="Open items" value={totals.open_tickets} styleIndex={2} />
                     <KpiCard label="Closed items" value={totals.closed_tickets} styleIndex={3} />
@@ -665,7 +690,17 @@ export default function DashboardPage() {
                         app={app}
                         accentIndex={index}
                         embed={embed}
-                        onOpen={() =>
+                        onOpen={() => {
+                          const stored = resolveEmbedOpenUrl({
+                            embed,
+                            applicationId: app.application_id,
+                            applicationName: app.application_name,
+                            storedUrl: app.embed_url,
+                          });
+                          if (stored) {
+                            openResolvedHref(stored, navigate);
+                            return;
+                          }
                           navigate(
                             buildAppOpenPath({
                               environment: app.environment,
@@ -674,8 +709,8 @@ export default function DashboardPage() {
                               embed,
                               fromSearch: searchParams,
                             }),
-                          )
-                        }
+                          );
+                        }}
                       />
                     ))
                   )}

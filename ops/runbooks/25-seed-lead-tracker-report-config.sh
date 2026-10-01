@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ops/runbooks/25-seed-lead-tracker-report-config.sh
 #
-# Idempotent seed: Lead Tracker sales report template + one schedule per sales group.
-# Source HTML: db/seeds/lead-tracker-report-template.html (from seedRefexLeadTracker.ts)
+# Idempotent seed: Lead Tracker template + one schedule per website
+# (3iMedtech, Modepro, Adonis, Refex Mobility, Venwind).
+# Source HTML: db/seeds/lead-tracker-report-template.html (same layout; website filter at send).
 #
 set -euo pipefail
 
@@ -50,7 +51,7 @@ seed_group() {
   local REPORT_DEF_VERSION_ID="cccc1111-1111-4111-8111-111111111${SUFFIX}"
   local SCHEDULE_ID="dddd1111-1111-4111-8111-111111111${SUFFIX}"
   local SCHEDULE_NAME="Lead Tracker — ${GROUP_NAME}"
-  local SUBJECT="Lead Tracker — ${GROUP_NAME} sales report"
+  local SUBJECT="Lead Tracker — ${GROUP_NAME} website report"
   local LEGACY_SCHEDULER_ID="sch-refex-lead-prod-${SLUG}"
 
   psql "${PG_CONN}" -v ON_ERROR_STOP=1 <<SQL
@@ -86,6 +87,7 @@ VALUES (
     'subject', '${SUBJECT}',
     'user_group_filter', '${GROUP_NAME}',
     'website_filter', '${WEBSITE_FILTER}',
+    'company_filter', '${WEBSITE_FILTER}',
     'group_slug', '${SLUG}',
     'from_email', '${FROM_EMAIL}',
     'legacy_template_id', 'tpl-refex-lead-tracker-prod',
@@ -164,10 +166,11 @@ ON CONFLICT (report_template_id, version_number) DO UPDATE
 COMMIT;
 SQL
 
-seed_group "3i Sales Team" "3iMedtech" "3i" "001"
-seed_group "Sales Team Modepro" "Modepro" "modepro" "002"
-seed_group "Sales Team Adonis" "Adonis" "adonis" "003"
-seed_group "Sales Team Refex Mobility" "Refex Mobility" "refex-mobility" "004"
+seed_group "3iMedtech" "3iMedtech" "3i" "001"
+seed_group "Modepro" "Modepro" "modepro" "002"
+seed_group "Adonis" "Adonis" "adonis" "003"
+seed_group "Refex Mobility" "Refex Mobility" "refex-mobility" "004"
+seed_group "Venwind" "Venwind" "venwind" "005"
 
 TEMPLATE_COUNT="$(psql "${PG_CONN}" -t -A -c "
 SELECT count(*)
@@ -207,10 +210,11 @@ cat > "${AUDIT_DIR}/runbook-25-${TIMESTAMP}.json" <<EOF
   "cron_expression": "${CRON_EXPRESSION}",
   "timezone": "${TIMEZONE}",
   "sales_groups": [
-    {"group_name": "3i Sales Team", "website_filter": "3iMedtech", "slug": "3i"},
-    {"group_name": "Sales Team Modepro", "website_filter": "Modepro", "slug": "modepro"},
-    {"group_name": "Sales Team Adonis", "website_filter": "Adonis", "slug": "adonis"},
-    {"group_name": "Sales Team Refex Mobility", "website_filter": "Refex Mobility", "slug": "refex-mobility"}
+    {"group_name": "3iMedtech", "website_filter": "3iMedtech", "slug": "3i"},
+    {"group_name": "Modepro", "website_filter": "Modepro", "slug": "modepro"},
+    {"group_name": "Adonis", "website_filter": "Adonis", "slug": "adonis"},
+    {"group_name": "Refex Mobility", "website_filter": "Refex Mobility", "slug": "refex-mobility"},
+    {"group_name": "Venwind", "website_filter": "Venwind", "slug": "venwind"}
   ],
   "schedule_active": false
 }
@@ -220,7 +224,7 @@ log "Seed complete. Templates linked: ${TEMPLATE_COUNT:-0}, Schedules: ${SCHEDUL
 log "Audit: ${AUDIT_DIR}/runbook-25-${TIMESTAMP}.json"
 
 [[ "${TEMPLATE_COUNT:-0}" -ge 1 ]] || stop "Expected at least 1 template row for ${APPLICATION_ID}"
-[[ "${SCHEDULE_COUNT:-0}" -ge 4 ]] || stop "Expected 4 schedule rows for ${APPLICATION_ID} (got ${SCHEDULE_COUNT:-0})"
+[[ "${SCHEDULE_COUNT:-0}" -ge 5 ]] || stop "Expected 5 website schedule rows for ${APPLICATION_ID} (got ${SCHEDULE_COUNT:-0})"
 
 log "Verify:"
 log "  curl -s \"http://localhost:8080/api/v1/applications/${APPLICATION_ID}/templates?environment=${ENVIRONMENT}\" | python3 -m json.tool"

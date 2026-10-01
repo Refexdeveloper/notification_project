@@ -1,6 +1,6 @@
 import type { KissflowApplication } from '@/mocks/applications';
 import type { ReportTemplate } from '@/stores/reportTemplates';
-import { LEAD_TRACKER_SALES_GROUPS } from '@/services/leadReport';
+import { LEAD_TRACKER_SALES_GROUPS, resolveLeadCompany } from '@/services/leadReport';
 import {
   defaultEntityFilterForProcess,
   isExtrovisProcess,
@@ -197,47 +197,44 @@ export default function ScheduleReportIdentityFields({
       )}
 
       {showLeadTrackerFilters && (
-        <>
-          <div>
-            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
-              Sales team (Kissflow group)
-            </label>
-            <select
-              value={value.userGroupFilter}
-              onChange={(e) => {
-                const group = e.target.value;
-                const match = LEAD_TRACKER_SALES_GROUPS.find((g) => g.groupName === group);
-                onChange({
-                  ...value,
-                  userGroupFilter: group,
-                  websiteFilter: match?.websiteFilter || value.websiteFilter,
-                });
-              }}
-              disabled={disabled}
-              className="field-input w-full disabled:opacity-60"
-            >
-              <option value="">— Select sales team —</option>
-              {LEAD_TRACKER_SALES_GROUPS.map((g) => (
-                <option key={g.slug} value={g.groupName}>
-                  {g.groupName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Website filter</label>
-            <input
-              value={value.websiteFilter}
-              onChange={(e) => onChange({ ...value, websiteFilter: e.target.value })}
-              disabled={disabled}
-              placeholder="e.g. Refex Mobility"
-              className="field-input w-full text-sm disabled:opacity-60"
-            />
-            <p className="text-[11px] text-foreground-400 mt-1">
-              Filters leads by Website field before grouping by sales person.
-            </p>
-          </div>
-        </>
+        <div>
+          <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
+            Website scope
+          </label>
+          <select
+            value={
+              resolveLeadCompany(value.websiteFilter || value.userGroupFilter)?.groupName
+              || value.websiteFilter
+              || ''
+            }
+            onChange={(e) => {
+              const website = e.target.value;
+              const match = resolveLeadCompany(website);
+              onChange({
+                ...value,
+                userGroupFilter: match?.groupName || website,
+                websiteFilter: match?.websiteFilter || website,
+                subject: website
+                  ? `Lead Tracker — ${match?.groupName || website} website report`
+                  : value.subject,
+              });
+            }}
+            disabled={disabled}
+            className="field-input w-full disabled:opacity-60"
+          >
+            <option value="">— Select website —</option>
+            {LEAD_TRACKER_SALES_GROUPS.map((g) => (
+              <option key={g.slug} value={g.groupName}>
+                {g.groupName}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-foreground-400 mt-1">
+            One email per website — same as the Lead Tracker dashboard Website filter
+            (Kissflow Website And Form). Sends that website&apos;s leads and those users only.
+            Never the full report.
+          </p>
+        </div>
       )}
     </div>
   );

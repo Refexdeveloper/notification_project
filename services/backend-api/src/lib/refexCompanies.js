@@ -72,8 +72,10 @@ function resolveCompanyIdFromText(raw) {
   const norm = normalizeCompanyText(raw);
   if (!norm) return null;
 
-  // Extrovis is an entity bucket, not a catalog legal entity.
-  if (norm === 'extrovis' || norm.includes('extrovis')) return null;
+  if (norm === 'extrovis' || norm.includes('extrovis')) return 'extrovis';
+  if (norm.includes('pharmacare') || norm.includes('pharma pack') || norm === 'pharmapack') return 'pharmacare';
+  if (norm === 'modepro' || norm.includes('modepro') || norm.includes('mode pro')) return 'modepro';
+  if (norm.includes('kavis')) return 'kavispharma';
 
   // Bare / short "refex" is an entity bucket — do not force Industries.
   if (norm === 'refex' || norm === 'refex group') return null;

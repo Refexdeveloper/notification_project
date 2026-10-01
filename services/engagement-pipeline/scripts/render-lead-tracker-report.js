@@ -5,7 +5,7 @@
  * Render Lead Tracker HTML report (live Kissflow) for one sales group.
  *
  * Env:
- *   GROUP_NAME       — e.g. "Sales Team Modepro"
+ *   GROUP_NAME       — e.g. "Modepro"
  *   WEBSITE_FILTER   — e.g. "Modepro"
  *   GROUP_SLUG       — e.g. "modepro" (output file suffix)
  *   REPO_ROOT        — repo root (default: cwd)
@@ -31,7 +31,7 @@ function loadAdminUiEnv() {
 }
 
 loadAdminUiEnv();
-const groupName = process.env.GROUP_NAME || 'Sales Team Modepro';
+const groupName = process.env.GROUP_NAME || 'Modepro';
 const websiteFilter = process.env.WEBSITE_FILTER || 'Modepro';
 const groupSlug = process.env.GROUP_SLUG || 'modepro';
 // Published template from PostgreSQL (fallback: seed file on disk)
@@ -65,7 +65,11 @@ async function main() {
     subject: built.subject,
     row_count: built.rowCount,
     total_leads: built.totalLeads,
+    source: built.source || 'live',
   };
+  if (!built.totalLeads) {
+    throw new Error(`Refusing to write 0-count Lead Tracker HTML for ${websiteFilter}`);
+  }
   fs.writeFileSync(path.join(auditDir, `runbook-17-${groupSlug}-${timestamp}.json`), JSON.stringify(audit, null, 2));
 
   console.log(JSON.stringify({ ok: true, ...audit }, null, 2));

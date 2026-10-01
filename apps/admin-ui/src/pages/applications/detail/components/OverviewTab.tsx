@@ -78,9 +78,11 @@ export default function OverviewTab({ app, onNavigateTab }: OverviewTabProps) {
       done: schedules.some((s) => s.status === 'active'),
       title: 'Activate schedule & recipients',
       hint:
-        schedules.length > 0
-          ? 'Paused draft schedule ready — add To/From and activate'
-          : 'Pick a template and who gets it',
+        /lead/i.test(`${app.appId || ''} ${app.displayName || ''} ${app.name || ''}`)
+          ? 'One schedule per website (3iMedtech, Refex Mobility, Adonis, Modepro, Venwind) — not the full report'
+          : schedules.length > 0
+            ? 'Paused draft schedule ready — add To/From and activate'
+            : 'Pick a template and who gets it',
       tab: 'schedulers',
       icon: 'ri-calendar-schedule-line',
     },

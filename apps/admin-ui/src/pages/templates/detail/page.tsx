@@ -27,6 +27,7 @@ import {
 } from '@/lib/templatePreview';
 import { ensureItsmSourcePlaceholders, preferExtrovisStarter } from '@/lib/itsmTemplateLayout';
 import { isPmPortfolioHtml } from '@/lib/pmPortfolioSetup';
+import { resolveLeadCompany } from '@/services/leadReport';
 import { isBackendApiMode } from '@/services/backendApi';
 import { loadApplicationFromBackend } from '@/services/applicationsApi';
 import {
@@ -44,6 +45,7 @@ import {
 import VersionHistory from '@/pages/templates/detail/components/VersionHistory';
 import TestEmailDialog from '@/pages/templates/detail/components/TestEmailDialog';
 import PlaceholderPicker from '@/pages/templates/detail/components/PlaceholderPicker';
+import ReportFilterBuilder from '@/pages/templates/detail/components/ReportFilterBuilder';
 import AiGeneratePanel from '@/pages/templates/detail/components/AiGeneratePanel';
 import StarterPickerModal from '@/pages/templates/components/StarterPickerModal';
 import type { TemplateVersion } from '@/mocks/templates';
@@ -844,6 +846,24 @@ export default function TemplateDetailPage() {
               {layoutBusy ? 'Updating…' : 'Apply Solar layout'}
             </Button>
           )}
+          {backendMode && appKind === 'lead' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={layoutBusy}
+              onClick={() =>
+                void applyStarterLayout(
+                  resolveLeadCompany(`${name} ${subject}`)?.starterId || 'lead',
+                  'Replace this template with the latest Lead Tracker company layout (same cards + user table)?',
+                  'Applied Lead Tracker layout. Attach a company-scoped schedule so the email sends that company only.',
+                  'Lead Tracker — company-scoped Open / Closed + user table',
+                )
+              }
+              leftIcon={<LayoutTemplate className="w-3.5 h-3.5" />}
+            >
+              {layoutBusy ? 'Updating…' : 'Apply Lead layout'}
+            </Button>
+          )}
           {backendMode && appKind === 'travel' && (
             <Button
               variant="secondary"
@@ -1049,6 +1069,7 @@ export default function TemplateDetailPage() {
           {backendMode && (
             <AiGeneratePanel busy={aiBusy} onGenerate={handleAiGenerate} />
           )}
+          <ReportFilterBuilder onInsert={(token) => insertPlaceholder(token, 'html')} />
           <PlaceholderPicker
             appKind={appKind}
             usedInTemplate={placeholderHints}

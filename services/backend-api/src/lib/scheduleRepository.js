@@ -52,6 +52,7 @@ async function createSchedule(client, {
         subject: subject || name,
         from_email: fromEmail || null,
         website_filter: websiteFilter || null,
+        company_filter: websiteFilter || null,
         user_group_filter: userGroupFilter || null,
         entity_filter: entityFilter || null,
         kind: 'schedule',

@@ -9,8 +9,31 @@ const adminUiEnv = path.join(__dirname, '../../../apps/admin-ui/.env.local');
 require('dotenv').config({ path: adminUiEnv });
 
 const PROCESS_ID = 'Lead_tracker_1_A00';
-const PAGE_SIZE = 1000;
+const VENWIND_PROCESS_ID = 'Vindview_Sales_Management_A00';
+/** Ingest uses 100. 1000-byte pages can return truncated JSON on Cloud Run → silent 0 counts. */
+const PAGE_SIZE = 100;
 const TZ = 'Asia/Kolkata';
+const LEAD_WEBSITES = [
+  { groupName: '3iMedtech', websiteFilter: '3iMedtech', slug: '3i' },
+  { groupName: 'Refex Mobility', websiteFilter: 'Refex Mobility', slug: 'refex-mobility' },
+  { groupName: 'Adonis', websiteFilter: 'Adonis', slug: 'adonis' },
+  { groupName: 'Modepro', websiteFilter: 'Modepro', slug: 'modepro' },
+  { groupName: 'Venwind', websiteFilter: 'Venwind', slug: 'venwind' },
+];
+
+function canonicalizeWebsiteFilter(value) {
+  const needle = String(value || '').trim().toLowerCase();
+  if (!needle) return '';
+  const match = LEAD_WEBSITES.find((g) => {
+    const names = [g.groupName, g.websiteFilter, g.slug].map((v) => String(v).toLowerCase());
+    return names.some((n) => n === needle || n.includes(needle) || needle.includes(n));
+  });
+  return match ? match.websiteFilter : String(value || '').trim();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, '../../..');
 const LEAD_TRACKER_TEMPLATE_PATH = path.join(
   REPO_ROOT,
@@ -48,10 +71,7 @@ function loadLeadTrackerTemplateFromPg() {
     const contentRef = execFileSync(
       'psql',
       [
-        `host=${pgHost}`,
-        `port=${pgPort}`,
-        `dbname=${pgDb}`,
-        `user=${pgUser}`,
+        `host=${pgHost} port=${pgPort} dbname=${pgDb} user=${pgUser}`,
         '-t',
         '-A',
         '-c',
@@ -78,13 +98,18 @@ function replaceTemplateVariables(templateBody, variables = {}) {
   return body;
 }
 
-function loadLeadTrackerTemplate() {
-  const fromPg = loadLeadTrackerTemplateFromPg();
-  if (fromPg) return fromPg;
+function loadSeedLeadTrackerTemplate() {
   if (fs.existsSync(LEAD_TRACKER_TEMPLATE_PATH)) {
     return normalizeLeadTemplateHtml(fs.readFileSync(LEAD_TRACKER_TEMPLATE_PATH, 'utf8'));
   }
   return null;
+}
+
+function loadLeadTrackerTemplate() {
+  const fromPg = loadLeadTrackerTemplateFromPg();
+  // Published preview HTML can bake in 0s and drop {{TotalLeads}} — always need placeholders.
+  if (fromPg && fromPg.includes('{{TotalLeads}}')) return fromPg;
+  return loadSeedLeadTrackerTemplate();
 }
 
 function pickString(obj, keys) {
@@ -135,7 +160,37 @@ function pickDateTime(obj, keys) {
 }
 
 function leadCreatedAt(lead) {
-  return pickDateTime(lead, ['_created_at', 'Requested_Date', 'CreatedAt', '_submitted_at']);
+  // Dashboard FY / created_at uses Kissflow _created_at only — do not fall through
+  // to Requested_Date or that extra lead is counted in email but not on the dashboard.
+  return pickDateTime(lead, ['_created_at']);
+}
+
+function isLeadDraftItem(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  const parts = [
+    obj._status,
+    obj.Status,
+    obj.process_status,
+    obj.Process_Status,
+    obj._current_step,
+    obj.current_step,
+    obj.Step,
+  ];
+  return parts.some((p) => String(p || '').toLowerCase().includes('draft'));
+}
+
+function dedupeLeadItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items || []) {
+    const id = String(item._id || item.Lead_ID || item.Lead_Id || item.id || '').trim();
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    out.push(item);
+  }
+  return out;
 }
 
 function leadCompletedAt(lead) {
@@ -178,24 +233,42 @@ function normalizeUser(raw) {
   return { userId: userId || email, email, name, lastLogin, raw };
 }
 
-async function kissflowFetch(host, keyId, keySecret, apiPath) {
+async function kissflowFetch(host, keyId, keySecret, apiPath, { retries = 4 } = {}) {
   const url = `https://${host}${apiPath.startsWith('/') ? apiPath : `/${apiPath}`}`;
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'X-Access-Key-Id': keyId,
-      'X-Access-Key-Secret': keySecret,
-    },
-  });
-  const text = await res.text();
-  let data = text;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    /* keep text */
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'X-Access-Key-Id': keyId,
+          'X-Access-Key-Secret': keySecret,
+        },
+      });
+      const text = await res.text();
+      if (res.status === 429 || res.status === 503) {
+        lastErr = new Error(`Kissflow ${apiPath}: ${res.status}`);
+        await sleep(1500 * (attempt + 1));
+        continue;
+      }
+      let data = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(`Kissflow ${apiPath}: invalid JSON (${text.length} bytes)`);
+        }
+      }
+      if (!res.ok) throw new Error(`Kissflow ${apiPath}: ${res.status}`);
+      return data;
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || err);
+      if (!/429|503|invalid JSON|fetch/i.test(msg) || attempt === retries) throw err;
+      await sleep(1500 * (attempt + 1));
+    }
   }
-  if (!res.ok) throw new Error(`Kissflow ${apiPath}: ${res.status}`);
-  return data;
+  throw lastErr;
 }
 
 function asArray(data) {
@@ -213,24 +286,36 @@ function getKissflowConfig() {
   const accountId =
     process.env.VITE_KISSFLOW_PROD_ACCOUNT_ID ||
     process.env.KISSFLOW_PROD_ACCOUNT_ID ||
+    process.env.KISSFLOW_ACCOUNT_ID ||
     'AcCMptlq60zH';
-  const keyId = process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_ID || '';
-  const keySecret = process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_SECRET || '';
+  const keyId =
+    process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_ID ||
+    process.env.KISSFLOW_KEY ||
+    process.env.KISSFLOW_KEY_ID ||
+    '';
+  const keySecret =
+    process.env.VITE_KISSFLOW_PROD_ACCESS_KEY_SECRET ||
+    process.env.KISSFLOW_SECRET ||
+    '';
   if (!keyId || !keySecret) throw new Error('Missing prod Kissflow keys in apps/admin-ui/.env.local');
   return { host, accountId, keyId, keySecret };
 }
 
 async function fetchAllUsers(host, accountId, keyId, keySecret) {
   const all = [];
-  let page = 1;
-  while (page <= 50) {
-    const apiPath = `/user/2/${accountId}?page_number=${page}&page_size=${PAGE_SIZE}`;
-    const data = await kissflowFetch(host, keyId, keySecret, apiPath);
-    const batch = asArray(data);
-    if (!batch.length) break;
-    all.push(...batch);
-    if (batch.length < PAGE_SIZE) break;
-    page += 1;
+  try {
+    let page = 1;
+    while (page <= 50) {
+      const apiPath = `/user/2/${accountId}?page_number=${page}&page_size=${PAGE_SIZE}`;
+      const data = await kissflowFetch(host, keyId, keySecret, apiPath);
+      const batch = asArray(data);
+      if (!batch.length) break;
+      all.push(...batch);
+      if (batch.length < PAGE_SIZE) break;
+      page += 1;
+    }
+  } catch (err) {
+    console.warn(`Lead Tracker user fetch skipped: ${err.message || err}`);
   }
   return all.map(normalizeUser).filter(Boolean);
 }
@@ -250,19 +335,17 @@ async function fetchUserDetail(host, accountId, keyId, keySecret, userId) {
 async function fetchAllLeads(host, accountId, keyId, keySecret, processId = PROCESS_ID) {
   const all = [];
   let page = 1;
-  while (page <= 100) {
+  while (page <= 200) {
     const apiPath = `/process/2/${accountId}/admin/${processId}/item?page_number=${page}&page_size=${PAGE_SIZE}&apply_preference=false`;
-    try {
-      const data = await kissflowFetch(host, keyId, keySecret, apiPath);
-      const batch = asArray(data).filter((r) => r && typeof r === 'object');
-      if (!batch.length) break;
-      all.push(...batch);
-      if (batch.length < PAGE_SIZE) break;
-      page += 1;
-    } catch (e) {
-      if (page === 1) throw e;
-      break;
-    }
+    const data = await kissflowFetch(host, keyId, keySecret, apiPath);
+    const batch = asArray(data).filter((r) => r && typeof r === 'object');
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+    page += 1;
+  }
+  if (!all.length) {
+    throw new Error(`Kissflow returned 0 Lead Tracker items for ${processId}`);
   }
   return all;
 }
@@ -271,16 +354,29 @@ async function fetchAllLeads(host, accountId, keyId, keySecret, processId = PROC
  * List API omits _modified_at / _completed_at. Detail API has them — required for Closed Today.
  * Only fetch details for closed leads that still lack completion timestamps.
  */
+function leadNeedsDetailEnrich(lead) {
+  if (!lead || typeof lead !== 'object') return false;
+  if (!extractWebsite(lead) || !leadCreatedAt(lead)) return true;
+  if (leadStatusBucket(extractStatus(lead)) !== 'closed') return false;
+  return !(lead._modified_at || lead._completed_at || lead._closed_at);
+}
+
 async function enrichLeadsWithDetails(host, accountId, keyId, keySecret, leads, processId = PROCESS_ID) {
   const out = leads.map((lead) => lead);
   const needDetail = [];
   for (let i = 0; i < out.length; i += 1) {
     const lead = out[i];
-    if (leadStatusBucket(extractStatus(lead)) !== 'closed') continue;
-    if (lead._modified_at || lead._completed_at || lead._closed_at) continue;
+    if (!leadNeedsDetailEnrich(lead)) continue;
     const id = pickString(lead, ['_id', 'Id', 'id', 'Instance_ID']);
     if (!id) continue;
     needDetail.push({ index: i, id });
+  }
+  // Cloud Run cannot afford a detail GET per lead. Sparse list → use snapshot instead.
+  if (needDetail.length > Math.max(40, Math.floor(out.length * 0.35))) {
+    console.warn(
+      `Lead Tracker list is sparse (${needDetail.length}/${out.length} need detail) — skipping mass detail fetch`,
+    );
+    return out;
   }
   const concurrency = 8;
   for (let i = 0; i < needDetail.length; i += concurrency) {
@@ -307,11 +403,11 @@ async function enrichLeadsWithDetails(host, accountId, keyId, keySecret, leads, 
 }
 
 function extractWebsite(obj) {
-  for (const key of ['Website_and_form', 'Website', 'website', 'Lead_Website', 'Website_Name', 'Source']) {
+  for (const key of ['Website_and_form', 'Website']) {
     const val = obj[key];
     if (typeof val === 'string' && val.trim()) return val.trim();
     if (val && typeof val === 'object') {
-      const label = pickString(val, ['Name', 'name', 'Label']);
+      const label = pickString(val, ['Name', 'name', 'Label', 'v', 'Value', 'value', 'DisplayName']);
       if (label) return label;
     }
   }
@@ -383,15 +479,39 @@ function extractStatus(obj) {
   return pickString(obj, ['Lead_Status', 'LeadStatus', 'Status', 'status', '_status']) || 'Unknown';
 }
 
-function websiteMatches(leadWebsite, filter) {
-  if (!filter.trim()) return true;
-  const w = leadWebsite.toLowerCase();
-  const f = filter.toLowerCase();
-  return w === f || w.includes(f) || f.includes(w);
+function normalizeWebsiteToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_\-]+/g, '');
 }
 
+function websiteMatches(leadWebsite, filter) {
+  const w = String(leadWebsite || '').toLowerCase();
+  const f = String(filter || '').trim().toLowerCase();
+  // Empty filter must not match every lead — that is the full report.
+  if (!f) return false;
+  if (!w) return false;
+  if (w === f || w.includes(f) || f.includes(w)) return true;
+  const wn = normalizeWebsiteToken(w);
+  const fn = normalizeWebsiteToken(f);
+  return Boolean(wn && fn && (wn === fn || wn.includes(fn) || fn.includes(wn)));
+}
+
+/**
+ * IST calendar day as YYYY-MM-DD. Do not use toLocaleDateString.
+ * Cloud Run bookworm-slim Node can emit unpadded dates (2026-6-2). In October
+ * those sort after 2026-10-01, so every This-FY lead is dropped and send STOPs.
+ * IST has no DST.
+ */
 function istDateKey(date) {
-  return date.toLocaleDateString('en-CA', { timeZone: TZ });
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const m = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(ist.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function isLoggedInToday(lastLogin) {
@@ -431,8 +551,74 @@ function findUserForPerson(users, person) {
   return null;
 }
 
+/**
+ * Same calendar as ITSM/PM/Travel emails:
+ *   TZ=Asia/Kolkata date +%Y-%m-%d
+ *   (now() AT TIME ZONE 'Asia/Kolkata')::date
+ * Never toLocaleDateString — Cloud Run bookworm-slim Node returns 10/1/2026,
+ * which makes FY start NaN-04-01 and countable 0.
+ */
+function parseIsoYmd(value) {
+  const match = String(value || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+function istTodayYmd() {
+  return istDateKey(new Date());
+}
+
+function currentIndianFyStartYear(todayYmd = istTodayYmd()) {
+  const parts = parseIsoYmd(todayYmd) || parseIsoYmd(istTodayYmd());
+  if (!parts) {
+    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    const year = ist.getUTCFullYear();
+    const month = ist.getUTCMonth() + 1;
+    return month >= 4 ? year : year - 1;
+  }
+  return parts.month >= 4 ? parts.year : parts.year - 1;
+}
+
+function currentFyBounds() {
+  const to = istTodayYmd();
+  const start = currentIndianFyStartYear(to);
+  const from = `${start}-04-01`;
+  if (!parseIsoYmd(from) || !parseIsoYmd(to)) {
+    throw new Error(`Lead Tracker FY bounds invalid: ${from}..${to}`);
+  }
+  return { from, to };
+}
+
+function leadCreatedYmd(lead) {
+  const created = leadCreatedAt(lead);
+  if (!created) return '';
+  return istDateKey(new Date(created));
+}
+
+/** Same as the Lead dashboard default period (This FY · created_at). */
+function inCurrentFy(lead) {
+  const ymd = leadCreatedYmd(lead);
+  if (!ymd) return false;
+  const { from, to } = currentFyBounds();
+  return ymd >= from && ymd <= to;
+}
+
+function isCountableLeadForReport(lead, websiteFilter) {
+  if (isLeadDraftItem(lead)) return false;
+  if (!websiteMatches(extractWebsite(lead), websiteFilter)) return false;
+  return inCurrentFy(lead);
+}
+
+function filterLeadsForReport(leads, websiteFilter) {
+  return dedupeLeadItems(leads).filter((l) => isCountableLeadForReport(l, websiteFilter));
+}
+
 function buildRows(users, leads, websiteFilter) {
-  const filteredLeads = leads.filter((l) => websiteMatches(extractWebsite(l), websiteFilter));
+  const filteredLeads = filterLeadsForReport(leads, websiteFilter);
   const rows = new Map();
   let totalOpen = 0;
   let totalClosed = 0;
@@ -571,11 +757,12 @@ function renderHtml(groupName, rows, totals) {
     hour: '2-digit',
     minute: '2-digit',
   }) + ' IST';
-  const reportBody = `Live data from Kissflow Lead Tracker (${groupName}): leads filtered by Website_and_form, grouped by assigned sales person.`;
+  const reportBody = `Live data from Kissflow Lead Tracker (${groupName}): ${groupName} leads only, grouped by assigned sales person.`;
   const variables = {
-    CompanyName: 'REFEX',
+    CompanyName: groupName,
     ReportTitle: `${groupName} — Lead Tracker`,
     GroupName: groupName,
+    WebsiteName: groupName,
     ReportDate: date,
     TotalLeads: String(totals.totalLeads),
     OpenLeads: String(open),
@@ -608,20 +795,48 @@ function renderHtml(groupName, rows, totals) {
 }
 
 async function buildLeadTrackerReport({ groupName, websiteFilter }) {
+  const company = canonicalizeWebsiteFilter(websiteFilter || groupName);
+  if (!company) {
+    throw new Error('Lead Tracker report requires a website filter (will not send the full report).');
+  }
   const { host, accountId, keyId, keySecret } = getKissflowConfig();
-  const [users, listLeads] = await Promise.all([
-    fetchAllUsers(host, accountId, keyId, keySecret),
-    fetchAllLeads(host, accountId, keyId, keySecret),
+  const [mainLeads, venwindLeads] = await Promise.all([
+    fetchAllLeads(host, accountId, keyId, keySecret, PROCESS_ID),
+    fetchAllLeads(host, accountId, keyId, keySecret, VENWIND_PROCESS_ID).catch(() => []),
   ]);
-  // Detail payloads carry _modified_at / _completed_at used for Closed Today KPIs.
+  const listLeads = [
+    ...mainLeads,
+    ...venwindLeads.map((lead) => ({
+      ...lead,
+      _process_id: VENWIND_PROCESS_ID,
+      Website_and_form: lead.Website_and_form || lead.Website || 'Venwind',
+    })),
+  ];
+  const users = await fetchAllUsers(host, accountId, keyId, keySecret);
   const leads = await enrichLeadsWithDetails(host, accountId, keyId, keySecret, listLeads);
+  const withWebsite = leads.filter((lead) => extractWebsite(lead)).length;
+  if (!withWebsite) {
+    throw new Error('Lead Tracker items have no Website_and_form — refusing to send a 0-count email');
+  }
 
-  const filteredLeads = leads.filter((l) => websiteMatches(extractWebsite(l), websiteFilter));
-  const { openedToday, closedToday } = countOpenedClosedToday(filteredLeads);
-  const { rows, totalLeads, totalOpen, totalClosed } = buildRows(users, leads, websiteFilter);
-  await enrichRowsWithFreshLogin(host, accountId, keyId, keySecret, rows, users);
+  // Same rules as the Lead dashboard: Website_and_form, no drafts, FY via _created_at, Lead_Status.
+  const websiteLeads = filterLeadsForReport(leads, company);
+  const { openedToday, closedToday } = countOpenedClosedToday(websiteLeads);
+  const { rows, totalLeads, totalOpen, totalClosed } = buildRows(users, leads, company);
+  if (!totalLeads) {
+    const { from, to } = currentFyBounds();
+    const websites = [...new Set(leads.map((lead) => extractWebsite(lead)).filter(Boolean))].slice(0, 16);
+    throw new Error(
+      `Lead Tracker countable is 0 for ${company} (items=${leads.length}, withWebsite=${withWebsite}, withCreatedAt=${leads.filter((l) => leadCreatedAt(l)).length}, fy=${from}..${to}, websites=${websites.join('|') || 'none'})`,
+    );
+  }
+  try {
+    await enrichRowsWithFreshLogin(host, accountId, keyId, keySecret, rows, users);
+  } catch (err) {
+    console.warn(`Lead Tracker login enrich skipped: ${err.message || err}`);
+  }
 
-  const html = renderHtml(groupName, rows, {
+  const html = renderHtml(company, rows, {
     totalLeads,
     totalOpen,
     totalClosed,
@@ -636,6 +851,7 @@ async function buildLeadTrackerReport({ groupName, websiteFilter }) {
     totalLeads,
     openedToday,
     closedToday,
+    source: 'live',
     rows,
   };
 }
@@ -650,5 +866,12 @@ function isLeadTrackerScheduler(meta) {
 module.exports = {
   buildLeadTrackerReport,
   isLeadTrackerScheduler,
+  isLeadDraftItem,
+  isCountableLeadForReport,
+  filterLeadsForReport,
+  istDateKey,
+  istTodayYmd,
+  currentFyBounds,
+  currentIndianFyStartYear,
   TZ,
 };

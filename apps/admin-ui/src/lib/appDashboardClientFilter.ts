@@ -24,6 +24,8 @@ export type RecordFilterOpts = {
   entity?: string;
   /** Catalog company id from the 29-company list */
   company?: string;
+  /** Lead Tracker: filter by Kissflow Website_and_form */
+  leadWebsiteMode?: boolean;
   status?: string;
   assigned?: string;
   /** Kissflow user id / email when the dropdown option is not a display name */
@@ -174,6 +176,7 @@ export function filterAppRecords(
   const todayKind = opts.todayKind;
   const todayYmd = todayKind ? toIstYmd(new Date().toISOString()) : '';
   const itsmCompanyMode = Boolean(opts.itsmCompanyMode);
+  const leadWebsiteMode = Boolean(opts.leadWebsiteMode);
   const activityDates = Boolean(opts.activityDates);
 
   return (items || []).filter((row) => {
@@ -184,7 +187,9 @@ export function filterAppRecords(
     if (statusFilter !== 'all' && String(row.status || '').toLowerCase() !== statusFilter) return false;
 
     if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) return false;
-    if (companyFilter.startsWith('raw:')) {
+    if (leadWebsiteMode) {
+      if (!recordMatchesLeadWebsite(row, companyFilter)) return false;
+    } else if (companyFilter.startsWith('raw:')) {
       const want = companyFilter.slice(4);
       const compact = compactMisName(String(row.company_name || row.assignee_company || row.company || ''));
       if (!want || (compact !== want && !compact.includes(want) && !want.includes(compact))) return false;
@@ -343,6 +348,38 @@ export function entityCountsFromRecords(
   return buildEntityBucketOptions(counts, { mode, includeAll: false })
     .filter((e) => (e.count || 0) > 0)
     .map((e) => ({ id: e.id, label: e.label, count: Number(e.count || 0) }));
+}
+
+function leadWebsiteLabel(row: AppRecordRow): string {
+  return String(
+    row.website
+    || row.website_name
+    || row.Website_and_form
+    || row.Website
+    || '',
+  ).trim();
+}
+
+export function recordMatchesLeadWebsite(row: AppRecordRow, filter: string): boolean {
+  const want = String(filter || 'all').trim().toLowerCase();
+  if (!want || want === 'all') return true;
+  const have = leadWebsiteLabel(row).toLowerCase();
+  if (!have) return false;
+  return have === want || have.includes(want) || want.includes(have);
+}
+
+export function websiteCountsFromRecords(
+  items: AppRecordRow[],
+): Array<{ id: string; label: string; count: number }> {
+  const counts: Record<string, number> = {};
+  for (const row of items) {
+    const label = leadWebsiteLabel(row);
+    if (!label || isPlaceholderPersonName(label)) continue;
+    counts[label] = (counts[label] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([label, count]) => ({ id: label, label, count }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 export function companyCountsFromRecords(

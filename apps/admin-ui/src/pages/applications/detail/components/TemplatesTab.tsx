@@ -11,6 +11,12 @@ import StarterPickerModal from '@/pages/templates/components/StarterPickerModal'
 import { isItsmApp, isPmApp } from '@/lib/processLabels';
 import { shouldShowPmSetup } from '@/lib/pmPortfolioSetup';
 
+function isLeadTrackerApp(app: KissflowApplication): boolean {
+  const id = `${app.appId || ''} ${app.id || ''}`.toLowerCase();
+  const name = `${app.displayName || ''} ${app.name || ''}`.toLowerCase();
+  return id.includes('lead') || name.includes('lead tracker');
+}
+
 interface TemplatesTabProps {
   app: KissflowApplication;
 }
@@ -64,6 +70,9 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
     }
     if (isItsmApp(app.appId, app.displayName || app.name)) {
       return 'Open a template → Preview to see Ticket source. Use Apply Refex ITSM layout / Apply Extrovis layout to refresh HTML.';
+    }
+    if (isLeadTrackerApp(app)) {
+      return 'New template → pick a website starter (3iMedtech, Refex Mobility, Adonis, Modepro, Venwind). Each schedule sends that website only — same HTML, not the full Lead Tracker report.';
     }
     return 'New template → pick the suggested starter (matches live email). Open a template to Preview, then Publish and attach to a schedule.';
   }, [app, backendMode]);
@@ -144,7 +153,9 @@ export default function TemplatesTab({ app }: TemplatesTabProps) {
             backendMode
               ? shouldShowPmSetup(app)
                 ? 'Create the Project Management portfolio starter (Today, Projects, Tasks, Individual, Sub-tasks), then attach it to a schedule.'
-                : 'Pick a starter layout (same as live ITSM/PM/Lead/Expense/Travel emails), then attach it to a schedule.'
+                : isLeadTrackerApp(app)
+                  ? 'Pick a website starter (3iMedtech, Refex Mobility, Adonis, Modepro, Venwind), then attach one schedule per website.'
+                  : 'Pick a starter layout (same as live ITSM/PM/Lead/Expense/Travel emails), then attach it to a schedule.'
               : 'Design an HTML email report. You can make multiple versions and choose one in Schedules.'
           }
           primaryLabel="Create template"

@@ -82,10 +82,13 @@ export default function StarterPickerModal({
       if (mode === 'create') {
         if (!onConfirmCreate) return;
         const label = app.displayName || app.name;
+        const company = selected?.default_company || '';
         await onConfirmCreate({
           starterId: selectedId,
-          name: name.trim() || `${label} report`,
-          subject: `{{ReportTitle}} — ${label}`,
+          name: name.trim() || (company ? `Lead Tracker · ${company}` : `${label} report`),
+          subject: company
+            ? `Lead Tracker — ${company} website report`
+            : `{{ReportTitle}} — ${label}`,
           description: selected?.description || `HTML report for ${label}`,
         });
       } else if (onConfirmLoad) {

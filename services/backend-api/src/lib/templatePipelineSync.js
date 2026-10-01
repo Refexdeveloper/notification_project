@@ -17,7 +17,9 @@ function normalizeReportTemplateHtml(html) {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
     .replace(/alt="Refex"/gi, 'alt="refexOne"')
-    .replace(/IT Service Management/g, 'IT Helpdesk');
+    .replace(/IT Service Management/g, 'Tech Helpdesk')
+    .replace(/IT Helpdesk/g, 'Tech Helpdesk')
+    .replace(/IT Help Desk/g, 'Tech Helpdesk');
 }
 
 function syncPublishedTemplateToPipeline({ applicationId, contentRef, status }) {

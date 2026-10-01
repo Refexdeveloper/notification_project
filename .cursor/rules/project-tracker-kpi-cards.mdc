@@ -10,7 +10,7 @@ Design reference (read-only, do not merge repos):
 
 `/Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx`
 
-- `PremiumKPICard` — `min-h-[112px] lg:min-h-[168px]`, label + value left, icon right
+- `EmbedKpiCard` — `min-h-[96px] lg:min-h-[120px]`, label + value left, icon right (Head compact, no empty padding)
 - `DASHBOARD_CARD_GRID` — `grid grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4`
 - Palette: `#2B5AED` `#0084AD` `#22C55E` `#EF4444` `#8B5CF6` `#F97316`
 

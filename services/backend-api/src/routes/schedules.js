@@ -765,8 +765,13 @@ router.patch('/:scheduleId', async (req, res) => {
       }
       if (hasWebsiteFilter) {
         const filter = String(body.website_filter || '').trim();
-        if (filter) configPatch.website_filter = filter;
-        else configPatch.website_filter = null;
+        if (filter) {
+          configPatch.website_filter = filter;
+          configPatch.company_filter = filter;
+        } else {
+          configPatch.website_filter = null;
+          configPatch.company_filter = null;
+        }
       }
       if (hasUserGroupFilter) {
         const filter = String(body.user_group_filter || '').trim();

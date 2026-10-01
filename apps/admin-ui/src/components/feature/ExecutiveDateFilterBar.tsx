@@ -127,6 +127,8 @@ export default function ExecutiveDateFilterBar({
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const desktopTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileTriggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const summary = periodSummaryLabel(period, calendarYear, calendarMonth, dateFrom, dateTo);
@@ -281,8 +283,6 @@ export default function ExecutiveDateFilterBar({
 
   const showUser = embedLayout
     ? Boolean(onUserChange && userOptions)
-  const showUser = embedLayout
-    ? Boolean(onUserChange && userOptions)
     : Boolean(onUserChange && userOptions && userOptions.length > 1);
 
   useEffect(() => {
@@ -325,119 +325,186 @@ export default function ExecutiveDateFilterBar({
   const sheetSelectClass = embedLayout
     ? 'h-11 w-full appearance-none rounded-2xl border border-slate-100 bg-white pl-3.5 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none'
     : 'h-11 w-full appearance-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-8 text-sm font-semibold text-slate-800 outline-none';
-    ? 'h-11 w-full min-w-[8.5rem] appearance-none rounded-2xl border border-slate-100 bg-white pl-10 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe]'
+  const filterSelectClass = embedLayout
+    ? 'h-11 w-full min-w-0 appearance-none truncate rounded-2xl border border-slate-100 bg-white pl-10 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe]'
     : 'h-11 w-full appearance-none rounded-2xl border border-emerald-200/80 bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none ring-emerald-100/50 transition hover:border-emerald-300 focus:ring-2';
 
   const filterLabelClass = embedLayout
-    ? 'mb-1 block text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400'
+    ? 'mb-1.5 block truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400'
     : 'mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400';
 
   const embedPeriodBtnClass =
-    'group inline-flex h-11 w-full min-w-[8.75rem] items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 text-left shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-[#c7daf5] sm:min-w-[10.5rem]';
+    'group inline-flex h-11 w-full min-w-0 items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 text-left shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-[#c7daf5]';
 
   const embedIconWrap = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#eef3ff]';
+  const embedFieldClass = 'flex min-w-0 w-full flex-col';
+  const embedControlWrapClass = 'relative block min-w-0';
+  const embedIconClass = 'pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#0f6cbd]';
+  const embedChevronClass = 'pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400';
 
   return (
     <div ref={rootRef} className="relative z-30 overflow-visible">
-      <div className={`flex items-end gap-2 ${embedLayout ? 'flex-nowrap justify-end overflow-x-auto pb-0.5' : 'flex-wrap gap-2.5'}`}>
-        {showEntity ? (
       <div className="flex w-full flex-col gap-2 lg:hidden">
         <NeMobileFiltersButton count={activeFilterCount} onClick={() => setSheetOpen(true)} />
         <NeMobileActiveFilterChips chips={filterChips} />
       </div>
-      <div className={`hidden items-end gap-2 lg:flex ${embedLayout ? 'flex-nowrap justify-end overflow-x-auto pb-0.5' : 'flex-wrap gap-2.5'}`}>
+      <div
+        className={
+          embedLayout
+            ? 'hidden w-full lg:grid lg:grid-cols-2 lg:items-end lg:gap-3 xl:grid-cols-5'
+            : 'hidden items-end gap-2.5 lg:flex lg:flex-wrap'
+        }
+      >
+        {showEntity ? (
+          <label className={embedLayout ? embedFieldClass : 'relative inline-flex min-w-[12rem] max-w-[16rem] flex-1 flex-col sm:flex-none'}>
             <span className={filterLabelClass}>{resolvedEntityLabel}</span>
             {embedLayout ? (
-              <Building2 className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
-            ) : null}
-            <select
-              value={entityValue}
-              onChange={(e) => onEntityChange?.(e.target.value)}
-              className={filterSelectClass}
-              style={embedLayout ? undefined : { borderColor: 'rgba(16, 185, 129, 0.45)' }}
-            >
-              {entitySelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronsUpDown
-              className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`}
-            />
+              <span className={embedControlWrapClass}>
+                <Building2 className={embedIconClass} aria-hidden />
+                <select
+                  value={entityValue}
+                  onChange={(e) => onEntityChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={entityLabelText}
+                >
+                  {entitySelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className={embedChevronClass} />
+              </span>
+            ) : (
+              <>
+                <select
+                  value={entityValue}
+                  onChange={(e) => onEntityChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={entityLabelText}
+                  style={{ borderColor: 'rgba(16, 185, 129, 0.45)' }}
+                >
+                  {entitySelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </>
+            )}
           </label>
         ) : null}
 
         {showCompany ? (
-          <label className={`relative inline-flex flex-col ${embedLayout ? 'w-[10.5rem] shrink-0 sm:w-[12rem]' : 'min-w-[11rem] max-w-[16rem] flex-1 sm:flex-none'}`}>
+          <label className={embedLayout ? embedFieldClass : 'relative inline-flex min-w-[12rem] max-w-[16rem] flex-1 flex-col sm:flex-none'}>
             <span className={filterLabelClass}>{resolvedCompanyLabel}</span>
             {embedLayout ? (
-              <Building2 className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
-            ) : null}
-            <select
-              value={companyValue}
-              onChange={(e) => onCompanyChange?.(e.target.value)}
-              className={filterSelectClass}
-              style={embedLayout ? undefined : { borderColor: 'rgba(57, 119, 190, 0.45)' }}
-            >
-              {companySelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronsUpDown
-              className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`}
-            />
+              <span className={embedControlWrapClass}>
+                <Building2 className={embedIconClass} aria-hidden />
+                <select
+                  value={companyValue}
+                  onChange={(e) => onCompanyChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={companyLabelText}
+                >
+                  {companySelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className={embedChevronClass} />
+              </span>
+            ) : (
+              <>
+                <select
+                  value={companyValue}
+                  onChange={(e) => onCompanyChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={companyLabelText}
+                  style={{ borderColor: 'rgba(57, 119, 190, 0.45)' }}
+                >
+                  {companySelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </>
+            )}
           </label>
         ) : null}
 
         {showUser ? (
-          <label className="relative inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[9.75rem]">
+          <label className={embedLayout ? embedFieldClass : 'relative inline-flex w-[12rem] shrink-0 flex-col'}>
             <span className={filterLabelClass}>User</span>
-            <Users className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
-            <select
-              value={userValue}
-              onChange={(e) => onUserChange?.(e.target.value)}
-              className={filterSelectClass}
-            >
-              {userSelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronsUpDown className="pointer-events-none absolute bottom-3.5 right-2.5 h-4 w-4 text-slate-400" />
+            {embedLayout ? (
+              <span className={embedControlWrapClass}>
+                <Users className={embedIconClass} aria-hidden />
+                <select
+                  value={userValue}
+                  onChange={(e) => onUserChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={userLabelText}
+                >
+                  {userSelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className={embedChevronClass} />
+              </span>
+            ) : (
+              <>
+                <Users className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
+                <select
+                  value={userValue}
+                  onChange={(e) => onUserChange?.(e.target.value)}
+                  className={filterSelectClass}
+                >
+                  {userSelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className="pointer-events-none absolute bottom-3.5 right-2.5 h-4 w-4 text-slate-400" />
+              </>
+            )}
           </label>
         ) : null}
 
         {embedLayout && showApplication ? (
-          <label className="relative inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[10rem]">
-            {embedLayout ? <span className={filterLabelClass}>Application</span> : <span className="sr-only">{applicationLabel}</span>}
-            {embedLayout ? (
-              <LayoutGrid className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[#0f6cbd]" aria-hidden />
-            ) : null}
-            <select
-              value={applicationValue}
-              onChange={(e) => onApplicationChange?.(e.target.value)}
-              className={embedLayout ? filterSelectClass : 'h-11 w-full appearance-none rounded-2xl border border-[#D0E0F5] bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition hover:border-[#3977BE]/40 focus:ring-2 focus:ring-[#EAF2FF]'}
-            >
-              {applicationOptions!.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <ChevronsUpDown className={`pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400 ${embedLayout ? 'bottom-3.5' : 'top-1/2 -translate-y-1/2'}`} />
+          <label className={embedFieldClass}>
+            <span className={filterLabelClass}>Application</span>
+            <span className={embedControlWrapClass}>
+              <LayoutGrid className={embedIconClass} aria-hidden />
+              <select
+                value={applicationValue}
+                onChange={(e) => onApplicationChange?.(e.target.value)}
+                className={filterSelectClass}
+                title={applicationLabelText}
+              >
+                {applicationOptions!.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronsUpDown className={embedChevronClass} />
+            </span>
           </label>
         ) : null}
 
-        <div className={embedLayout ? 'inline-flex w-[8.75rem] shrink-0 flex-col sm:w-[11rem]' : 'contents'}>
+        <div className={embedLayout ? embedFieldClass : 'contents'}>
           {embedLayout ? <span className={filterLabelClass}>Period</span> : null}
         <button
-          ref={triggerRef}
           type="button"
           ref={desktopTriggerRef}
+          onClick={() => setOpen((v) => !v)}
           className={
             embedLayout
               ? embedPeriodBtnClass
@@ -465,14 +532,14 @@ export default function ExecutiveDateFilterBar({
         </div>
 
         {onClearFilters ? (
-          <div className="inline-flex shrink-0 flex-col">
+          <div className={embedLayout ? embedFieldClass : 'inline-flex shrink-0 flex-col'}>
             {embedLayout ? <span className={filterLabelClass} aria-hidden>&nbsp;</span> : null}
             <button
               type="button"
               onClick={onClearFilters}
               className={
                 embedLayout
-                  ? 'inline-flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-100 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
+                  ? 'inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-100 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
                   : 'inline-flex h-11 items-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
               }
             >
@@ -510,7 +577,7 @@ export default function ExecutiveDateFilterBar({
               ref={panelRef}
               className="fixed z-[200] rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
               style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
-              className="fixed z-[10050] rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
+            >
           <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
             Choose period type
           </p>

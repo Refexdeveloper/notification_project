@@ -22,6 +22,7 @@ const {
   ENGAGEMENT_CACHE_TTL_MS,
 } = require('./engagementCache');
 const { isDraftSql } = require('./appRecords');
+const { extraProcessIdsForApplication } = require('./leadScope');
 const { buildPmPortfolioFromRecords, projectKeySql } = require('./pmPortfolio');
 const { resolveCompanyIdFromText, normalizeCompanyText } = require('./refexCompanies');
 
@@ -934,9 +935,11 @@ function filterEngagementCacheRecords(records) {
   for (const r of records || []) {
     const draft = String(r?.status || r?.status_raw || r?.current_step || '').toLowerCase();
     if (draft.includes('draft')) continue;
-    const id = String(r?.request_id || r?.id || r?.instance_id || '').trim();
-    if (!id || id === '—' || id === '-') continue;
-    const key = String(r.instance_id || r.id || r.request_id).toLowerCase();
+    const id = ['instance_id', 'id', 'request_id']
+      .map((key) => String(r?.[key] || '').trim())
+      .find((value) => value && value !== '—' && value !== '-');
+    if (!id) continue;
+    const key = id.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(r);
@@ -1392,13 +1395,19 @@ async function loadApplicationDashboard(pool, opts) {
   const pm = isPmApplication(applicationId, applicationName);
   const lead = isLeadApplication(applicationId, applicationName);
 
-  const { rows: processRows } = await pool.query(
+  const { rows: processRowsRaw } = await pool.query(
     `SELECT process_id, process_name
      FROM engagement_reporting.process
      WHERE is_current = true AND environment = $1 AND application_id = $2
      ORDER BY process_name`,
     [environment, applicationId],
   );
+  const processRows = [...processRowsRaw];
+  for (const pid of extraProcessIdsForApplication(applicationId)) {
+    if (!processRows.some((row) => row.process_id === pid)) {
+      processRows.push({ process_id: pid, process_name: 'Lead Tracker Venwind' });
+    }
+  }
 
   const preferCache = opts.preferCache !== false && !opts.forceFullSql;
   if (preferCache) {
@@ -1424,36 +1433,8 @@ async function loadApplicationDashboard(pool, opts) {
       datasetIds,
       allowStale: opts.allowStaleCache === true || solar,
     });
-    if (!fromCache && itsm) {
-      try {
-        const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
-        await fetchLiveAppMetrics(environment, applicationId, { persistCache: true });
-        fromCache = await buildDashboardFromEngagementCache(pool, {
-          environment,
-          applicationId,
-          applicationName,
-          entityFilter,
-          userFilter,
-          processIdFilter,
-          boardIdFilter,
-          effectivePeriod,
-          dateFrom,
-          dateTo,
-          itsm,
-          travel,
-          solar,
-          pm,
-          lead,
-          processRows,
-          boardIds,
-          dataformIds,
-          datasetIds,
-          allowStale: false,
-        });
-      } catch {
-        /* SQL snapshot fallback */
-      }
-    }
+    // Do not Kissflow Get-all-items on dashboard GET. Incremental sync / Refresh
+    // updates engagement_cache; landing falls through to PostgreSQL snapshot.
     if (fromCache) return fromCache;
   }
 

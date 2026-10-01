@@ -36,6 +36,7 @@ export function processLabel(processId: string): string {
   if (pid === 'Project_Management_A01') return `${pid} · Projects board (portfolio)`;
   if (pid === 'Technician_Reimbursement__YTLM') return `${pid} · Reinvestment Request (Solar)`;
   if (/lead_tracker/i.test(pid)) return `${pid} · Lead Tracker`;
+  if (/vindview/i.test(pid)) return `${pid} · Lead Tracker Venwind`;
   return pid;
 }
 
@@ -43,9 +44,9 @@ export function isExtrovisProcess(processId: string | undefined | null): boolean
   return /extrovis/i.test(String(processId || ''));
 }
 
-export const ITSM_DISPLAY_NAME = 'IT Helpdesk';
+export const ITSM_DISPLAY_NAME = 'Tech Helpdesk';
 
-/** Kissflow app id stays IT_Service_Management_A00; UI label is IT Helpdesk. */
+/** Kissflow app id stays IT_Service_Management_A00; UI/email label is Tech Helpdesk. */
 export function friendlyApplicationName(
   appId?: string | null,
   appName?: string | null,
@@ -60,6 +61,11 @@ export function friendlyApplicationName(
     return ITSM_DISPLAY_NAME;
   }
   return name || id;
+}
+
+export function isHiddenNeApplication(appId?: string | null, appName?: string | null): boolean {
+  const hay = `${appId || ''} ${appName || ''}`.toLowerCase();
+  return hay.includes('vindview') || /lead\s*tracker\s*venwind/i.test(String(appName || ''));
 }
 
 export function isItsmApp(appId: string | undefined | null, appName?: string): boolean {

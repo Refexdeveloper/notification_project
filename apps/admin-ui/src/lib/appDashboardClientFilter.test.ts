@@ -6,13 +6,14 @@ import {
   countPmPortfolio,
   ensureFilterOption,
   filterAppRecords,
+  websiteCountsFromRecords,
   mergeRosterWithTicketCounts,
   unionRosterWithTicketUsers,
   recordMatchesAssigned,
   stampRecordsWithAssigneeCompany,
 } from './appDashboardClientFilter';
 import { buildRefexCompanyOptions, recordMatchesCompany } from './refexCompanies';
-import { isPlaceholderPersonName } from './personName';
+import { isPlaceholderPersonName, personLabelMatches, uniquePersonLabels } from './personName';
 import type { AppRecordRow } from '@/services/appRecordsApi';
 
 describe('countPmPortfolio', () => {
@@ -461,6 +462,42 @@ describe('ITSM company filter', () => {
       },
     ];
     expect(filterAppRecords(rows, { entity: 'refex', itsmCompanyMode: true }).map((r) => r.id)).toEqual(['1']);
+  });
+});
+
+describe('Lead Tracker website filter', () => {
+  const rows: AppRecordRow[] = [
+    { id: '1', request_id: 'LEAD-1', website: 'Refex Mobility', status: 'open' },
+    { id: '2', request_id: 'LEAD-2', website_name: 'Modepro', status: 'closed' },
+    { id: '3', request_id: 'LEAD-3', Website_and_form: 'Adonis', status: 'open' },
+    { id: '4', request_id: 'LEAD-4', company_name: 'Refex', status: 'open' },
+  ];
+
+  it('filters by Website_and_form, not legal company', () => {
+    expect(filterAppRecords(rows, { company: 'Refex Mobility', leadWebsiteMode: true }).map((r) => r.id)).toEqual(['1']);
+    expect(filterAppRecords(rows, { company: 'Modepro', leadWebsiteMode: true }).map((r) => r.id)).toEqual(['2']);
+    expect(filterAppRecords(rows, { company: 'Adonis', leadWebsiteMode: true }).map((r) => r.id)).toEqual(['3']);
+    expect(filterAppRecords(rows, { company: 'Refex Industries Limited', leadWebsiteMode: true }).map((r) => r.id)).toEqual([]);
+  });
+
+  it('lists website options from the Website field', () => {
+    expect(websiteCountsFromRecords(rows).map((r) => r.label)).toEqual([
+      'Adonis',
+      'Modepro',
+      'Refex Mobility',
+    ]);
+  });
+});
+
+describe('uniquePersonLabels', () => {
+  it('dedupes requester names that differ only by spacing or a trailing initial', () => {
+    expect(uniquePersonLabels(['Keerthana', 'Keerthana ', 'Keerthana S', 'keerthana'])).toEqual(['Keerthana S']);
+  });
+
+  it('matches a selected requester to compact name variants', () => {
+    expect(personLabelMatches('Keerthana', 'Keerthana S')).toBe(true);
+    expect(personLabelMatches('Keerthana S', 'Keerthana')).toBe(true);
+    expect(personLabelMatches('Ada Lovelace', 'Keerthana')).toBe(false);
   });
 });
 

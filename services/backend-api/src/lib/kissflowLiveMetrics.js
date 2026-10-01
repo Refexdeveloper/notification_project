@@ -15,6 +15,7 @@ const {
 } = require('./kissflowClient');
 const { saveEngagementCache } = require('./engagementCache');
 const { buildLiveRecordRows, enrichRecordsWithAssigneeCompany, isDraftRaw, isPmApp, isItsmApp, buildPmPortfolioFromRecords } = require('./appRecords');
+const { mergeProcessIds } = require('./leadScope');
 const { classifyTicketSource, resolvePersonDisplayName, filterDisplayablePeople, friendlyApplicationName } = require('./dashboardDisplay');
 const { isP2pApplication, loadP2pDashboard } = require('./p2pDashboard');
 
@@ -232,6 +233,16 @@ function countTicketStatuses(items, { applicationId } = {}) {
     if (itsm) {
       if (isItsmBusinessOpen(raw)) open += 1;
       else if (isItsmBusinessClosed(raw)) closed += 1;
+      continue;
+    }
+    const lead = String(applicationId || '').toLowerCase().includes('lead');
+    if (lead) {
+      const leadStatus = String(raw?.Lead_Status || '').toLowerCase().trim();
+      if (leadStatus === 'close' || leadStatus === 'closed' || leadStatus === 'completed' || leadStatus === 'done') {
+        closed += 1;
+      } else {
+        open += 1;
+      }
       continue;
     }
     const status = normalizeProcessStatus(raw);
@@ -463,7 +474,10 @@ async function fetchLiveAppMetricsUncached(environment, applicationId, { persist
      ORDER BY process_name`,
     [environment, applicationId],
   );
-  const processIds = processResult.rows.map((r) => r.process_id).filter(Boolean);
+  const processIds = mergeProcessIds(
+    applicationId,
+    processResult.rows.map((r) => r.process_id).filter(Boolean),
+  );
   if (!processIds.length) {
     const err = new Error('No processes registered for application');
     err.code = 'PROCESS_NOT_FOUND';

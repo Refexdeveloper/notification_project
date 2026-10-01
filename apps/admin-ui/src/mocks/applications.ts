@@ -13,6 +13,8 @@ export interface KissflowApplication {
   name: string;
   displayName: string;
   description: string;
+  /** Stored embed open URL (Settings). Empty means use the default embed path. */
+  embedUrl?: string;
   region: 'com' | 'eu';
   environment: 'Production' | 'Development' | 'UAT' | 'Staging';
   status: 'Active' | 'Inactive' | 'Maintenance';

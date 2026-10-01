@@ -19,9 +19,25 @@ export type EmbedKpiTheme = {
  * Reference: /Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx
  */
 export const NE_KPI_GRID_CLASS =
-  'grid w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4 [&>*]:h-full [&>*]:min-w-0';
+  'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4 [&>*]:min-w-0 [&>*]:h-full';
 
-export const NE_KPI_CARD_MIN_H = 'min-h-[112px] lg:min-h-[168px]';
+/** Six primary KPIs in one desktop row; mobile stays 2-up. */
+export const NE_KPI_PRIMARY_ROW_CLASS =
+  'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-6 [&>*]:min-w-0 [&>*]:h-full';
+
+/** P2P / Project Tracker section rows — fill the row so leftover 4-up cells are not empty. */
+export function neKpiSectionGridClass(count: number) {
+  const n = Math.max(1, Number(count) || 0);
+  if (n <= 2) {
+    return 'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 [&>*]:min-w-0 [&>*]:h-full';
+  }
+  if (n === 3) {
+    return 'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:h-full';
+  }
+  return NE_KPI_GRID_CLASS;
+}
+
+export const NE_KPI_CARD_MIN_H = 'min-h-[96px] lg:min-h-[112px]';
 
 /** @deprecated count is ignored — always returns NE_KPI_GRID_CLASS */
 export function neKpiGridClass(_count = 4) {
@@ -123,6 +139,8 @@ type Props = {
   iconContext?: string;
   active?: boolean;
   onClick?: () => void;
+  /** White card surface (Adoption / Users row). Values and icons keep accent color. */
+  surface?: 'themed' | 'white';
 };
 
 /**
@@ -141,11 +159,13 @@ export default function EmbedKpiCard({
   iconContext,
   active = false,
   onClick,
+  surface = 'themed',
 }: Props) {
   const theme = themes[styleIndex % themes.length];
   const Icon = icon
     || (appKind ? iconForNeKpi(appKind, `${iconContext || ''} ${label}`, styleIndex) : theme.icon);
   const interactive = Boolean(onClick);
+  const whiteSurface = surface === 'white';
 
   return (
     <div
@@ -162,14 +182,21 @@ export default function EmbedKpiCard({
             }
           : undefined
       }
-      className={`ne-kpi-card group relative flex h-full w-full min-w-0 ${NE_KPI_CARD_MIN_H} flex-col overflow-hidden rounded-xl border bg-gradient-to-br from-white via-white to-slate-50 p-3 text-left sm:rounded-2xl sm:p-5 lg:p-5 ${
+      className={`ne-kpi-card group relative flex h-full w-full min-w-0 ${NE_KPI_CARD_MIN_H} items-start overflow-hidden rounded-xl border p-2.5 text-left sm:rounded-2xl sm:p-3 ${
+        whiteSurface ? 'bg-white' : 'bg-gradient-to-br from-white via-white to-slate-50'
+      } ${
         interactive ? 'cursor-pointer' : ''
       } ${active ? 'border-[#1E88E5] ring-2 ring-[#1E88E5]/35' : ''}`}
       style={{
         fontFamily: "Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif",
-        borderColor: active ? undefined : theme.border,
-        backgroundImage: `linear-gradient(to bottom right, ${theme.bg}eb, #ffffff 42%, ${theme.bg}b8)`,
-        boxShadow: '0 10px 28px -14px rgba(15,23,42,0.18)',
+        borderColor: active ? undefined : (whiteSurface ? '#e2e8f0' : theme.border),
+        backgroundImage: whiteSurface
+          ? 'none'
+          : `linear-gradient(to bottom right, ${theme.bg}eb, #ffffff 42%, ${theme.bg}b8)`,
+        backgroundColor: whiteSurface ? '#ffffff' : undefined,
+        boxShadow: whiteSurface
+          ? '0 4px 18px rgba(112,144,176,0.12)'
+          : '0 10px 28px -14px rgba(15,23,42,0.18)',
       }}
     >
       <div className="relative flex w-full items-start justify-between gap-2 sm:gap-3">
@@ -178,26 +205,26 @@ export default function EmbedKpiCard({
             {label}
           </p>
           <p
-            className="mt-1 text-[26px] font-bold leading-none tracking-tight tabular-nums sm:mt-2 sm:text-4xl"
-            style={{ color: theme.value }}
+            className="mt-1 text-[22px] font-bold leading-none tracking-tight tabular-nums sm:mt-1.5 sm:text-[26px]"
+            style={{ color: whiteSurface ? '#0f172a' : theme.value }}
           >
             {displayDashCount(value).toLocaleString('en-IN')}
             {suffix}
           </p>
           {sub ? (
-            <p className="mt-1.5 line-clamp-2 text-[11px] font-medium text-slate-400 sm:mt-2 sm:text-xs">
+            <p className="mt-1 line-clamp-1 text-[10px] font-medium leading-tight text-slate-400 sm:text-[11px]">
               {sub}
             </p>
           ) : null}
         </div>
         <div
-          className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white/90 shadow-sm sm:h-12 sm:w-12 sm:rounded-xl"
+          className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/90 shadow-sm sm:h-10 sm:w-10 sm:rounded-xl"
           style={{
             backgroundColor: `${theme.iconBg}8c`,
             boxShadow: `0 6px 14px -8px ${theme.iconColor}33`,
           }}
         >
-          <Icon className="h-5 w-5 text-white sm:h-6 sm:w-6" strokeWidth={2.1} />
+          <Icon className="h-3.5 w-3.5 text-white sm:h-4.5 sm:w-4.5" strokeWidth={2.25} />
         </div>
       </div>
     </div>

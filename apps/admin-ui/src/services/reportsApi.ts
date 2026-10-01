@@ -299,6 +299,8 @@ export type ReportStarter = {
     board_ids?: string[];
     dataform_ids?: string[];
   } | null;
+  default_entity?: string | null;
+  default_company?: string | null;
   html?: string;
 };
 

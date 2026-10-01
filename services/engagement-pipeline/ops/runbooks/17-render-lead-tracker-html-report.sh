@@ -12,7 +12,7 @@ source "${REPO_ROOT}/ops/runbooks/load-kissflow-creds.sh"
 TEMPLATES_DIR="${REPO_ROOT}/templates/generated"
 AUDIT_DIR="${REPO_ROOT}/data/audit/runbook-17"
 
-GROUP_NAME="${GROUP_NAME:-Sales Team Modepro}"
+GROUP_NAME="${GROUP_NAME:-Modepro}"
 WEBSITE_FILTER="${WEBSITE_FILTER:-Modepro}"
 GROUP_SLUG="${GROUP_SLUG:-modepro}"
 
@@ -28,8 +28,15 @@ log "Rendering Lead Tracker report (${GROUP_NAME} · ${WEBSITE_FILTER})"
 export REPO_ROOT GROUP_NAME WEBSITE_FILTER GROUP_SLUG
 export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"
 export TEMPLATE_ID="${TEMPLATE_ID:-}"
-node "${REPO_ROOT}/services/engagement-pipeline/scripts/render-lead-tracker-report.js" \
-  || stop "Lead Tracker render failed."
+set +e
+RENDER_LOG="$(node "${REPO_ROOT}/services/engagement-pipeline/scripts/render-lead-tracker-report.js" 2>&1)"
+RENDER_RC=$?
+set -e
+printf '%s\n' "${RENDER_LOG}"
+if [[ "${RENDER_RC}" -ne 0 ]]; then
+  LAST_LINE="$(printf '%s' "${RENDER_LOG}" | tail -n 1)"
+  stop "Lead Tracker render failed: ${LAST_LINE}"
+fi
 
 LATEST_FILE="${TEMPLATES_DIR}/lead-tracker-${GROUP_SLUG}-latest.html"
 [[ -f "${LATEST_FILE}" ]] || stop "Expected output not found: ${LATEST_FILE}"

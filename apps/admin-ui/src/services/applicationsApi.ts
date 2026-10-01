@@ -29,12 +29,17 @@ export function resolveBackendApplicationId(app: KissflowApplication): string {
   const appId = (app.appId || '').trim();
   const routeId = (app.id || '').trim();
 
+  const hay = `${appId} ${routeId} ${app.name}`.toLowerCase();
+  const isVenwindLead = hay.includes('vindview') || hay.includes('lead tracker venwind');
   const isLeadTracker =
-    appId === 'Lead_tracker_1_A00' ||
-    appId.includes('Lead_tracker') ||
-    appId.includes('Lead_Trcaker') ||
-    routeId.includes('lead-tracker') ||
-    app.name.toLowerCase().includes('lead tracker');
+    !isVenwindLead
+    && (
+      appId === 'Lead_tracker_1_A00' ||
+      appId.includes('Lead_tracker') ||
+      appId.includes('Lead_Trcaker') ||
+      routeId.includes('lead-tracker') ||
+      /^lead tracker$/i.test(app.name)
+    );
 
   if (isLeadTracker) {
     return 'Lead_Trcaker_A00';
@@ -124,6 +129,7 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
     owner: '—',
     created: lastSync,
     lastSync,
+    embedUrl: row.embed_url || '',
     connected: row.is_current,
     dataformsCount: dataformIds.length,
     processesCount: 0,
@@ -192,7 +198,9 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     };
   }
 
-  const applications = res.data.items.map(mapRowToApplication);
+  const applications = res.data.items
+    .filter((row) => !/vindview|lead tracker venwind/i.test(`${row.application_id || ''} ${row.application_name || ''}`))
+    .map(mapRowToApplication);
   try {
     sessionStorage.setItem(
       APPS_CACHE_KEY,
@@ -478,11 +486,42 @@ export async function deleteApplicationOnBackend(
   return { ok: true };
 }
 
+export async function saveApplicationEmbedUrl(
+  applicationId: string,
+  embedUrl: string,
+  environment: string = 'production',
+): Promise<{ ok: boolean; embedUrl?: string | null; error?: string }> {
+  if (!isBackendApiMode()) {
+    return { ok: false, error: 'Backend API mode is not enabled' };
+  }
+  const res = await apiV1Fetch<{ item: BackendApplicationRow }>(
+    `/applications/${encodeURIComponent(applicationId)}?environment=${encodeURIComponent(environment)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ embed_url: embedUrl }),
+    },
+  );
+  if (!res.ok) {
+    return { ok: false, error: res.error || 'Failed to save embed link' };
+  }
+  try {
+    sessionStorage.removeItem('ne_applications_list_v1');
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith('ne_dashboard_snapshot_')) sessionStorage.removeItem(key);
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ok: true, embedUrl: res.data?.item?.embed_url || embedUrl || '' };
+}
+
 export type ApplicationUpdatePayload = {
   application_name?: string;
   description?: string;
   subdomain?: string;
   region?: string;
+  embed_url?: string;
 };
 
 export type CredentialsStatusResult = {
@@ -534,6 +573,7 @@ export async function updateApplicationOnBackend(
         description: payload.description,
         subdomain: payload.subdomain,
         region: payload.region,
+        embed_url: payload.embed_url,
       }),
     },
   );
