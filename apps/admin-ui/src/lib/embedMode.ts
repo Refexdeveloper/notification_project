@@ -178,6 +178,60 @@ export function buildEmbedAppPathLegacy(
   return buildEmbedAppPath(applicationId, tab);
 }
 
+/** Public Admin UI origin used in Settings embed-link boxes. */
+export const ADMIN_UI_PUBLIC_ORIGIN = 'https://refex-admin-ui-dhwffeu7pq-el.a.run.app';
+
+/** Kissflow Project Management app — used only from the embed dashboard Open click. */
+export const KISSFLOW_PM_VIEW_URL =
+  'https://refexgroup.kissflow.com/view/application/Project_Management_Tracker_A00';
+
+export function shouldOpenPmInKissflow(
+  embed: boolean,
+  applicationId?: string | null,
+  applicationName?: string | null,
+): boolean {
+  if (!embed) return false;
+  const id = String(applicationId || '').trim().replace(/^(production|development)-/i, '');
+  if (id === 'Project_Management_Tracker_A00') return true;
+  const name = String(applicationName || '');
+  if (/sub[_-]?task/i.test(id) || /sub[-\s]?task/i.test(name)) return false;
+  return /project\s*management/i.test(name) || /project_management/i.test(id);
+}
+
+export function defaultEmbedAppUrl(
+  applicationId?: string | null,
+  applicationName?: string | null,
+): string {
+  const id = String(applicationId || '').trim().replace(/^(production|development)-/i, '');
+  if (shouldOpenPmInKissflow(true, id, applicationName)) {
+    return KISSFLOW_PM_VIEW_URL;
+  }
+  return `${ADMIN_UI_PUBLIC_ORIGIN}${buildEmbedAppPath(id)}`;
+}
+
+export function resolveEmbedOpenUrl(opts: {
+  embed: boolean;
+  applicationId: string;
+  applicationName?: string | null;
+  storedUrl?: string | null;
+}): string | null {
+  if (!opts.embed) return null;
+  const stored = String(opts.storedUrl || '').trim();
+  if (stored) return stored;
+  if (shouldOpenPmInKissflow(true, opts.applicationId, opts.applicationName)) {
+    return KISSFLOW_PM_VIEW_URL;
+  }
+  return null;
+}
+
+export function openResolvedHref(url: string, navigate: (path: string) => void): void {
+  if (/^https?:\/\//i.test(url)) {
+    window.location.assign(url);
+    return;
+  }
+  navigate(url.startsWith('/') ? url : `/${url}`);
+}
+
 export function buildAppOpenPath(opts: {
   environment?: string;
   applicationId: string;

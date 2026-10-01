@@ -43,6 +43,7 @@ SCHEDULE_JSON="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${P
       rdv.config->>'subject' AS subject,
       rdv.config->>'from_email' AS from_email,
       rdv.config->>'website_filter' AS website_filter,
+      rdv.config->>'company_filter' AS company_filter,
       rdv.config->>'user_group_filter' AS user_group_filter,
       rdv.config->>'entity_filter' AS entity_filter,
       rdv.config->>'group_slug' AS group_slug,
@@ -397,9 +398,13 @@ source "${REPO_ROOT}/ops/runbooks/load-smtp-creds.sh"
 
 case "${APPLICATION_ID}" in
   Lead_Trcaker_A00)
-    export GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // "modepro"')"
-    export GROUP_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.user_group_filter // .schedule_name // "Sales Team"')"
-    export WEBSITE_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // empty')"
+    export GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // empty')"
+    export GROUP_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.user_group_filter // .company_filter // .website_filter // .schedule_name // empty')"
+    export WEBSITE_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // .company_filter // empty')"
+    export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}"
+    [[ -n "${WEBSITE_FILTER}" ]] || stop "Lead Tracker schedule ${SCHEDULE_ID} has no website filter — will not send the full report."
+    [[ -n "${GROUP_SLUG}" ]] || export GROUP_SLUG="$(printf '%s' "${WEBSITE_FILTER}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+    log "Lead Tracker: live Kissflow counts (same Website + FY + no-draft rules as the dashboard)"
     if [[ "${TEST_SEND}" == "true" ]]; then
       send_test_report \
         "${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html" \
@@ -408,7 +413,11 @@ case "${APPLICATION_ID}" in
         "lead-tracker:"
       log "Lead Tracker test send completed"
     else
-      exec bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/18-render-and-send-lead-tracker-report.sh"
+      log "Step 2/3: Rendering Lead Tracker report"
+      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
+      log "Step 3/3: Sending Lead Tracker report"
+      send_cached_report "${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
+      log "Lead Tracker ingest-render-send completed"
     fi
     ;;
   IT_Service_Management_A00)

@@ -21,6 +21,7 @@ const {
 const { bootstrapApplication } = require('../lib/applicationBootstrap');
 const { normalizeEnvironment, resolveKissflowCredentials } = require('../lib/kissflowClient');
 const { friendlyApplicationName } = require('../lib/dashboardDisplay');
+const { isHiddenNeApplication } = require('../lib/leadScope');
 const { syncProcessFields } = require('../lib/fieldSyncService');
 const { ensureP2pApplicationCached } = require('../lib/p2pDashboard');
 
@@ -39,7 +40,8 @@ SELECT
   source_payload->>'description' AS description,
   COALESCE(source_payload->'dataform_ids', '[]'::jsonb) AS dataform_ids,
   COALESCE(source_payload->'board_ids', '[]'::jsonb) AS board_ids,
-  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids
+  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids,
+  NULLIF(trim(source_payload->>'embed_url'), '') AS embed_url
 FROM engagement_reporting.application
 WHERE is_current = true
 ORDER BY application_name
@@ -58,7 +60,8 @@ SELECT
   source_payload->>'description' AS description,
   COALESCE(source_payload->'dataform_ids', '[]'::jsonb) AS dataform_ids,
   COALESCE(source_payload->'board_ids', '[]'::jsonb) AS board_ids,
-  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids
+  COALESCE(source_payload->'dataset_ids', '[]'::jsonb) AS dataset_ids,
+  NULLIF(trim(source_payload->>'embed_url'), '') AS embed_url
 FROM engagement_reporting.application
 WHERE is_current = true
   AND environment = $1
@@ -98,7 +101,9 @@ router.get('/', async (req, res) => {
       }
     }
     const { rows } = await getPool().query(APPLICATIONS_QUERY);
-    const items = rows.map(decorateApplicationRow);
+    const items = rows
+      .filter((row) => !isHiddenNeApplication(row.application_id, row.application_name))
+      .map(decorateApplicationRow);
     ok(res, req.correlationId, { items, count: items.length });
   } catch (err) {
     if (err.code === '42P01') {
@@ -345,13 +350,16 @@ router.patch('/:applicationId', async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(body, 'region')) {
     patch.region = body.region;
   }
+  if (Object.prototype.hasOwnProperty.call(body, 'embed_url')) {
+    patch.embed_url = body.embed_url;
+  }
 
   if (!Object.keys(patch).length) {
     return fail(
       res,
       req.correlationId,
       'UPDATE_FIELDS_REQUIRED',
-      'Provide application_name, description, subdomain, and/or region',
+      'Provide application_name, description, subdomain, region, and/or embed_url',
       400,
     );
   }

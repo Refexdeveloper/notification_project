@@ -15,6 +15,7 @@ const { latestRunsCte } = require('./snapshotRuns');
 const {
   loadApplicationEngagementCache,
   isEngagementCacheFresh,
+  hasUsableEngagementRecords,
   shouldPreferEngagementCache,
 } = require('./engagementCache');
 const { latestApplicationSnapshotAt } = require('./snapshotRuns');
@@ -61,6 +62,19 @@ function isLeadApp(applicationId) {
   return String(applicationId || '').toLowerCase().includes('lead');
 }
 
+/** Kissflow field `Website_and_form` (label: Website And Form). */
+function websiteFromRaw(raw) {
+  return pickString(raw, ['Website_and_form', 'Website']) || '';
+}
+
+function isLeadBusinessClosed(raw) {
+  const lead = String(raw?.Lead_Status || '').toLowerCase().trim();
+  if (lead === 'close' || lead === 'closed' || lead === 'completed' || lead === 'done') return true;
+  if (lead === 'open') return false;
+  const st = normalizeProcessStatus(raw);
+  return st === 'Completed' || st === 'Closed';
+}
+
 function isEmsApp(applicationId) {
   const hay = String(applicationId || '').toLowerCase();
   return hay.includes('ems');
@@ -94,7 +108,7 @@ function pickPersonNameSql(expr) {
   END`;
 }
 
-function statusBucketSql(itsm) {
+function statusBucketSql(itsm, lead = false) {
   return `CASE
       WHEN i.process_status IN ('Withdrawn')
         OR lower(coalesce(i.process_status, '')) ~ '(reject|cancel|withdraw)'
@@ -105,6 +119,12 @@ function statusBucketSql(itsm) {
           ''
         )) ~ '(reject|cancel|withdraw)'
         THEN 'rejected'
+      WHEN ${lead ? 'true' : 'false'}
+        AND lower(trim(coalesce(i.source_payload->>'Lead_Status', ''))) IN ('close', 'closed', 'completed', 'done')
+        THEN 'closed'
+      WHEN ${lead ? 'true' : 'false'}
+        AND lower(trim(coalesce(i.source_payload->>'Lead_Status', ''))) = 'open'
+        THEN 'open'
       WHEN i.process_status IN ('Completed', 'Closed')
         OR lower(coalesce(i.process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled')
         OR (
@@ -243,6 +263,7 @@ function serializeRecordItem(it, opts = {}) {
     company_name: it.company_name || it.assignee_company || it.company,
     assignee_company: it.assignee_company || it.company_name,
     assignee_company_key: it.assignee_company_key,
+    website: it.website || it.website_name,
     current_step: it.current_step,
     process_id: it.process_id,
     project_id: it.project_id || it.project_key || undefined,
@@ -270,6 +291,26 @@ function recordHasProcessCompany(rec) {
  * Skips user lookup when the process record already carries company / entity.
  * ITSM: never overlay assignee company — requester lookup is the source of truth.
  */
+function overlayLeadWebsiteFromItems(records, items, applicationId) {
+  if (!isLeadApp(applicationId) || !items?.length) return records || [];
+  const byId = new Map();
+  for (const raw of items) {
+    const id = pickString(raw, ['_id', 'Id', 'id', 'Instance_ID']);
+    if (id) byId.set(id, raw);
+  }
+  return (records || []).map((rec) => {
+    const raw = byId.get(String(rec.id || rec.instance_id || rec.request_id || ''));
+    if (!raw) return rec;
+    const website = websiteFromRaw(raw);
+    return {
+      ...rec,
+      website: website || rec.website || rec.website_name,
+      website_name: website || rec.website_name || rec.website,
+      status: statusBucketFromRaw(raw, applicationId) || rec.status,
+    };
+  });
+}
+
 function enrichRecordsWithAssigneeCompany(records, users, { skipAssigneeStamp = false } = {}) {
   if (skipAssigneeStamp) return records || [];
   const byKey = new Map();
@@ -371,7 +412,7 @@ function columnsForApp(applicationId) {
       { id: 'assigned_to', label: 'Assigned to' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
-      { id: 'company_name', label: 'Company name' },
+      { id: 'website', label: 'Website' },
       { id: 'created_at', label: 'Created' },
     ];
   }
@@ -429,14 +470,22 @@ function isDraftRaw(raw) {
   const parts = [
     raw._status,
     raw.Status,
+    raw.Statu,
+    raw.Statu_1,
     raw.process_status,
     raw.Process_Status,
     raw._current_step,
     raw.current_step,
     raw.Step,
+    raw.workflowStatus,
+    raw.systemStatus,
+    raw.Column_W1mzfPpAP3,
     normalizeProcessStatus(raw),
   ];
-  return parts.some((p) => String(p || '').toLowerCase().includes('draft'));
+  return parts.some((p) => {
+    const token = String(p || '').toLowerCase().trim();
+    return token === 'draft' || token.includes('draft');
+  });
 }
 
 function isDraftStatusText(...parts) {
@@ -452,11 +501,17 @@ function isEmptyDisplay(value) {
   return !s || s === '—' || s === '-' || s.toLowerCase() === 'null' || s.toLowerCase() === 'undefined';
 }
 
+function recordIdentity(row) {
+  for (const key of ['instance_id', 'id', 'request_id']) {
+    const value = String(row?.[key] || '').trim();
+    if (!isEmptyDisplay(value)) return value;
+  }
+  return '';
+}
+
 function isMeaningfulRecord(row) {
   if (isDraftRow(row)) return false;
-  const id = String(row?.request_id || row?.id || row?.instance_id || '').trim();
-  if (isEmptyDisplay(id)) return false;
-  return true;
+  return Boolean(recordIdentity(row));
 }
 
 function dedupeRecords(rows) {
@@ -585,6 +640,7 @@ function personNameFromRaw(val) {
 function statusBucketFromRaw(raw, applicationId) {
   if (isDraftRaw(raw)) return 'draft';
   const itsm = isItsmApp(applicationId);
+  const lead = isLeadApp(applicationId);
   const statusText = String(
     raw?._status || raw?.Status || raw?.process_status || raw?.Process_Status || '',
   ).toLowerCase();
@@ -602,6 +658,9 @@ function statusBucketFromRaw(raw, applicationId) {
     const st = normalizeProcessStatus(raw);
     if (st === 'Completed' || st === 'Closed') return 'closed';
     return 'open';
+  }
+  if (lead) {
+    return isLeadBusinessClosed(raw) ? 'closed' : 'open';
   }
   const st = normalizeProcessStatus(raw);
   if (st === 'Completed' || st === 'Closed') return 'closed';
@@ -784,18 +843,31 @@ function buildLiveRecordRows(allItems, applicationId) {
           || personNameFromRaw(raw?._created_by)
           || '—'
         );
-    const requestId = pm
-      ? (isTask
-        ? pickString(raw, ['Task_ID_Formulated', 'Task_ID', 'Sub_Task_ID', 'Task_Id', '_request_number', 'Request_ID', '_id'])
-        : pickString(raw, ['Project_ID_Formulated', 'Project_ID', 'Project_Id', '_request_number', 'Request_ID', '_id']))
-      : travel
-        ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Request_No', '_request_number'])
-        : lead
-          ? pickString(raw, ['Lead_ID', 'Lead_Id', 'Lead_Number', '_request_number'])
-          : ems
-            ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
-            : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
-      || '—';
+    const requestId = (
+      pm
+        ? (isTask
+          ? pickString(raw, ['Task_ID_Formulated', 'Task_ID', 'Sub_Task_ID', 'Task_Id', '_request_number', 'Request_ID', '_id'])
+          : pickString(raw, ['Project_ID_Formulated', 'Project_ID', 'Project_Id', '_request_number', 'Request_ID', '_id']))
+        : travel
+          ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Request_No', '_request_number'])
+          : lead
+            ? pickString(raw, ['Lead_ID', 'Lead_Id', 'Lead_Number', '_request_number', '_id'])
+            : solar
+              ? pickString(raw, [
+                'Request_ID',
+                'Req_ID',
+                'Reimbursement_ID',
+                'Claim_ID',
+                'Expense_ID',
+                '_request_number',
+                'Request_Number',
+                'Request_Id',
+                '_id',
+              ])
+              : ems
+                ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
+                : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
+    ) || String(raw?._id || '') || '—';
     const created =
       (typeof raw?._created_at === 'string' && raw._created_at)
       || (raw?._created_at?.v)
@@ -819,6 +891,17 @@ function buildLiveRecordRows(allItems, applicationId) {
     const closedBy = itsm ? (closedByFromRaw(raw) || undefined) : undefined;
     const entityText = entityTextFromRaw(raw);
     const companyText = companyTextFromRaw(raw, applicationId);
+    const solarEntityDisplay = solar
+      ? (
+        entityText
+        || companyText
+        || pickString(raw, ['Legal_Entity', 'Legal_Entity_Name', 'Organisation', 'Organization', 'Plant', 'Plant_Name', 'Business_Unit'])
+        || ''
+      )
+      : '';
+    const website = lead
+      ? (websiteFromRaw(raw) || (pidLower.includes('vindview') ? 'Venwind' : ''))
+      : '';
     const companyKey = itsm
       ? (resolveCompanyIdFromText(companyText) || null)
       : (
@@ -828,7 +911,8 @@ function buildLiveRecordRows(allItems, applicationId) {
         || null
       );
     const entityDisplay =
-      entityText
+      (solar ? solarEntityDisplay : entityText)
+      || (itsm ? '' : (companyText && !isEntityBucketLabel(companyText) ? companyText : ''))
       || (itsm ? '' : (companyKey ? companyKey.replace(/-/g, ' ') : ''))
       || entityLabel(entityKey);
     const projectKey = pm ? (projectKeyFromRaw(raw) || undefined) : undefined;
@@ -851,6 +935,8 @@ function buildLiveRecordRows(allItems, applicationId) {
       company: itsm ? companyText : (companyText || entityDisplay),
       company_key: companyKey || undefined,
       company_name: itsm ? companyText : (companyText || entityDisplay || undefined),
+      website: website || undefined,
+      website_name: website || undefined,
       current_step: pickCurrentStep(raw) || String(raw?._status || ''),
       created_at: created,
       closed_at: closedAt,
@@ -1015,9 +1101,10 @@ async function loadKissflowRecords(pool, {
     let cache = await loadApplicationEngagementCache(pool, environment, applicationId);
     const snapshotAt = await latestApplicationSnapshotAt(pool, environment, applicationId);
 
-    if (forceLive || !shouldPreferEngagementCache(cache, { snapshotAt, applicationId })) {
+    // Landing / filter reads stay on incremental cache (or snapshot). Kissflow
+    // Get-all-items only when the client explicitly asks force_live.
+    if (forceLive) {
       try {
-        // Lazy require avoids circular init with kissflowLiveMetrics → buildLiveRecordRows.
         const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
         await fetchLiveAppMetrics(environment, applicationId, { persistCache: true });
         cache = await loadApplicationEngagementCache(pool, environment, applicationId);
@@ -1026,9 +1113,19 @@ async function loadKissflowRecords(pool, {
       }
     }
 
-    if (shouldPreferEngagementCache(cache, { snapshotAt, applicationId })) {
+    const cacheUsable =
+      shouldPreferEngagementCache(cache, { snapshotAt, applicationId })
+      || (!forceLive && hasUsableEngagementRecords(cache));
+    const leadWebsiteReady = !isLeadApp(applicationId)
+      || (cache.records || []).some((row) => String(row.website || row.website_name || '').trim());
+
+    if (cacheUsable && leadWebsiteReady) {
       const all = enrichRecordsWithAssigneeCompany(
-        dedupeRecords(cache.records.filter((row) => !isDraftRow(row))),
+        overlayLeadWebsiteFromItems(
+          dedupeRecords(cache.records.filter((row) => !isDraftRow(row))),
+          cache.items || [],
+          applicationId,
+        ),
         cache.items || [],
         { skipAssigneeStamp: itsm },
       );
@@ -1066,7 +1163,7 @@ async function loadKissflowRecords(pool, {
             requesters: uniqueNames(all, 'requested_by'),
             show_assigned: !isSolarApp(applicationId),
             show_requester: true,
-            show_entity: !isSolarApp(applicationId),
+            show_entity: true,
           },
           columns: columnsForApp(applicationId),
           items: filtered.map((row) => serializeRecordItem(row, { itsm })),
@@ -1090,7 +1187,7 @@ async function loadKissflowRecords(pool, {
           requesters: uniqueNames(all, 'requested_by'),
           show_assigned: !isSolarApp(applicationId),
           show_requester: true,
-          show_entity: !isSolarApp(applicationId),
+          show_entity: true,
         },
         columns: columnsForApp(applicationId),
         items: page.map((row) => serializeRecordItem(row, { itsm })),
@@ -1117,7 +1214,7 @@ async function loadKissflowRecords(pool, {
     alias: 'latest',
   });
 
-  const statusSql = statusBucketSql(itsm);
+  const statusSql = statusBucketSql(itsm, lead);
   const entitySql = entityKeySql(applicationId);
   const lead = isLeadApp(applicationId);
 
@@ -1215,9 +1312,14 @@ classified AS (
       NULLIF(trim(i.source_payload->'Entity'->>'Name'), ''),
       NULLIF(trim(i.source_payload->>'Company'), ''),
       NULLIF(trim(i.source_payload->'Company'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Legal_Entity'), ''),
+      NULLIF(trim(i.source_payload->'Legal_Entity'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Organisation'), ''),
+      NULLIF(trim(i.source_payload->>'Organization'), ''),
       NULLIF(trim(i.entity), '')
     ) AS entity_raw,
     (${itsmLookupCompanySql()}) AS company_raw,
+    NULLIF(trim(i.source_payload->>'Website_and_form'), '') AS website_raw,
     COALESCE(
       NULLIF(trim(i.source_payload->>'Task_ID_Formulated'), ''),
       NULLIF(trim(i.source_payload->>'Project_ID_Formulated'), ''),
@@ -1323,6 +1425,7 @@ SELECT
         c.entity_key,
         c.entity_raw,
         c.company_raw,
+        c.website_raw,
         c.created_at,
         c.closed_at,
         c.snapshot_at,
@@ -1376,7 +1479,7 @@ SELECT
       requesters: requesterOptions,
       show_assigned: !isSolarApp(applicationId),
       show_requester: true,
-      show_entity: !isSolarApp(applicationId),
+      show_entity: true,
     },
     columns: columnsForApp(applicationId),
     items: items
@@ -1403,6 +1506,7 @@ SELECT
           }, { itsm: true });
         }
         const companyKey = resolveCompanyIdFromText(entityRaw) || resolveCompanyIdFromText(entityKey) || undefined;
+        const website = String(it.website_raw || '').trim();
         return serializeRecordItem({
           ...it,
           id: String(it.instance_id || it.request_id),
@@ -1410,6 +1514,8 @@ SELECT
           entity_key: entityKey,
           company: entityDisplay,
           company_key: companyKey,
+          website: website || undefined,
+          website_name: website || undefined,
           project_id: it.project_key || undefined,
           project_key: it.project_key || undefined,
         });

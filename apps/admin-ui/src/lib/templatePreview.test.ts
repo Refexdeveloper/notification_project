@@ -48,9 +48,9 @@ describe('templatePreview', () => {
     expect(out).toContain('alt="refexOne"');
   });
 
-  it('renames IT Service Management to IT Helpdesk in preview HTML', () => {
+  it('renames IT Service Management to Tech Helpdesk in preview HTML', () => {
     const html = '<p>Live IT Service Request · IT Service Management</p>';
-    expect(applyTemplateVariables(html, {})).toContain('IT Helpdesk');
+    expect(applyTemplateVariables(html, {})).toContain('Tech Helpdesk');
     expect(applyTemplateVariables(html, {})).not.toContain('IT Service Management');
   });
 
@@ -108,12 +108,25 @@ describe('templatePreview', () => {
     expect(samples.SignedInToday).toBe('1');
   });
 
+  it('builds a website-scoped Lead Tracker preview', () => {
+    const samples = buildPreviewSampleData({
+      kissflowAppId: 'Lead_Trcaker_A00',
+      templateName: 'Lead Tracker · Refex Mobility',
+    });
+    expect(samples.CompanyName).toBe('Refex Mobility');
+    expect(samples.GroupName).toBe('Refex Mobility');
+    expect(samples.WebsiteName).toBe('Refex Mobility');
+    expect(samples.TotalUsers).toBe('3');
+    expect(samples.ReportBody).toContain('Refex Mobility leads only');
+    expect(samples.UserTableHtml).toContain('Pankaj');
+  });
+
   it('builds a single-entity Venwind travel preview', () => {
     const samples = buildPreviewSampleData({ kissflowAppId: 'Expense_and_Travel_Management_A00' });
     expect(samples.EntityScope).toBe('Venwind travel requests only');
     expect(samples.EntityName).toBe('Venwind');
     expect(samples.EntitySectionsHtml).toBe('');
-    expect(samples.UserTableSectionHtml).toContain('Users with pending travel requests');
+    expect(samples.UserTableSectionHtml).toContain('MIS · Users (Pending');
     expect(samples.UserTableSectionHtml).toContain('Pending Duration');
     expect(samples.UserTableSectionHtml).toContain('SLA Breached');
     expect(samples.UserTableHtml).toContain('Priya Sharma');

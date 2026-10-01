@@ -16,7 +16,7 @@ import {
 
 describe('resolveNeAppKind', () => {
   it('maps each production app id', () => {
-    expect(resolveNeAppKind('IT_Service_Management_A00', 'IT Helpdesk')).toBe('itsm');
+    expect(resolveNeAppKind('IT_Service_Management_A00', 'Tech Helpdesk')).toBe('itsm');
     expect(resolveNeAppKind('Project_Management_Tracker_A00', 'Project Management')).toBe('pm');
     expect(resolveNeAppKind('Procurement_to_Pay_A00', 'Procurement to Pay')).toBe('p2p');
     expect(resolveNeAppKind('Expense_and_Travel_Management_A00', 'Travel')).toBe('travel');

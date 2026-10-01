@@ -1,6 +1,6 @@
 /** Template placeholder preview — mirrors pipeline apply-report-template.js behaviour. */
 
-import { sampleLeadReportTableHtml } from '@/services/leadReport';
+import { resolveLeadCompany, sampleLeadReportTableHtml } from '@/services/leadReport';
 import { ensureItsmSourcePlaceholders } from '@/lib/itsmTemplateLayout';
 
 export type PreviewContext = {
@@ -165,7 +165,7 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     RecipientName: 'Team',
     CompanyName: 'REFEX',
     WebsiteName: 'Modepro',
-    GroupName: 'Sales Team Modepro',
+    GroupName: 'Modepro',
     TotalUsers: '2',
     SignedInUsers: '153',
     SignInRate: '46%',
@@ -245,10 +245,17 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.ReportBody =
       'Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation).';
   } else if (kind === 'lead') {
-    base.UserTableHtml = samplePmUserTableHtml();
+    const company =
+      resolveLeadCompany(`${context.templateName || ''} ${context.subject || ''}`)?.groupName
+      || 'Modepro';
+    base.UserTableHtml = sampleLeadReportTableHtml();
     base.SignedInToday = '1';
-    base.TotalUsers = '2';
-    base.ReportBody = 'Users from Kissflow group with leads assigned to them (Open / Closed status from Lead Tracker).';
+    base.TotalUsers = '3';
+    base.CompanyName = company;
+    base.GroupName = company;
+    base.WebsiteName = company;
+    base.ReportTitle = context.templateName?.trim() || `${company} — Lead Tracker`;
+    base.ReportBody = `${company} leads only. Users with leads assigned for this website (Open / Closed). Never the full Lead Tracker report.`;
   } else if (kind === 'expense') {
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
@@ -283,7 +290,9 @@ export function normalizeTemplateHtmlForPreview(html: string): string {
   return String(html || '')
     .replace(/refex-logo\.png/gi, 'refexone-logo.png')
     .replace(/alt="Refex"/gi, 'alt="refexOne"')
-    .replace(/IT Service Management/g, 'IT Helpdesk');
+    .replace(/IT Service Management/g, 'Tech Helpdesk')
+    .replace(/IT Helpdesk/g, 'Tech Helpdesk')
+    .replace(/IT Help Desk/g, 'Tech Helpdesk');
 }
 
 export function applyTemplateVariables(templateBody: string, variables: Record<string, string>): string {
@@ -399,6 +408,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ReportDate',
     'CompanyName',
     'GroupName',
+    'WebsiteName',
     'TotalLeads',
     'OpenLeads',
     'ClosedLeads',

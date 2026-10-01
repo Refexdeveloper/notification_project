@@ -25,6 +25,22 @@ function normalizeStringList(value) {
   return [];
 }
 
+function normalizeStoredEmbedUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+      return url.href;
+    } catch {
+      return '';
+    }
+  }
+  if (raw.startsWith('/')) return raw;
+  return '';
+}
+
 function buildCredentialSecretResource() {
   const project =
     process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || 'master-diorama-489103-u2';
@@ -319,6 +335,9 @@ async function updateApplicationMetadata(
   if (Object.prototype.hasOwnProperty.call(patch, 'region')) {
     payloadPatch.region = String(patch.region || 'com').trim() || 'com';
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'embed_url')) {
+    payloadPatch.embed_url = normalizeStoredEmbedUrl(patch.embed_url);
+  }
 
   const nextName = Object.prototype.hasOwnProperty.call(patch, 'application_name')
     ? String(patch.application_name || '').trim() || row.application_name
@@ -343,7 +362,8 @@ async function updateApplicationMetadata(
        source_payload->>'kissflow_account_id' AS kissflow_account_id,
        source_payload->>'subdomain' AS subdomain,
        source_payload->>'region' AS region,
-       source_payload->>'description' AS description
+       source_payload->>'description' AS description,
+       NULLIF(trim(source_payload->>'embed_url'), '') AS embed_url
      FROM engagement_reporting.application
      WHERE environment = $1 AND application_id = $2 AND is_current = true`,
     [environment, applicationId],

@@ -18,7 +18,7 @@ import {
   runSchedulerNow,
   syncSchedulerToServer,
 } from '@/services/schedulerSync';
-import { LEAD_TRACKER_SALES_GROUPS } from '@/services/leadReport';
+import { LEAD_TRACKER_SALES_GROUPS, resolveLeadCompany } from '@/services/leadReport';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -258,19 +258,23 @@ export default function SchedulerDetailPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
-              Kissflow user group (Lead Tracker)
+              Website scope (Lead Tracker)
             </label>
             <select
-              value={userGroupFilter}
+              value={
+                resolveLeadCompany(websiteFilter || userGroupFilter)?.groupName
+                || websiteFilter
+                || ''
+              }
               onChange={(e) => {
-                const group = e.target.value;
-                setUserGroupFilter(group);
-                const match = LEAD_TRACKER_SALES_GROUPS.find((g) => g.groupName === group);
-                if (match?.websiteFilter) setWebsiteFilter(match.websiteFilter);
+                const website = e.target.value;
+                const match = resolveLeadCompany(website);
+                setUserGroupFilter(match?.groupName || website);
+                setWebsiteFilter(match?.websiteFilter || website);
               }}
               className="field-input"
             >
-              <option value="">— Select sales team —</option>
+              <option value="">— Select website —</option>
               {LEAD_TRACKER_SALES_GROUPS.map((g) => (
                 <option key={g.slug} value={g.groupName}>
                   {g.groupName}
@@ -278,18 +282,9 @@ export default function SchedulerDetailPage() {
               ))}
             </select>
             <p className="text-[11px] text-foreground-400 mt-1">
-              Filters users from Kissflow Groups, then counts their assigned leads (Open / Closed).
+              Sends this website&apos;s leads and those users only — same as the dashboard Website
+              filter (Kissflow Website And Form). Required; the full Lead Tracker report is not sent.
             </p>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
-              Website filter (optional)
-            </label>
-            <Input
-              value={websiteFilter}
-              onChange={(e) => setWebsiteFilter(e.target.value)}
-              placeholder="Auto-set from group — e.g. Modepro"
-            />
           </div>
         </div>
 

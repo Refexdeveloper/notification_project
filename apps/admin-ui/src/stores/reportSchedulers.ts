@@ -35,7 +35,7 @@ export interface ReportScheduler {
   subject?: string;
   /** IANA timezone for backend schedules (e.g. Asia/Kolkata) */
   timezone?: string;
-  /** Lead Tracker: filter leads by Website field value before grouping by sales person */
+  /** Lead Tracker: filter leads by Website_and_form before grouping by sales person */
   websiteFilter?: string;
   entityFilter?: string;
   /** Lead Tracker: filter Kissflow users by Groups membership */

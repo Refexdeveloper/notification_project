@@ -47,13 +47,21 @@ function engagementCacheFetchedAt(cache) {
  * Prefer engagement_cache only when fresh and not older than the latest PostgreSQL snapshot.
  * Schedule ingest updates snapshots but not engagement_cache — stale cache must not win.
  */
+function hasUsableEngagementRecords(cache) {
+  return Boolean(
+    cache
+    && Array.isArray(cache.records)
+    && cache.records.length
+    && Number(cache.records_schema_version || 0) >= ENGAGEMENT_RECORDS_SCHEMA_VERSION
+  );
+}
+
 function shouldPreferEngagementCache(cache, {
   ttlMs = ENGAGEMENT_CACHE_TTL_MS,
   snapshotAt = null,
   applicationId = '',
 } = {}) {
-  if (!cache || !Array.isArray(cache.records) || !cache.records.length) return false;
-  if (Number(cache.records_schema_version || 0) < ENGAGEMENT_RECORDS_SCHEMA_VERSION) return false;
+  if (!hasUsableEngagementRecords(cache)) return false;
   const ttl = ttlMs === ENGAGEMENT_CACHE_TTL_MS ? ttlForApplication(applicationId, ttlMs) : ttlMs;
   if (!isEngagementCacheFresh(cache, ttl)) return false;
   const fetchedAt = engagementCacheFetchedAt(cache);
@@ -119,6 +127,7 @@ module.exports = {
   cacheAgeMs,
   engagementCacheFetchedAt,
   isEngagementCacheFresh,
+  hasUsableEngagementRecords,
   shouldPreferEngagementCache,
   saveEngagementCache,
   loadApplicationEngagementCache,

@@ -123,7 +123,7 @@ function seedTemplate(app: KissflowApplication) {
     applicationId: app.id,
     name: 'Lead Tracker Sales Report',
     description:
-      'Per sales team: leads filtered by Website_and_form, grouped by assigned sales person (Open/Closed).',
+      'Per company: leads for 3iMedtech, Refex Mobility, Adonis, Modepro, or Venwind, grouped by assignee (Open/Closed).',
     subject,
     html,
     status: 'published',
@@ -151,7 +151,7 @@ function seedGroupSchedulers(app: KissflowApplication, env: RefexEnvironment, te
         id: schId,
         applicationId: app.id,
         name: `Lead Tracker — ${group.groupName}`,
-        description: `Daily 17:05 IST (${env}). Leads for "${group.websiteFilter}" grouped by assignee.`,
+        description: `Daily 17:05 IST (${env}). ${group.websiteFilter} leads and those users only.`,
         status: defaultActive ? 'active' : 'draft',
         templateId,
         templateName: 'Lead Tracker Sales Report',
@@ -198,9 +198,9 @@ export function seedRefexLeadTracker(): void {
 
 export function leadTrackerPreviewOverrides(): Record<string, string> {
   return {
-    ReportTitle: 'Sales Team Modepro — Lead Tracker',
+    ReportTitle: 'Modepro — Lead Tracker',
     CompanyName: 'REFEX',
-    GroupName: 'Sales Team Modepro',
+    GroupName: 'Modepro',
     WebsiteName: 'Modepro',
     TotalLeads: '6',
     OpenLeads: '3',
@@ -209,6 +209,6 @@ export function leadTrackerPreviewOverrides(): Record<string, string> {
     SalesPersons: '3',
     LeadTableHtml: sampleLeadReportTableHtml(),
     ReportBody:
-      'Live data from Kissflow: users in group "Sales Team Modepro" with open/closed lead counts.',
+      'Live data from Kissflow: Modepro leads only, with open/closed counts for those users.',
   };
 }

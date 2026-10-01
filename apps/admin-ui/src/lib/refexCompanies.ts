@@ -6,6 +6,14 @@ export const REFEX_DEFAULT_COMPANY_NAME = 'Refex Industries Limited';
 export type RefexCompany = { id: string; label: string };
 export type EntityBucket = 'refex' | 'extrovis' | 'venwind';
 
+/** Former Entity options — now live in the Company dropdown. */
+export const EXTRA_COMPANY_OPTIONS: RefexCompany[] = [
+  { id: 'extrovis', label: 'Extrovis' },
+  { id: 'pharmacare', label: 'Pharmacare' },
+  { id: 'modepro', label: 'Modepro' },
+  { id: 'kavispharma', label: 'Kavispharma' },
+];
+
 const RAW_LABELS = [
   '3i Medical Equipment Manufacturing Private Limited',
   '3i Medical Technologies Private Limited',
@@ -73,7 +81,9 @@ export function sortCompanyFilterOptions<T extends { id: string; label: string }
 }
 
 export function isEntityBucketLabel(value: unknown): boolean {
-  return /^(refex|extrovis|venwind|refex group)$/i.test(String(value || '').trim());
+  return /^(refex|extrovis|venwind|refex group|pharmacare|pharma pack|pharmapack|modepro|kavis|kavispharma)$/i.test(
+    String(value || '').trim(),
+  );
 }
 
 export const REFEX_COMPANIES: RefexCompany[] = RAW_LABELS.map((label) => ({
@@ -104,8 +114,10 @@ export function resolveCompanyIdFromText(raw: unknown): string | null {
   const norm = normalizeCompanyText(raw);
   if (!norm) return null;
 
-  // Extrovis is an entity bucket, not a catalog legal entity.
-  if (norm === 'extrovis' || norm.includes('extrovis')) return null;
+  if (norm === 'extrovis' || norm.includes('extrovis')) return 'extrovis';
+  if (norm.includes('pharmacare') || norm.includes('pharma pack') || norm === 'pharmapack') return 'pharmacare';
+  if (norm === 'modepro' || norm.includes('modepro') || norm.includes('mode pro')) return 'modepro';
+  if (norm.includes('kavis')) return 'kavispharma';
 
   // Bare / short "refex" is an entity bucket — do not force Industries.
   if (norm === 'refex' || norm === 'refex group') return null;
@@ -133,6 +145,8 @@ export function companyLabel(id: string): string {
   if (id === 'extrovis') return 'Extrovis';
   if (id === 'refex') return 'Refex';
   if (id === 'venwind') return 'Venwind';
+  const extra = EXTRA_COMPANY_OPTIONS.find((c) => c.id === id);
+  if (extra) return extra.label;
   return BY_ID.get(id)?.label || id.replace(/-/g, ' ');
 }
 
@@ -203,11 +217,16 @@ export function buildRefexCompanyOptions(
   }: { includeAll?: boolean; allLabel?: string; entity?: string } = {},
 ): Array<{ id: string; label: string; count?: number }> {
   const scoped = companiesForEntityBucket(entity);
-  const rows = sortCompanyFilterOptions(scoped.map((c) => ({
-    id: c.id,
-    label: c.label,
-    count: Number(counts[c.id] || 0),
-  })));
+  const extras = EXTRA_COMPANY_OPTIONS.filter(
+    (c) => !scoped.some((row) => row.id === c.id),
+  );
+  const rows = sortCompanyFilterOptions(
+    [...scoped, ...extras].map((c) => ({
+      id: c.id,
+      label: c.label,
+      count: Number(counts[c.id] || 0),
+    })),
+  );
   if (!includeAll) return rows;
   return [{ id: 'all', label: allLabel, count: 0 }, ...rows];
 }
@@ -310,9 +329,15 @@ export function recordMatchesCompany(
   const filter = String(filterId || 'all').trim().toLowerCase();
   if (!filter || filter === 'all') return true;
 
-  // Bucket ids still accepted for backwards compatibility.
+  // Bucket / former-entity ids now live in Company.
   if (filter === 'extrovis' || filter === 'refex' || filter === 'venwind') {
     return recordMatchesEntityBucket(row, filter, itsmCompanyMode);
+  }
+  if (filter === 'pharmacare' || filter === 'modepro' || filter === 'kavispharma' || filter === 'kavis') {
+    const hay = rowHaystack(row, itsmCompanyMode);
+    if (filter === 'pharmacare') return hay.includes('pharmacare') || hay.includes('pharma pack') || hay.includes('pharmapack');
+    if (filter === 'modepro') return hay.includes('modepro') || hay.includes('mode pro');
+    return hay.includes('kavis');
   }
 
   // Legal company only — never haystack Entity ("refex") into Industries Limited.

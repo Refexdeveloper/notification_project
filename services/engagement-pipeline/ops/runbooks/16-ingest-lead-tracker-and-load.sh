@@ -81,20 +81,29 @@ if [[ "${SKIP_FETCH:-false}" != "true" ]]; then
   done
   ITEM_COUNT="$(wc -l < "${DATA_DIR}/items.jsonl" | tr -d ' ')"
   log "Total lead items: ${ITEM_COUNT}"
+  [[ "${ITEM_COUNT}" -gt 0 ]] || stop "Kissflow returned 0 Lead Tracker items — refusing empty snapshot."
 
-  log "Retrieving item details"
   : > "${DATA_DIR}/item-details.jsonl"
-  while IFS= read -r item_json; do
-    instance_id="$(printf '%s\n' "${item_json}" | extract_identifier)"
-    [[ -z "${instance_id}" ]] && continue
-    safe_id="$(printf '%s' "${instance_id}" | tr -cs 'A-Za-z0-9._-' '_')"
-    detail_file="${DATA_DIR}/item-details/${safe_id}.json"
-    if api_get "${BASE_URL}/process/2/${ACCOUNT_ID}/admin/${PROCESS_ID}/${instance_id}" "${detail_file}"; then
-      jq -c --arg rid "${instance_id}" '. + {__requested_instance_id:$rid}' "${detail_file}" >> "${DATA_DIR}/item-details.jsonl"
-    fi
-  done < "${DATA_DIR}/items.jsonl"
+  # List pages already carry Website_and_form + _created_at (dashboard parity).
+  # Per-item detail GETs time out on Cloud Run (~880 calls) and are not needed for KPI counts.
+  if [[ "${SKIP_ITEM_DETAILS:-true}" == "true" ]]; then
+    log "Using list payloads as snapshot source (SKIP_ITEM_DETAILS=true)"
+    jq -c '. + {__requested_instance_id:(.__requested_instance_id // .Instance_ID // ._id // .id // null)}' \
+      "${DATA_DIR}/items.jsonl" > "${DATA_DIR}/item-details.jsonl"
+  else
+    log "Retrieving item details"
+    while IFS= read -r item_json; do
+      instance_id="$(printf '%s\n' "${item_json}" | extract_identifier)"
+      [[ -z "${instance_id}" ]] && continue
+      safe_id="$(printf '%s' "${instance_id}" | tr -cs 'A-Za-z0-9._-' '_')"
+      detail_file="${DATA_DIR}/item-details/${safe_id}.json"
+      if api_get "${BASE_URL}/process/2/${ACCOUNT_ID}/admin/${PROCESS_ID}/${instance_id}" "${detail_file}"; then
+        jq -c --arg rid "${instance_id}" '. + {__requested_instance_id:$rid}' "${detail_file}" >> "${DATA_DIR}/item-details.jsonl"
+      fi
+    done < "${DATA_DIR}/items.jsonl"
+  fi
   DETAIL_ITEM_COUNT="$(wc -l < "${DATA_DIR}/item-details.jsonl" | tr -d ' ')"
-  log "Item details retrieved: ${DETAIL_ITEM_COUNT}"
+  log "Snapshot source rows: ${DETAIL_ITEM_COUNT}"
 else
   log "SKIP_FETCH=true: reusing existing item-details.jsonl"
   [[ -f "${DATA_DIR}/item-details.jsonl" ]] || stop "No existing item-details.jsonl found."

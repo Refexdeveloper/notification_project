@@ -39,7 +39,7 @@ export const REFEX_ITSM_SNAPSHOT = {
   kissflowAppId: 'IT_Service_Management_A00',
   processId: 'Live_IT_Service_Request_A00',
   processName: 'Live IT Service Request',
-  applicationName: 'IT Helpdesk',
+  applicationName: 'Tech Helpdesk',
   subdomain: REFEX_ENV_CONFIG.Development.subdomain,
   baseUrl: `https://${REFEX_ENV_CONFIG.Development.subdomain}.kissflow.com`,
   environment: 'Development' as const,
@@ -79,7 +79,7 @@ const REFEX_ENGAGEMENT_HTML = `<!DOCTYPE html>
 </td>
 <td valign="middle" style="padding-left:18px; border-left:1px solid #e5e5e0;">
 <div style="font-size:18px; font-weight:bold; color:#1a1a1a !important;">{{ReportTitle}}</div>
-<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; IT Helpdesk</div>
+<div style="font-size:12px; color:#6b6b6b !important; margin-top:4px;">Live IT Service Request &middot; Tech Helpdesk</div>
 <div style="font-size:12px; color:#6b6b6b !important; margin-top:2px;">Generated {{ReportDate}} &middot; Refex tickets only</div>
 </td>
 </tr></table>

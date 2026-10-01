@@ -7,7 +7,16 @@ const NON_HUMAN_NAME_RE =
 const ITSM_PERSON_ALIASES: Record<string, string> = {
   'it manager': 'Sakthivel',
   'it manager refex': 'Sakthivel',
+  'it manager approval': 'Sakthivel',
+  'first approver - it manager': 'Sakthivel',
+  'first approver it manager': 'Sakthivel',
   'it head': 'Mugesh',
+  'it head refex': 'Mugesh',
+  'it head approval': 'Mugesh',
+  'final approver - it head': 'Mugesh',
+  'final approver it head': 'Mugesh',
+  'deepan duraisamy': 'Inactive',
+  'deepan.duraisamy': 'Inactive',
 };
 
 export function normalizeItsmPersonLabel(name: string | null | undefined): string {
@@ -68,4 +77,27 @@ export function resolvePersonDisplayName(
     if (text && isDisplayablePersonName(text, userId)) return text;
   }
   return null;
+}
+
+/** Dedupe requester/assignee labels that differ only by spacing, case, or a trailing initial. */
+export function uniquePersonLabels(names: Array<string | null | undefined>): string[] {
+  const byKey = new Map<string, string>();
+  for (const raw of names) {
+    const label = normalizeItsmPersonLabel(String(raw || '').trim());
+    if (!isDisplayablePersonName(label)) continue;
+    const key = compactMisName(label);
+    if (!key) continue;
+    const prev = byKey.get(key);
+    if (!prev || label.length > prev.length) byKey.set(key, label);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+}
+
+export function personLabelMatches(value: string | null | undefined, selected: string | null | undefined): boolean {
+  const want = compactMisName(selected);
+  const have = compactMisName(value);
+  if (want && have) return have === want || have.includes(want) || want.includes(have);
+  const sel = String(selected || '').trim().toLowerCase();
+  if (!sel) return true;
+  return String(value || '').toLowerCase().includes(sel);
 }

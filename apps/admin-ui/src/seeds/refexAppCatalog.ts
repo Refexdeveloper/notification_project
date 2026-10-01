@@ -80,6 +80,7 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
     kissflowAppId: 'Lead_Trcaker_A00',
     processName: 'Lead Tracker Process',
     processId: 'Lead_tracker_1_A00',
+    extraProcessIds: ['Vindview_Sales_Management_A00'],
     icon: 'ri-user-search-line',
     tint: 'bg-[#FFF4ED] text-[#EA580C]',
   },
@@ -94,7 +95,7 @@ export const REFEX_APP_CATALOG: RefexAppDefinition[] = [
   },
   {
     slug: 'itsm',
-    applicationName: 'IT Helpdesk',
+    applicationName: 'Tech Helpdesk',
     kissflowAppId: 'IT_Service_Management_A00',
     processName: 'Live IT Service Request',
     processId: 'Live_IT_Service_Request_A00',

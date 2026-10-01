@@ -9,7 +9,7 @@ fi
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/ops/runbooks/load-kissflow-creds.sh"
 
-GROUP_NAME="${GROUP_NAME:-Sales Team Modepro}"
+GROUP_NAME="${GROUP_NAME:-Modepro}"
 WEBSITE_FILTER="${WEBSITE_FILTER:-Modepro}"
 GROUP_SLUG="${GROUP_SLUG:-modepro}"
 SCHEDULE_ID="${SCHEDULE_ID:-}"
@@ -37,6 +37,7 @@ if [[ -n "${SCHEDULE_ID}" ]]; then
         rdv.config->>'subject' AS subject,
         rdv.config->>'from_email' AS from_email,
         rdv.config->>'website_filter' AS website_filter,
+        rdv.config->>'company_filter' AS company_filter,
         rdv.config->>'user_group_filter' AS user_group_filter,
         rdv.config->>'group_slug' AS group_slug,
         rdv.config->>'template_id' AS template_id,
@@ -60,9 +61,11 @@ if [[ -n "${SCHEDULE_ID}" ]]; then
     ) t;
   ")"
   [[ -n "${SCHEDULE_JSON}" ]] || stop "Schedule not found: ${SCHEDULE_ID}"
-  GROUP_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.user_group_filter // .schedule_name // empty')"
-  WEBSITE_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // empty')"
-  GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // "modepro"')"
+  GROUP_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.user_group_filter // .company_filter // .website_filter // .schedule_name // empty')"
+  WEBSITE_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // .company_filter // empty')"
+  GROUP_SLUG="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.group_slug // empty')"
+  [[ -n "${WEBSITE_FILTER}" ]] || stop "Lead Tracker schedule ${SCHEDULE_ID} has no website filter — will not send the full report."
+  [[ -n "${GROUP_SLUG}" ]] || GROUP_SLUG="$(printf '%s' "${WEBSITE_FILTER}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
   export TEMPLATE_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_id // empty')"
   export SUBJECT="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.subject // empty')"
   export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
@@ -83,25 +86,15 @@ fi
 
 export GROUP_NAME WEBSITE_FILTER GROUP_SLUG
 export SUBJECT="${SUBJECT:-Lead Tracker — ${GROUP_NAME} sales report}"
+export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"
+export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}"
 
 LATEST_FILE="${REPO_ROOT}/templates/generated/lead-tracker-${GROUP_SLUG}-latest.html"
 REPORT_CACHE_KEY="lead-tracker:${GROUP_SLUG}"
-if [[ -n "${TEST_RECIPIENT:-}" ]]; then
-  export REPORT_CACHE_KEY
-  if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "${REPORT_CACHE_KEY}" "${LATEST_FILE}" \
-    || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${LATEST_FILE}" "lead-tracker:"; then
-    log "Test send: loaded cached Lead Tracker report"
-  elif [[ -f "${LATEST_FILE}" ]]; then
-    log "Test send: using on-disk report ${LATEST_FILE}"
-  else
-    log "Test send: no cache — rendering Lead Tracker report (live Kissflow)"
-    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
-    bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${LATEST_FILE}" "${REPORT_CACHE_KEY}" || true
-  fi
-else
-  log "Step 1/2: Rendering Lead Tracker report"
-  bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
-fi
+
+log "Rendering Lead Tracker report from live Kissflow (dashboard Website + FY + no-draft counts)"
+bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/17-render-lead-tracker-html-report.sh"
+bash "${REPO_ROOT}/ops/runbooks/cache-report-html.sh" "${LATEST_FILE}" "${REPORT_CACHE_KEY}" || true
 
 log "Step 2/2: Sending Lead Tracker report"
 export APPLICATION_ID="${APPLICATION_ID:-Lead_Trcaker_A00}"

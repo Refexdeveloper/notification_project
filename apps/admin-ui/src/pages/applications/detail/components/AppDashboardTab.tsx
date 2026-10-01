@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NE_KPI_GRID_CLASS, NE_KPI_PRIMARY_ROW_CLASS, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
 import { resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
 import EmbedAppRecordsTable from '@/components/feature/EmbedAppRecordsTable';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
@@ -9,15 +9,10 @@ import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
 import { LayoutDashboard, RefreshCw } from 'lucide-react';
 import {
   AlertCircle,
-  CheckCircle2,
-  FolderKanban,
-  Layers,
   Loader2,
-  Percent,
   Sparkles,
   Users,
   UserCheck,
-  XCircle,
 } from 'lucide-react';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
@@ -35,6 +30,7 @@ import { resolveBackendApplicationId } from '@/services/applicationsApi';
 import {
   buildMisUsersFromRecords,
   companyCountsFromRecords,
+  websiteCountsFromRecords,
   countPmPortfolio,
   countTodayActivity,
   entityCountsFromRecords,
@@ -86,6 +82,21 @@ function isSignedInTodayIst(lastSignIn: string | null | undefined): boolean {
   }
 }
 
+function formatMisUserName(user: {
+  user_name?: string | null;
+  is_active?: boolean;
+  active_status?: string | null;
+}): string {
+  const name = String(user.user_name || '').trim() || 'Unknown';
+  const status = String(user.active_status || '').toLowerCase();
+  const inactive = user.is_active === false || status === 'inactive' || status.includes('inactive');
+  return inactive ? `${name} (InActive)` : name;
+}
+
+function misUserHasLogin(user: { last_sign_in?: string | null; ever_logged_in?: boolean }): boolean {
+  return Boolean(user.last_sign_in) || user.ever_logged_in === true;
+}
+
 function misUserLoginDisplay(
   user: {
     last_sign_in?: string | null;
@@ -123,13 +134,6 @@ type Props = {
 const OPEN_COLOR = '#D4A574';
 const CLOSED_COLOR = '#5BA88A';
 const REJECTED_COLOR = '#C97B8C';
-
-const KPI_STYLES = [
-  { bg: '#EAF3FF', text: '#1E3A5F', muted: '#5B7A9D', iconBg: '#D6E8FF', iconColor: '#3977BE', icon: Layers },
-  { bg: '#FFF2E4', text: '#7A4A1A', muted: '#A96A20', iconBg: '#FFE8CC', iconColor: '#A96A20', icon: FolderKanban },
-  { bg: '#E8F7F1', text: '#1F5C45', muted: '#287B5D', iconBg: '#D3EFE3', iconColor: '#287B5D', icon: CheckCircle2 },
-  { bg: '#FDECEF', text: '#7A3044', muted: '#B24E66', iconBg: '#F8D9E0', iconColor: '#B24E66', icon: XCircle },
-] as const;
 
 function closureRatioPct(open: number, closed: number): number {
   const den = open + closed;
@@ -285,8 +289,6 @@ function KpiCard({
   value,
   sub,
   styleIndex = 0,
-  delta,
-  embed = false,
   active = false,
   onClick,
   appKind,
@@ -296,71 +298,23 @@ function KpiCard({
   value: number;
   sub?: string;
   styleIndex?: number;
-  delta?: number | null;
   embed?: boolean;
   active?: boolean;
   onClick?: () => void;
   appKind?: NeAppKind;
   iconContext?: string;
 }) {
-  if (embed) {
-    return (
-      <EmbedKpiCard
-        label={label}
-        value={value}
-        sub={sub}
-        styleIndex={styleIndex}
-        appKind={appKind}
-        iconContext={iconContext}
-        active={active}
-        onClick={onClick}
-      />
-    );
-  }
-
-  const style = KPI_STYLES[styleIndex % KPI_STYLES.length];
-  const Icon = style.icon;
-  const deltaText =
-    delta == null || !Number.isFinite(delta)
-      ? null
-      : delta === 0
-        ? '±0 vs compare'
-        : `${delta > 0 ? '+' : ''}${delta.toLocaleString('en-IN')} vs compare`;
   return (
-    <div
-      className="relative min-w-0 overflow-hidden rounded-2xl p-5 shadow-[0_2px_8px_rgba(40,60,90,0.04)] ring-1 ring-[#E6EBF2]"
-      style={{ background: style.bg }}
-    >
-      <div className="relative flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-semibold uppercase tracking-wider" style={{ color: style.muted }}>
-            {label}
-          </p>
-          <p className="mt-2 text-[28px] font-bold leading-none tracking-tight tabular-nums" style={{ color: style.text }}>
-            {value.toLocaleString('en-IN')}
-          </p>
-          {sub ? (
-            <p className="mt-2 text-sm font-semibold" style={{ color: style.muted }}>
-              {sub}
-            </p>
-          ) : null}
-          {deltaText ? (
-            <p
-              className="mt-1 text-[11px] font-medium"
-              style={{ color: delta != null && delta < 0 ? '#B24E66' : '#287B5D' }}
-            >
-              {deltaText}
-            </p>
-          ) : null}
-        </div>
-        <div
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1 ring-black/5"
-          style={{ background: style.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: style.iconColor }} />
-        </div>
-      </div>
-    </div>
+    <EmbedKpiCard
+      label={label}
+      value={value}
+      sub={sub}
+      styleIndex={styleIndex}
+      appKind={appKind}
+      iconContext={iconContext}
+      active={active}
+      onClick={onClick}
+    />
   );
 }
 
@@ -403,7 +357,7 @@ function PmSection({
         <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">{title}</p>
         {hint ? <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p> : null}
       </div>
-      <div className={NE_KPI_GRID_CLASS}>
+      <div className={neKpiSectionGridClass(cards.length)}>
         {cards.map((card) => (
           <KpiCard
             key={card.label}
@@ -439,6 +393,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [dateTo, setDateTo] = useState('');
   const [kpiFocus, setKpiFocus] = useState<RecordKpiFocus | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
+  const [userPage, setUserPage] = useState(0);
   const misSectionRef = useRef<HTMLDivElement>(null);
   const refreshGenRef = useRef(0);
   const [loading, setLoading] = useState(false);
@@ -577,8 +532,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       const inv = await loadApplicationRecordInventory({
         applicationId: appId,
         environment,
-        skipCache: forceRefresh && !isSolarApplicationId(appId),
-        forceLive: false,
+        skipCache: forceRefresh,
+        forceLive: forceRefresh && isSolarApplicationId(appId),
       });
       if (inv.ok) {
         setRecordInventory(inv.items);
@@ -590,8 +545,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   );
 
   useEffect(() => {
-    void refresh(false);
-    void loadInventory(false);
+    void refresh(false).then(() => {
+      void loadInventory(false);
+    });
   }, [appId]); // eslint-disable-line react-hooks/exhaustive-deps -- load dashboard + inventory once per app
 
   useEffect(() => {
@@ -640,6 +596,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const travelMode = Boolean(
     data?.report_layout?.kind === 'travel'
     || /travel|expense_and_travel/i.test(appId || ''),
+  );
+  const leadMode = Boolean(
+    data?.report_layout?.kind === 'lead'
+    || /lead/i.test(appId || ''),
   );
   const hasInventory = recordInventory.length > 0;
   const dropdownFiltersActive = entity !== 'all' || company !== 'all' || userFilter !== 'all';
@@ -723,8 +683,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       company,
       itsmCompanyMode,
       travelMode,
+      leadWebsiteMode: leadMode,
     });
-  }, [company, filterInventory, itsmCompanyMode, travelMode, useClientInventory]);
+  }, [company, filterInventory, itsmCompanyMode, leadMode, travelMode, useClientInventory]);
 
   const kpiRecords = useMemo(() => {
     if (!useClientInventory) return [] as AppRecordRow[];
@@ -765,27 +726,17 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   );
 
   const clientMisUsers = useMemo(() => {
-    if (!useClientInventory) {
-      return sortByClosedDesc(mergeRosterWithTicketCounts(identityRoster, data?.users || []));
-    }
-    const ticketUsers = buildMisUsersFromRecords(scopedRecords, userRoster, { ownerMode: misOwnerMode });
-    // Entity / Company / User filters: MIS must mirror scoped tickets — not the full APP_ROLE
-    // roster with zeros, and not drop assignees who are outside the roster.
-    if (dropdownFiltersActive) {
-      const scoped = ticketUsers.filter((u) => Number(u.total || 0) > 0);
-      return sortByClosedDesc(overlayRosterSignIn(scoped, userRoster));
-    }
-    const merged = mergeRosterWithTicketCounts(identityRoster, ticketUsers);
-    const focused = Boolean(kpiFocus && kpiFocus !== 'total');
-    const rows = focused
-      ? merged.filter((u) => Number(u.total || 0) > 0)
-      : merged;
-    return sortByClosedDesc(overlayRosterSignIn(rows, userRoster));
+    const ticketUsers = useClientInventory
+      ? buildMisUsersFromRecords(scopedRecords, userRoster, { ownerMode: misOwnerMode })
+      : mergeRosterWithTicketCounts(identityRoster, data?.users || []);
+    const assigned = overlayRosterSignIn(
+      ticketUsers.filter((u) => Number(u.total || 0) > 0),
+      userRoster,
+    ).filter((u) => misUserHasLogin(u));
+    return sortByClosedDesc(assigned);
   }, [
     data?.users,
-    dropdownFiltersActive,
     identityRoster,
-    kpiFocus,
     misOwnerMode,
     scopedRecords,
     useClientInventory,
@@ -844,6 +795,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     return rows;
   }, [clientMisUsers, userFilter]);
 
+  const USER_PAGE_SIZE = 40;
+  useEffect(() => {
+    setUserPage(0);
+  }, [entity, company, userFilter, period]);
+  const pagedMisUsers = displayedMisUsers.slice(0, (userPage + 1) * USER_PAGE_SIZE);
+  const hasMoreMisUsers = displayedMisUsers.length > pagedMisUsers.length;
+
   const entityOptions = useMemo(() => {
     // Always keep Refex/Extrovis (or Venwind) in the list, even at count 0, so the
     // native select cannot snap back to All when a period has no rows for one entity.
@@ -860,6 +818,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   const companyOptions = useMemo(() => {
     const source = filterInventory.length ? filterInventory : stampedInventory;
+    if (leadMode) {
+      const rows = websiteCountsFromRecords(source);
+      return sortCompanyFilterOptions(ensureFilterOption(
+        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+        company,
+      ));
+    }
     const rows = companyCountsFromRecords(source, { itsmCompanyMode, entity });
     if (itsmCompanyMode) {
       const counts: Record<string, number> = {};
@@ -878,7 +843,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
       company,
     ));
-  }, [company, entity, filterInventory, itsmCompanyMode, stampedInventory]);
+  }, [company, entity, filterInventory, itsmCompanyMode, leadMode, stampedInventory]);
 
   const openVal = Number(data?.metrics.open ?? data?.metrics.pending ?? 0);
   const closedVal = Number(data?.metrics.closed ?? data?.metrics.completed ?? 0);
@@ -895,11 +860,14 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const kpiClosed = clientKpis.closed;
   const kpiRejected = clientKpis.rejected;
 
-  const showCompanyFilter = !itsmCompanyMode || entity === 'refex' || entity === 'all';
-  // Extrovis entity has no legal-entity companies in the 29-list — hide Company until Refex/All.
+  const showCompanyFilter = true;
 
-  const adoptionOverall = Number(data?.metrics.sign_in_rate_overall ?? data?.metrics.user_adoption_pct ?? 0);
-  const adoptionToday = Number(data?.metrics.sign_in_rate_today || 0);
+  const scopedIdle = dropdownFiltersActive && useClientKpis && kpiTotal === 0;
+  const adoptionOverall = scopedIdle
+    ? 0
+    : Number(data?.metrics.sign_in_rate_overall ?? data?.metrics.user_adoption_pct ?? 0);
+  const adoptionToday = scopedIdle ? 0 : Number(data?.metrics.sign_in_rate_today || 0);
+  const signedInToday = scopedIdle ? 0 : Number(data?.metrics.signed_in_today || 0);
   const usersCardCount = workUsers.length || Number(data?.metrics.total_users || 0);
 
   const p2pDocRows = useMemo((): P2pDocRow[] => {
@@ -918,7 +886,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         else if (s === 'rejected') b.rejected += 1;
         else b.open += 1;
       }
-      return [buckets.PO, buckets.PR];
+      return [buckets.PO];
     }
     const rows = (data?.by_process || []).map((row) => {
       const key = String(row.process_id || row.process_name || row.process_label);
@@ -936,10 +904,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     if (!rows.length) {
       return [
         { key: 'purchase_orders', title: 'Purchase Order', short: 'PO' as const, total: 0, open: 0, closed: 0, rejected: 0 },
-        { key: 'purchase_requests', title: 'Purchase Requisition', short: 'PR' as const, total: 0, open: 0, closed: 0, rejected: 0 },
       ];
     }
-    return [...rows].sort((a, b) => Number(a.short === 'PR') - Number(b.short === 'PR'));
+    return rows.filter((row) => row.short === 'PO');
   }, [data?.by_process, isP2pLayout, kpiRecords, useClientKpis]);
 
   const handleKpiClick = useCallback((focus: RecordKpiFocus) => {
@@ -984,8 +951,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     );
   }
 
-  const showEntityFilter = true;
-  const showCompanyDropdown = showCompanyFilter && entity !== 'extrovis';
+  const showEntityFilter = false;
+  const showCompanyDropdown = showCompanyFilter;
 
   const filterBar = (
     <ExecutiveDateFilterBar
@@ -1006,7 +973,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       company={company}
       onCompanyChange={showCompanyDropdown ? handleCompanyChange : undefined}
       companyOptions={showCompanyDropdown ? companyOptions : undefined}
-      companyLabel="Company"
+      companyLabel={leadMode ? 'Website' : 'Company'}
       user={userFilter}
       onUserChange={setUserFilter}
       userOptions={userFilterOptions}
@@ -1042,9 +1009,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   return (
     <div className="relative rounded-3xl p-1">
       <DashboardLoadingOverlay
-        show={(loading && !data) || (refreshing && !(isSolarApplicationId(appId) && data))}
+        show={Boolean(loading && !data)}
         mode="fixed"
-        label={refreshing ? 'Updating dashboard…' : 'Loading dashboard…'}
+        label="Loading dashboard…"
       />
       <div className="space-y-4">
         <EmbedDashboardHero
@@ -1141,6 +1108,53 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   ]}
                 />
               </div>
+            ) : travelMode ? (
+              <div className="space-y-5">
+                <PmSection
+                  appKind={appKind}
+                  title="Today"
+                  cards={[
+                    {
+                      label: 'Opened today',
+                      value: todayActivity.opened,
+                      styleIndex: 0,
+                      active: kpiFocus === 'opened_today',
+                      onClick: () => handleKpiClick('opened_today'),
+                    },
+                    {
+                      label: 'Closed today',
+                      value: todayActivity.closed,
+                      styleIndex: 2,
+                      active: kpiFocus === 'closed_today',
+                      onClick: () => handleKpiClick('closed_today'),
+                    },
+                  ]}
+                />
+                {([
+                  { key: 'Travel_Management_A02', title: 'Travel Booking', match: /travel_management|travel booking|travel request/i },
+                  { key: 'Advance_Payment_Request_Process_A01', title: 'Travel Advance', match: /advance_payment|travel advance/i },
+                  { key: 'Expense_Management_A03', title: 'Travel Booking with amount claimed', match: /expense_management|amount claimed|expense/i },
+                ] as const).map((section) => {
+                  const rows = kpiRecords.filter((r) => section.match.test(String(r.process_id || r.subject || '')));
+                  const total = rows.length;
+                  const open = rows.filter((r) => String(r.status || '').toLowerCase() === 'open').length;
+                  const closed = rows.filter((r) => String(r.status || '').toLowerCase() === 'closed').length;
+                  const rejected = rows.filter((r) => String(r.status || '').toLowerCase() === 'rejected').length;
+                  return (
+                    <PmSection
+                      appKind={appKind}
+                      key={section.key}
+                      title={section.title}
+                      cards={[
+                        { label: 'Total', value: total, styleIndex: 0 },
+                        { label: 'Open', value: open, styleIndex: 1, active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
+                        { label: 'Closed', value: closed, styleIndex: 2, active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
+                        { label: 'Rejected', value: rejected, styleIndex: 3, active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
+                      ]}
+                    />
+                  );
+                })}
+              </div>
             ) : isP2pLayout ? (
               <div className="space-y-5">
                 <PmSection
@@ -1167,8 +1181,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   <PmSection
                     appKind={appKind}
                     key={row.key}
-                    title={row.short === 'PO' ? 'Purchase orders' : 'Purchase requisitions'}
-                    hint={row.short === 'PO' ? 'Approved and in-flight purchase orders' : 'Purchase requisitions waiting or completed'}
+                    title="Purchase orders"
+                    hint="Approved and in-flight purchase orders"
                     cards={[
                       { label: `Total ${row.short}s`, value: row.total, styleIndex: 0 },
                       {
@@ -1197,7 +1211,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 ))}
               </div>
             ) : (
-              <div className={NE_KPI_GRID_CLASS}>
+              <div className={NE_KPI_PRIMARY_ROW_CLASS}>
                 <KpiCard
                   label={totalLabel}
                   value={displayDashCount(kpiTotal)}
@@ -1264,45 +1278,43 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   sub="Ever signed in ÷ app users"
                   themes={[EMBED_ADOPTION_THEME]}
                   styleIndex={0}
+                  surface="white"
                 />
               ) : (
-                <div className="overflow-hidden rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    <Percent className="h-3.5 w-3.5" />
-                    Users · P2P app
-                  </div>
-                  <p className="mt-2 text-[28px] font-bold tabular-nums leading-none text-slate-900">
-                    {usersCardCount.toLocaleString('en-IN')}
-                  </p>
-                </div>
+                <EmbedKpiCard
+                  label="Users · P2P app"
+                  value={usersCardCount}
+                  icon={Users}
+                  themes={[EMBED_ADOPTION_THEME]}
+                  styleIndex={0}
+                  surface="white"
+                />
               )}
-              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  <Users className="h-3.5 w-3.5 text-sky-600" />
-                  Users
-                </div>
-                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
-                  {usersCardCount.toLocaleString('en-IN')}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
-                  Signed in today
-                </div>
-                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
-                  {Number(data.metrics.signed_in_today || 0).toLocaleString('en-IN')}
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  <Sparkles className="h-3.5 w-3.5 text-violet-600" />
-                  Adoption today
-                </div>
-                <div className="mt-1 text-[28px] font-bold tabular-nums leading-none text-slate-900">
-                  {adoptionToday}%
-                </div>
-              </div>
+              <EmbedKpiCard
+                label="Users"
+                value={usersCardCount}
+                icon={Users}
+                themes={EMBED_KPI_THEMES}
+                styleIndex={1}
+                surface="white"
+              />
+              <EmbedKpiCard
+                label="Signed in today"
+                value={signedInToday}
+                icon={UserCheck}
+                themes={EMBED_KPI_THEMES}
+                styleIndex={2}
+                surface="white"
+              />
+              <EmbedKpiCard
+                label="Adoption today"
+                value={adoptionToday}
+                suffix="%"
+                icon={Sparkles}
+                themes={[EMBED_ADOPTION_THEME]}
+                styleIndex={0}
+                surface="white"
+              />
             </div>
 
             <div ref={misSectionRef}>
@@ -1318,7 +1330,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               }
             >
               <div className="space-y-2.5 px-1 pb-3 lg:hidden">
-                {displayedMisUsers.map((user, index) => {
+                {pagedMisUsers.map((user, index) => {
                   const open = Number(user.open ?? user.pending ?? 0);
                   const closed = Number(user.closed ?? user.completed ?? 0);
                   const rejected = Number(user.rejected || 0);
@@ -1327,7 +1339,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   return (
                     <MisMobileRecordCard
                       key={rowKey}
-                      title={user.user_name}
+                      title={formatMisUserName(user)}
                       subtitle={login.text === '-' ? 'Last sign-in —' : `Last sign-in ${login.text}`}
                       fields={[
                         { label: 'Open', value: open },
@@ -1341,8 +1353,17 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 })}
                 {displayedMisUsers.length === 0 ? (
                   <p className="py-8 text-center text-sm text-slate-400">
-                    No users for this filter. Try All entities or This FY.
+                    No assigned users with a sign-in and ticket count for this filter.
                   </p>
+                ) : null}
+                {hasMoreMisUsers ? (
+                  <button
+                    type="button"
+                    onClick={() => setUserPage((p) => p + 1)}
+                    className="inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700"
+                  >
+                    Show more users ({displayedMisUsers.length - pagedMisUsers.length} remaining)
+                  </button>
                 ) : null}
               </div>
               <div className="-mx-5 -mb-5 hidden overflow-x-auto lg:block">
@@ -1359,7 +1380,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     </tr>
                   </thead>
                   <tbody>
-                    {displayedMisUsers.map((user, index) => {
+                    {pagedMisUsers.map((user, index) => {
                       const open = Number(user.open ?? user.pending ?? 0);
                       const closed = Number(user.closed ?? user.completed ?? 0);
                       const rejected = Number(user.rejected || 0);
@@ -1367,7 +1388,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                       const rowKey = `${compactMisName(user.user_name) || user.user_id || user.user_name}-${index}`;
                       return (
                         <tr key={rowKey} className="border-t border-slate-100">
-                          <td className="px-5 py-2.5 font-medium text-slate-900">{user.user_name}</td>
+                          <td className="min-w-[12rem] max-w-[18rem] whitespace-normal break-words px-5 py-2.5 font-medium text-slate-900">{formatMisUserName(user)}</td>
                           <td className="px-5 py-2.5 text-sm tabular-nums text-slate-600">
                             {login.text === '-' ? (
                               <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
@@ -1392,13 +1413,24 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     {displayedMisUsers.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-5 py-8 text-center text-sm text-slate-400">
-                          No users for this filter. Try All entities or This FY.
+                          No assigned users with a sign-in and ticket count for this filter.
                         </td>
                       </tr>
                     ) : null}
                   </tbody>
                 </table>
               </div>
+              {hasMoreMisUsers ? (
+                <div className="px-5 pb-4 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setUserPage((p) => p + 1)}
+                    className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Show more users ({displayedMisUsers.length - pagedMisUsers.length} remaining)
+                  </button>
+                </div>
+              ) : null}
             </DashboardCard>
             </div>
 
@@ -1420,6 +1452,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               todayKind={todayKind}
               itsmCompanyMode={itsmCompanyMode}
               travelMode={travelMode}
+              leadWebsiteMode={leadMode}
               activityDates={activityDates}
               filterAnimating={false}
             />

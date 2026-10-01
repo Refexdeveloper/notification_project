@@ -19,6 +19,7 @@ const {
 } = require('./p2pDashboard');
 const { isP2pConfigured } = require('./p2pReadonly');
 const { friendlyApplicationName } = require('./dashboardDisplay');
+const { isHiddenNeApplication } = require('./leadScope');
 
 const OVERVIEW_QUERY = `
 WITH apps AS (
@@ -434,7 +435,7 @@ async function loadDashboardOverview(pool, environment) {
     todayByApp = new Map((todayResult.rows || []).map((row) => [row.application_id, row]));
   }
 
-  const apps = rows.map((row) => {
+  const apps = rows.filter((row) => !isHiddenNeApplication(row.application_id, row.application_name)).map((row) => {
     const snap = snapshotByApp.get(row.application_id) || {};
     const cache = readCache(row.source_payload);
     const snapshotAt = cache?.fetched_at || cache?.snapshot_at || snap.snapshot_at || null;
@@ -456,10 +457,12 @@ async function loadDashboardOverview(pool, environment) {
       !isSameCalendarDay(new Date(overlay.snapshotAt), new Date(), DEFAULT_REPORT_TIMEZONE) ||
       (ageHours != null && ageHours > 24);
 
+    const payload = row.source_payload && typeof row.source_payload === 'object' ? row.source_payload : {};
     return {
       environment: row.environment,
       application_id: row.application_id,
       application_name: friendlyApplicationName(row.application_id, row.application_name),
+      embed_url: String(payload.embed_url || '').trim() || null,
       snapshot_at: overlay.snapshotAt,
       fetched_at: overlay.cacheFresh ? overlay.snapshotAt : null,
       data_source: overlay.dataSource,

@@ -3,6 +3,7 @@ import {
   defaultEntityFilterForProcess,
   formatEntityFilterLabel,
   friendlyApplicationName,
+  isHiddenNeApplication,
   isItsmApp,
   isTravelApp,
   isTravelProcess,
@@ -41,13 +42,18 @@ describe('processLabels travel usage', () => {
   });
 });
 
-describe('IT Helpdesk display name', () => {
+describe('Tech Helpdesk display name', () => {
   it('renames IT Service Management by Kissflow id and by label', () => {
     expect(friendlyApplicationName('IT_Service_Management_A00', 'IT Service Management')).toBe(
-      'IT Helpdesk',
+      'Tech Helpdesk',
     );
-    expect(friendlyApplicationName('', 'IT Service Management')).toBe('IT Helpdesk');
+    expect(friendlyApplicationName('', 'IT Service Management')).toBe('Tech Helpdesk');
     expect(friendlyApplicationName('Lead_Trcaker_A00', 'Lead Tracker')).toBe('Lead Tracker');
-    expect(isItsmApp('IT_Service_Management_A00', 'IT Helpdesk')).toBe(true);
+    expect(isItsmApp('IT_Service_Management_A00', 'Tech Helpdesk')).toBe(true);
+  });
+
+  it('hides the duplicate Lead Tracker Venwind app', () => {
+    expect(isHiddenNeApplication('Vindview_Sales_Management_A00', 'Lead Tracker Venwind')).toBe(true);
+    expect(isHiddenNeApplication('Lead_Trcaker_A00', 'Lead Tracker')).toBe(false);
   });
 });

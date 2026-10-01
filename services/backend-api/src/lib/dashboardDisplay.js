@@ -96,7 +96,16 @@ const NON_HUMAN_NAME_RE =
 const ITSM_PERSON_ALIASES = new Map([
   ['it manager', 'Sakthivel'],
   ['it manager refex', 'Sakthivel'],
+  ['it manager approval', 'Sakthivel'],
+  ['first approver - it manager', 'Sakthivel'],
+  ['first approver it manager', 'Sakthivel'],
   ['it head', 'Mugesh'],
+  ['it head refex', 'Mugesh'],
+  ['it head approval', 'Mugesh'],
+  ['final approver - it head', 'Mugesh'],
+  ['final approver it head', 'Mugesh'],
+  ['deepan duraisamy', 'Inactive'],
+  ['deepan.duraisamy', 'Inactive'],
 ]);
 
 function normalizeItsmPersonLabel(name) {
@@ -227,9 +236,9 @@ function filterDisplayablePeople(rows, nameKeys = ['user_name', 'name']) {
 }
 
 const ITSM_APP_ID = 'IT_Service_Management_A00';
-const ITSM_DISPLAY_NAME = 'IT Helpdesk';
+const ITSM_DISPLAY_NAME = 'Tech Helpdesk';
 
-/** Kissflow app id stays IT_Service_Management_A00; UI/email label is IT Helpdesk. */
+/** Kissflow app id stays IT_Service_Management_A00; UI/email label is Tech Helpdesk. */
 function friendlyApplicationName(applicationId, applicationName) {
   const id = String(applicationId || '').trim();
   const name = String(applicationName || '').trim();

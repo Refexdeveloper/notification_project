@@ -33,6 +33,7 @@ export type DashboardApplication = {
   snapshot_stale?: boolean;
   metrics: DashboardAppMetrics;
   metric_labels: DashboardMetricLabels;
+  embed_url?: string | null;
 };
 
 export type DashboardSendRow = {
@@ -177,18 +178,19 @@ export async function loadDashboard(
 /** Soft live refresh: related app users + live item counts (no full directory). */
 export async function refreshDashboardLive(
   environment: 'production' | 'development' = 'production',
-  options?: { applicationId?: string },
+  options?: { applicationId?: string; live?: boolean },
 ): Promise<{ ok: boolean; data?: DashboardData & { warnings?: string[]; refreshed_at?: string }; error?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
   }
   const params = new URLSearchParams({ environment });
   if (options?.applicationId) params.set('application_id', options.applicationId);
+  if (options?.live) params.set('live', '1');
 
   const res = await apiV1Fetch<DashboardData & { warnings?: string[]; refreshed_at?: string; applications?: DashboardApplication[] }>(
     `/dashboard/refresh?${params.toString()}`,
     { method: 'POST', body: '{}', cache: 'no-store' },
-    { timeoutMs: 25000 },
+    { timeoutMs: options?.live ? (options.applicationId ? 180000 : 300000) : 25000 },
   );
 
   if (!res.ok || !res.data) {

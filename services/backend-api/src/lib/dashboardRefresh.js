@@ -18,6 +18,7 @@ const {
   loadApplicationEngagementCache,
   ttlForApplication,
 } = require('./engagementCache');
+const { isHiddenNeApplication } = require('./leadScope');
 
 async function upsertUserLastSignIns(pool, environment, users) {
   if (!Array.isArray(users) || !users.length) return 0;
@@ -86,7 +87,7 @@ async function listCurrentApps(pool, environment, applicationId) {
      ORDER BY application_name`,
     [environment],
   );
-  return rows;
+  return rows.filter((row) => !isHiddenNeApplication(row.application_id, row.application_name));
 }
 
 /**

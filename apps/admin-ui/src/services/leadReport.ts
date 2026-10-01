@@ -16,29 +16,52 @@ import { fetchAllKissflowUsers, fetchKissflowUserDetail, type KissflowUserRecord
 
 const REPORT_TZ = 'Asia/Kolkata';
 
-/** Lead Tracker sales teams — leads filtered by Kissflow `Website_and_form`. */
+/** Lead Tracker websites — same values as Kissflow Website_and_form / dashboard Website filter. */
 export const LEAD_TRACKER_SALES_GROUPS = [
   {
-    groupName: '3i Sales Team',
+    groupName: '3iMedtech',
     websiteFilter: '3iMedtech',
     slug: '3i',
+    starterId: 'lead-3imedtech',
   },
   {
-    groupName: 'Sales Team Modepro',
-    websiteFilter: 'Modepro',
-    slug: 'modepro',
-  },
-  {
-    groupName: 'Sales Team Adonis',
-    websiteFilter: 'Adonis',
-    slug: 'adonis',
-  },
-  {
-    groupName: 'Sales Team Refex Mobility',
+    groupName: 'Refex Mobility',
     websiteFilter: 'Refex Mobility',
     slug: 'refex-mobility',
+    starterId: 'lead-refex-mobility',
+  },
+  {
+    groupName: 'Adonis',
+    websiteFilter: 'Adonis',
+    slug: 'adonis',
+    starterId: 'lead-adonis',
+  },
+  {
+    groupName: 'Modepro',
+    websiteFilter: 'Modepro',
+    slug: 'modepro',
+    starterId: 'lead-modepro',
+  },
+  {
+    groupName: 'Venwind',
+    websiteFilter: 'Venwind',
+    slug: 'venwind',
+    starterId: 'lead-venwind',
   },
 ] as const;
+
+export function resolveLeadCompany(
+  value = '',
+): (typeof LEAD_TRACKER_SALES_GROUPS)[number] | undefined {
+  const needle = String(value || '').trim().toLowerCase();
+  if (!needle) return undefined;
+  return LEAD_TRACKER_SALES_GROUPS.find((g) => {
+    const names = [g.groupName, g.websiteFilter, g.slug, g.starterId].map((v) =>
+      String(v).toLowerCase(),
+    );
+    return names.some((n) => n === needle || n.includes(needle) || needle.includes(n));
+  });
+}
 
 export const LEAD_TRACKER_TEST_RECIPIENTS = [
   'raghul.je@refex.co.in',
@@ -74,8 +97,14 @@ export interface LeadReport {
 
 const CACHE_PREFIX = 'ne_lead_report_';
 
+/** IST YYYY-MM-DD — same as schedule-runner / `TZ=Asia/Kolkata date +%Y-%m-%d`. */
 function istDateKey(d: Date): string {
-  return d.toLocaleDateString('en-CA', { timeZone: REPORT_TZ });
+  if (Number.isNaN(d.getTime())) return '';
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const m = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(ist.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function isLoggedInToday(lastLogin: string | null): boolean {
@@ -131,19 +160,12 @@ function extractWebsite(obj: Record<string, unknown>): string {
   for (const key of [
     'Website_and_form',
     'Website',
-    'website',
-    'Lead_Website',
-    'Website_Name',
-    'Source_Website',
-    'Lead_Source',
-    'Source',
-    'Company_Website',
   ]) {
     const val = obj[key];
     if (typeof val === 'string' && val.trim()) return val.trim();
     if (val && typeof val === 'object') {
       const nested = val as Record<string, unknown>;
-      const label = pickString(nested, ['Name', 'name', 'Label', 'DisplayName', 'Value']);
+      const label = pickString(nested, ['Name', 'name', 'Label', 'DisplayName', 'Value', 'v', 'value']);
       if (label) return label;
     }
   }
@@ -153,14 +175,14 @@ function extractWebsite(obj: Record<string, unknown>): string {
 function extractLeadStatus(obj: Record<string, unknown>): string {
   return (
     pickString(obj, [
+      'Lead_Status',
+      'LeadStatus',
+      'Lead_Stage',
       'Status',
       'status',
       '_status',
-      'Lead_Status',
-      'LeadStatus',
       'Stage',
       'State',
-      'Lead_Stage',
     ]) || 'Unknown'
   );
 }
@@ -270,10 +292,75 @@ function isLeadOpen(status: string): boolean {
   return !isLeadClosed(status);
 }
 
+function leadCreatedYmd(obj: Record<string, unknown>): string {
+  // Dashboard FY uses record.created_at = Kissflow _created_at only.
+  const raw = obj?._created_at;
+  const text =
+    typeof raw === 'string'
+      ? raw
+      : raw && typeof raw === 'object'
+        ? String((raw as { v?: unknown }).v || '')
+        : '';
+  if (!text) return '';
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) return istDateKey(parsed);
+  return String(text).slice(0, 10);
+}
+
+function inCurrentFy(obj: Record<string, unknown>): boolean {
+  const ymd = leadCreatedYmd(obj);
+  if (!ymd) return false;
+  const to = istDateKey(new Date());
+  const month = Number(to.slice(5, 7));
+  const year = Number(to.slice(0, 4));
+  const start = month >= 4 ? year : year - 1;
+  return ymd >= `${start}-04-01` && ymd <= to;
+}
+
+/** Same draft rule as dashboard inventory / Records (isDraftRaw). */
+export function isLeadDraftItem(obj: Record<string, unknown> | null | undefined): boolean {
+  if (!obj || typeof obj !== 'object') return false;
+  const parts = [
+    obj._status,
+    obj.Status,
+    obj.process_status,
+    obj.Process_Status,
+    obj._current_step,
+    obj.current_step,
+    obj.Step,
+  ];
+  return parts.some((p) => String(p || '').toLowerCase().includes('draft'));
+}
+
+export function dedupeLeadItems<T extends Record<string, unknown>>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items || []) {
+    const id = String(item._id || item.Lead_ID || item.Lead_Id || item.id || '').trim();
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+/** Website + This FY + not draft — same scope as Lead dashboard default filters. */
+export function isCountableLeadForReport(
+  obj: Record<string, unknown>,
+  websiteFilter: string,
+): boolean {
+  if (isLeadDraftItem(obj)) return false;
+  if (!websiteMatches(extractWebsite(obj), websiteFilter)) return false;
+  return inCurrentFy(obj);
+}
+
 function websiteMatches(leadWebsite: string, filter: string): boolean {
   const w = leadWebsite.trim().toLowerCase();
   const f = filter.trim().toLowerCase();
-  if (!f) return true;
+  // Empty filter must not match every lead — that is the full report.
+  if (!f) return false;
   if (!w) return false;
   return w === f || w.includes(f) || f.includes(w);
 }
@@ -291,7 +378,7 @@ export async function fetchAllLeadItems(
 
   const pathBuilders = [
     (page: number) =>
-      `/process/2/${account}/admin/${adminRid}/item?${kissflowPageQuery(page)}&apply_preference=1`,
+      `/process/2/${account}/admin/${adminRid}/item?${kissflowPageQuery(page)}&apply_preference=false`,
     (page: number) => `/process/2/${account}/${rid}/myitems?${kissflowPageQuery(page)}`,
     (page: number) => `/process/2/${account}/${rid}/mytasks?${kissflowPageQuery(page)}`,
   ];
@@ -462,8 +549,8 @@ export async function buildLeadReport(
   if (itemsError) errors.push(itemsError);
   errors.push(...userErrors);
 
-  const filteredLeads = items.filter((item) =>
-    websiteMatches(extractWebsite(item), websiteFilter),
+  const filteredLeads = dedupeLeadItems(items).filter((item) =>
+    isCountableLeadForReport(item, websiteFilter),
   );
 
   const userByEmail = new Map<string, KissflowUserRecord>();
@@ -577,6 +664,7 @@ export function leadReportToOverrides(report: LeadReport): Record<string, string
   return {
     GroupName: groupLabel,
     WebsiteName: report.websiteFilter || groupLabel,
+    CompanyName: report.websiteFilter || groupLabel,
     TotalLeads: String(report.totals.totalLeads),
     OpenLeads: String(report.totals.openLeads),
     ClosedLeads: String(report.totals.closedLeads),
@@ -584,6 +672,6 @@ export function leadReportToOverrides(report: LeadReport): Record<string, string
     SignedInToday: String(report.totals.signedInToday),
     LeadTableHtml: renderLeadReportTableHtml(report.rows),
     ReportTitle: `${groupLabel} — Lead Tracker`,
-    ReportBody: `Live data from Kissflow Lead Tracker (${groupLabel}): leads filtered by Website_and_form, grouped by assigned sales person.`,
+    ReportBody: `Live data from Kissflow Lead Tracker (${groupLabel}): ${groupLabel} leads only, grouped by assigned sales person.`,
   };
 }

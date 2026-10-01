@@ -143,6 +143,7 @@ export type BackendApplicationRow = {
   dataform_ids?: string[] | unknown;
   board_ids?: string[] | unknown;
   dataset_ids?: string[] | unknown;
+  embed_url?: string | null;
 };
 
 export type ApplicationsListResponse = {
