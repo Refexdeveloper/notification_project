@@ -41,7 +41,7 @@ export type AppRecordsResponse = {
   };
 };
 
-const APP_RECORDS_CACHE_PREFIX = 'refex:app-records:v10';
+const APP_RECORDS_CACHE_PREFIX = 'refex:app-records:v11';
 const APP_RECORDS_CACHE_STALE_MS = 5 * 60 * 1000;
 const APP_RECORDS_CACHE_MAX_MS = 30 * 60 * 1000;
 

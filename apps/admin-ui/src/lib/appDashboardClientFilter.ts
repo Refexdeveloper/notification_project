@@ -761,3 +761,23 @@ export function unionRosterWithTicketUsers(
   }
   return extra.length ? [...merged, ...extra] : merged;
 }
+
+export function misUserHasLogin(user: { last_sign_in?: string | null; ever_logged_in?: boolean }): boolean {
+  return Boolean(user.last_sign_in) || user.ever_logged_in === true;
+}
+
+/**
+ * Same people as the MIS Users table: assigned tickets in the current
+ * Entity/Company/Period scope and a Kissflow login. Roster-only names
+ * (e.g. Agnes Simon with 0 tickets) are excluded so the User filter
+ * cannot list someone who never appears in MIS.
+ */
+export function misEligibleUsers(
+  ticketUsers: AppDashboardUser[],
+  roster: AppDashboardUser[],
+): AppDashboardUser[] {
+  return overlayRosterSignIn(
+    (ticketUsers || []).filter((u) => Number(u.total || 0) > 0),
+    roster,
+  ).filter((u) => misUserHasLogin(u));
+}

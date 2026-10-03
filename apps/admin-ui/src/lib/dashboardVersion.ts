@@ -1,5 +1,5 @@
 /** Bump this on each dashboard KPI / MIS / filter change so we can revert by version. */
-export const DASHBOARD_VERSION = '2026.09.02-d9';
+export const DASHBOARD_VERSION = '2026.10.03-a4';
 
 export const DASHBOARD_VERSION_NOTES = [
   'ITSM always reloads from the server — browser session cache no longer keeps yesterday’s tickets after a fix.',
@@ -11,7 +11,9 @@ export const DASHBOARD_VERSION_NOTES = [
   'Entity filter (esp. ITSM Extrovis): process entity_key wins over legal company text so Extrovis tickets are not misclassified as Refex.',
   'When Entity/Company/User filters are active, MIS shows ticket assignees in scope (incl. non-roster) — not the full APP_ROLE roster with zeros.',
   'Entity dropdown options stay period-scoped (not entity-scoped) so Refex/Extrovis both remain selectable.',
-  'Users card, user dropdown (unfiltered), and unscoped MIS rows are the Kissflow APP_ROLE roster.',
+  'Users card stays the Kissflow APP_ROLE roster. User dropdown matches the MIS Users table (assignees with tickets + login) — roster-only names such as Agnes Simon are not options.',
+  'Tech Helpdesk Ticket source always recounts from the filtered tickets (Company / User / Period). It never keeps the unfiltered 997 mix.',
+  'MIS never shows a person named Inactive — Deepan Duraisamy stays the display name (InActive suffix if the account is off).',
   'Open / Closed / Rejected / Opened today / Closed today KPI clicks filter MIS + records and scroll to that section.',
   'Draft rows stay excluded. Closed today uses closed/completed timestamps, not created date.',
 ] as const;

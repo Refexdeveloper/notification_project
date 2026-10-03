@@ -107,6 +107,10 @@ export type AppDashboardData = {
   by_entity?: AppDashboardEntityRow[];
   by_process: AppDashboardProcess[];
   by_source?: AppDashboardBreakdown[];
+  /** Unfiltered live source mix (ITSM). Falls back to by_source. */
+  by_source_all?: AppDashboardBreakdown[];
+  /** Opened-today source mix (ITSM email HTML right panel). */
+  by_source_today?: AppDashboardBreakdown[];
   by_category?: AppDashboardBreakdown[];
   portfolio?: {
     projects_total: number;

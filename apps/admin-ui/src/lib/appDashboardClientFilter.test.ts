@@ -8,12 +8,13 @@ import {
   filterAppRecords,
   websiteCountsFromRecords,
   mergeRosterWithTicketCounts,
+  misEligibleUsers,
   unionRosterWithTicketUsers,
   recordMatchesAssigned,
   stampRecordsWithAssigneeCompany,
 } from './appDashboardClientFilter';
 import { buildRefexCompanyOptions, recordMatchesCompany } from './refexCompanies';
-import { isPlaceholderPersonName, personLabelMatches, uniquePersonLabels } from './personName';
+import { isPlaceholderPersonName, normalizeItsmPersonLabel, personLabelMatches, uniquePersonLabels } from './personName';
 import type { AppRecordRow } from '@/services/appRecordsApi';
 
 describe('countPmPortfolio', () => {
@@ -246,6 +247,16 @@ describe('isPlaceholderPersonName', () => {
     expect(isPlaceholderPersonName('—')).toBe(true);
     expect(isPlaceholderPersonName('-')).toBe(true);
     expect(isPlaceholderPersonName('Bhukkay Naik')).toBe(false);
+  });
+
+  it('does not treat Inactive as a person name', () => {
+    expect(isPlaceholderPersonName('Inactive')).toBe(true);
+    expect(isPlaceholderPersonName('Deepan Duraisamy')).toBe(false);
+  });
+
+  it('keeps Deepan Duraisamy instead of rewriting to Inactive', () => {
+    expect(normalizeItsmPersonLabel('Deepan Duraisamy')).toBe('Deepan Duraisamy');
+    expect(normalizeItsmPersonLabel('Inactive')).toBe('Deepan Duraisamy');
   });
 });
 
@@ -486,6 +497,78 @@ describe('Lead Tracker website filter', () => {
       'Modepro',
       'Refex Mobility',
     ]);
+  });
+});
+
+describe('misEligibleUsers — User filter matches MIS table', () => {
+  const roster = [
+    {
+      user_id: 'agnes',
+      user_name: 'Agnes Simon',
+      email: 'agnes@refex.co.in',
+      last_sign_in: '2026-09-01T10:00:00.000Z',
+      ever_logged_in: true,
+      open: 0,
+      closed: 0,
+      rejected: 0,
+      total: 0,
+    },
+    {
+      user_id: 'bhukkay',
+      user_name: 'Bhukkay Naik',
+      email: 'bhukkay@refex.co.in',
+      last_sign_in: '2026-09-15T10:00:00.000Z',
+      ever_logged_in: true,
+      open: 0,
+      closed: 0,
+      rejected: 0,
+      total: 0,
+    },
+    {
+      user_id: 'no-login',
+      user_name: 'No Login Agent',
+      email: 'nologin@refex.co.in',
+      last_sign_in: null,
+      ever_logged_in: false,
+      open: 2,
+      closed: 0,
+      rejected: 0,
+      total: 2,
+    },
+  ];
+
+  it('drops roster-only names with zero tickets (Agnes Simon)', () => {
+    const tickets = buildMisUsersFromRecords(
+      [{ id: '1', assigned_to: 'Bhukkay Naik', status: 'open' }],
+      roster,
+    );
+    const eligible = misEligibleUsers(tickets, roster);
+    expect(eligible.map((u) => u.user_name)).toEqual(['Bhukkay Naik']);
+    expect(eligible.find((u) => u.user_name === 'Agnes Simon')).toBeUndefined();
+  });
+
+  it('drops assignees who never logged in even when they have tickets', () => {
+    const tickets = buildMisUsersFromRecords(
+      [
+        { id: '1', assigned_to: 'Bhukkay Naik', status: 'open' },
+        { id: '2', assigned_to: 'No Login Agent', status: 'open' },
+      ],
+      roster,
+    );
+    const eligible = misEligibleUsers(tickets, roster);
+    expect(eligible.map((u) => u.user_name)).toEqual(['Bhukkay Naik']);
+  });
+
+  it('keeps a roster member once they have tickets and a login', () => {
+    const tickets = buildMisUsersFromRecords(
+      [
+        { id: '1', assigned_to: 'Agnes Simon', status: 'closed' },
+        { id: '2', assigned_to: 'Bhukkay Naik', status: 'open' },
+      ],
+      roster,
+    );
+    const eligible = misEligibleUsers(tickets, roster);
+    expect(eligible.map((u) => u.user_name).sort()).toEqual(['Agnes Simon', 'Bhukkay Naik']);
   });
 });
 

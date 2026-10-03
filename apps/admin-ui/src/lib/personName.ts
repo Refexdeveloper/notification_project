@@ -15,8 +15,8 @@ const ITSM_PERSON_ALIASES: Record<string, string> = {
   'it head approval': 'Mugesh',
   'final approver - it head': 'Mugesh',
   'final approver it head': 'Mugesh',
-  'deepan duraisamy': 'Inactive',
-  'deepan.duraisamy': 'Inactive',
+  // Kissflow / older cache sometimes stored this person as the word Inactive.
+  inactive: 'Deepan Duraisamy',
 };
 
 export function normalizeItsmPersonLabel(name: string | null | undefined): string {
@@ -51,7 +51,7 @@ export function isPlaceholderPersonName(name: string | null | undefined): boolea
   const n = String(name || '').trim();
   if (!n) return true;
   if (n === '-' || n === '—' || n === '–' || n === '−') return true;
-  if (/^(unknown|n\/a|na|none|null|undefined)$/i.test(n)) return true;
+  if (/^(unknown|n\/a|na|none|null|undefined|inactive)$/i.test(n)) return true;
   return false;
 }
 

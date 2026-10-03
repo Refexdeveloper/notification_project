@@ -1186,12 +1186,20 @@ async function buildDashboardFromEngagementCache(pool, ctx) {
   const adoptionPct = engagement.sign_in_rate_overall;
 
   const SOURCE_ORDER = ['Email', 'WhatsApp', 'Mobile', 'Web', 'Other'];
+  const sourceRowsFromBuckets = (src) => SOURCE_ORDER
+    .filter((name) => Number((src && src[name]) || 0) > 0)
+    .map((name) => ({ name, count: Number(src[name] || 0) }));
   let by_source = [];
+  let by_source_all = [];
+  let by_source_today = [];
   if (itsm) {
     const src = totals.by_source && typeof totals.by_source === 'object' ? totals.by_source : {};
-    by_source = SOURCE_ORDER
-      .filter((name) => Number(src[name] || 0) > 0)
-      .map((name) => ({ name, count: Number(src[name] || 0) }));
+    const todaySrc = totals.by_source_today && typeof totals.by_source_today === 'object'
+      ? totals.by_source_today
+      : {};
+    by_source = sourceRowsFromBuckets(src);
+    by_source_all = by_source;
+    by_source_today = sourceRowsFromBuckets(todaySrc);
   }
 
   const byEntity = entitiesOut.map((e) => {
@@ -1337,6 +1345,8 @@ async function buildDashboardFromEngagementCache(pool, ctx) {
     by_entity: byEntity,
     by_process,
     by_source,
+    by_source_all,
+    by_source_today,
     by_category: [],
     portfolio: cachePortfolio,
     users: sortByClosureRatioDesc(users).slice(0, 80),
@@ -2484,11 +2494,20 @@ SELECT
     }
   }
   const SOURCE_ORDER = ['Email', 'WhatsApp', 'Mobile', 'Web', 'Other'];
+  const sourceRowsFromBuckets = (src) => SOURCE_ORDER
+    .filter((name) => Number((src && src[name]) || 0) > 0)
+    .map((name) => ({ name, count: Number(src[name] || 0) }));
   let by_source = itsm
     ? SOURCE_ORDER.filter((k) => (sourceCounts.get(k) || 0) > 0).map((name) => ({
         name,
         count: sourceCounts.get(name) || 0,
       }))
+    : [];
+  let by_source_all = itsm && liveSourceBuckets
+    ? sourceRowsFromBuckets(liveSourceBuckets)
+    : by_source;
+  let by_source_today = itsm && liveTotals && liveTotals.by_source_today
+    ? sourceRowsFromBuckets(liveTotals.by_source_today)
     : [];
   // Unfiltered live refresh: prefer Kissflow list source counts (matches email HTML).
   if (itsm && !kpiFiltersActive && liveSourceBuckets) {
@@ -2903,6 +2922,8 @@ SELECT
     by_entity: byEntity,
     by_process,
     by_source,
+    by_source_all,
+    by_source_today,
     by_category,
     portfolio: (() => {
       const p = row.portfolio && typeof row.portfolio === 'object' ? row.portfolio : {};

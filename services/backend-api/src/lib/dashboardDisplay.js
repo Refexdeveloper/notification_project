@@ -104,8 +104,7 @@ const ITSM_PERSON_ALIASES = new Map([
   ['it head approval', 'Mugesh'],
   ['final approver - it head', 'Mugesh'],
   ['final approver it head', 'Mugesh'],
-  ['deepan duraisamy', 'Inactive'],
-  ['deepan.duraisamy', 'Inactive'],
+  ['inactive', 'Deepan Duraisamy'],
 ]);
 
 function normalizeItsmPersonLabel(name) {
@@ -131,6 +130,7 @@ function isDisplayablePersonName(name, userId) {
   const n = String(name || '').trim();
   const id = String(userId || '').trim();
   if (!n) return false;
+  if (/^(unknown|n\/a|na|none|null|undefined|inactive)$/i.test(n)) return false;
   if (looksLikeKissflowUserId(n)) return false;
   if (n === id && looksLikeKissflowUserId(id)) return false;
   if (NON_HUMAN_NAME_RE.test(n)) return false;

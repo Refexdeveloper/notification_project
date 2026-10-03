@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
 import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NE_KPI_GRID_CLASS, NE_KPI_PRIMARY_ROW_CLASS, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
+import ItsmSourceBreakdown from '@/components/feature/ItsmSourceBreakdown';
 import { resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
 import EmbedAppRecordsTable from '@/components/feature/EmbedAppRecordsTable';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
@@ -39,6 +40,7 @@ import {
   filterOptionMatches,
   isUsableUserFilterLabel,
   mergeRosterWithTicketCounts,
+  misEligibleUsers,
   overlayRosterSignIn,
   unionRosterWithTicketUsers,
   stampRecordsWithAssigneeCompany,
@@ -46,6 +48,7 @@ import {
   type RecordKpiFocus,
 } from '@/lib/appDashboardClientFilter';
 import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
+import { itsmSourceFromFilteredRecords, recordsHaveSource } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
 import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel } from '@/lib/personName';
 import {
@@ -91,10 +94,6 @@ function formatMisUserName(user: {
   const status = String(user.active_status || '').toLowerCase();
   const inactive = user.is_active === false || status === 'inactive' || status.includes('inactive');
   return inactive ? `${name} (InActive)` : name;
-}
-
-function misUserHasLogin(user: { last_sign_in?: string | null; ever_logged_in?: boolean }): boolean {
-  return Boolean(user.last_sign_in) || user.ever_logged_in === true;
 }
 
 function misUserLoginDisplay(
@@ -544,7 +543,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     [app, appId],
   );
 
+  const sourceInventoryRefreshRef = useRef(false);
+
   useEffect(() => {
+    sourceInventoryRefreshRef.current = false;
     void refresh(false).then(() => {
       void loadInventory(false);
     });
@@ -593,6 +595,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     data?.report_layout?.kind === 'itsm'
     || /itsm|service_management/i.test(appId || ''),
   );
+
+  useEffect(() => {
+    if (!itsmCompanyMode || !recordInventory.length || recordsHaveSource(recordInventory)) return;
+    if (sourceInventoryRefreshRef.current) return;
+    sourceInventoryRefreshRef.current = true;
+    void loadInventory(true);
+  }, [itsmCompanyMode, recordInventory, loadInventory]);
   const travelMode = Boolean(
     data?.report_layout?.kind === 'travel'
     || /travel|expense_and_travel/i.test(appId || ''),
@@ -729,11 +738,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     const ticketUsers = useClientInventory
       ? buildMisUsersFromRecords(scopedRecords, userRoster, { ownerMode: misOwnerMode })
       : mergeRosterWithTicketCounts(identityRoster, data?.users || []);
-    const assigned = overlayRosterSignIn(
-      ticketUsers.filter((u) => Number(u.total || 0) > 0),
-      userRoster,
-    ).filter((u) => misUserHasLogin(u));
-    return sortByClosedDesc(assigned);
+    return sortByClosedDesc(misEligibleUsers(ticketUsers, userRoster));
   }, [
     data?.users,
     identityRoster,
@@ -748,14 +753,25 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     [identityRoster, userRoster],
   );
 
-  const userFilterOptions = useMemo(() => {
-    // Entity/Company/Period may narrow the list. Never rebuild from the User-filtered
-    // set — that dropped the selected id and the native <select> snapped back to All.
-    const scopedUsers = (entity !== 'all' || company !== 'all')
+  const userFilterPeople = useMemo(() => {
+    // Same eligibility as the MIS Users table. Use scopeRecords (Entity /
+    // Company / Period only) — never the User-filtered set, or the selected
+    // id drops and the native <select> snaps back to All.
+    const ticketUsers = useClientInventory
       ? buildMisUsersFromRecords(scopeRecords, userRoster, { ownerMode: misOwnerMode })
-        .filter((u) => Number(u.total || 0) > 0)
-      : workUsers;
-    const options = scopedUsers
+      : mergeRosterWithTicketCounts(identityRoster, data?.users || []);
+    return misEligibleUsers(ticketUsers, userRoster);
+  }, [
+    data?.users,
+    identityRoster,
+    misOwnerMode,
+    scopeRecords,
+    useClientInventory,
+    userRoster,
+  ]);
+
+  const userFilterOptions = useMemo(() => {
+    const options = userFilterPeople
       .filter((u) => {
         const name = String(u.user_name || '').trim();
         return isUsableUserFilterLabel(name, u.user_id);
@@ -773,15 +789,17 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       if (!deduped.has(key)) deduped.set(key, { id: o.id, label: o.label });
     }
     const unique = [...deduped.values()];
-    return ensureFilterOption(
-      [
-        { id: 'all', label: unique.length ? `All Users (${unique.length})` : 'All Users' },
-        ...unique,
-      ],
-      userFilter,
-      assignedFilterName,
-    );
-  }, [assignedFilterName, company, entity, misOwnerMode, scopeRecords, userFilter, userRoster, workUsers]);
+    const base = [
+      { id: 'all', label: unique.length ? `All Users (${unique.length})` : 'All Users' },
+      ...unique,
+    ];
+    // Keep a still-eligible selected id so <select> does not snap. Do not
+    // re-add roster-only names (Agnes Simon) that are absent from MIS.
+    const selectedStillValid = unique.some((o) => filterOptionMatches(o, userFilter));
+    return selectedStillValid
+      ? ensureFilterOption(base, userFilter, assignedFilterName)
+      : base;
+  }, [assignedFilterName, userFilter, userFilterPeople]);
 
   useEffect(() => {
     if (userFilter === 'all') return;
@@ -933,6 +951,23 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     () => countTodayActivity(useClientInventory ? kpiRecords : recordInventory, istTodayYmd()),
     [kpiRecords, recordInventory, useClientInventory],
   );
+  const itsmSource = useMemo(() => {
+    if (!itsmCompanyMode) return { all: data?.by_source_all || data?.by_source, today: data?.by_source_today };
+    // Same ticket set as Total / Open / Closed. Do not fall back to the
+    // unfiltered API mix — that is why Company / User / Period looked stuck.
+    if (useClientInventory) return itsmSourceFromFilteredRecords(kpiRecords, istTodayYmd());
+    return {
+      all: data?.by_source_all || data?.by_source,
+      today: data?.by_source_today,
+    };
+  }, [
+    data?.by_source,
+    data?.by_source_all,
+    data?.by_source_today,
+    itsmCompanyMode,
+    kpiRecords,
+    useClientInventory,
+  ]);
   const pmPortfolio = useMemo(() => {
     if (!isPmLayout) return data?.portfolio;
     const api = data?.portfolio;
@@ -1316,6 +1351,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 surface="white"
               />
             </div>
+
+            {itsmCompanyMode ? (
+              <ItsmSourceBreakdown
+                all={itsmSource.all}
+                today={itsmSource.today}
+              />
+            ) : null}
 
             <div ref={misSectionRef}>
             <DashboardCard

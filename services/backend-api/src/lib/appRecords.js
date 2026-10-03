@@ -27,7 +27,7 @@ const {
   isItsmBusinessClosed,
   isItsmBusinessOpen,
 } = require('./kissflowClient');
-const { normalizeItsmPersonLabel } = require('./dashboardDisplay');
+const { classifyTicketSource, normalizeItsmPersonLabel } = require('./dashboardDisplay');
 const { projectKeyFromRaw, buildPmPortfolioFromRecords, projectKeySql } = require('./pmPortfolio');
 
 const ITSM_APP_ID = 'IT_Service_Management_A00';
@@ -271,6 +271,8 @@ function serializeRecordItem(it, opts = {}) {
     created_at: it.created_at,
     closed_at: it.closed_at || it.completed_at || null,
     amount: it.amount,
+    source: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
+    source_channel: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
   };
 }
 
@@ -942,6 +944,8 @@ function buildLiveRecordRows(allItems, applicationId) {
       closed_at: closedAt,
       project_id: projectKey,
       project_key: projectKey,
+      source: itsm ? classifyTicketSource(raw) : undefined,
+      source_channel: itsm ? classifyTicketSource(raw) : undefined,
     };
   });
 }
@@ -1363,7 +1367,17 @@ classified AS (
       i.snapshot_at
     ) AS created_at,
     (${closedAtSql}) AS closed_at,
-    (${projectKeySql('i')}) AS project_key
+    (${projectKeySql('i')}) AS project_key,
+    COALESCE(
+      NULLIF(trim(i.source_payload->>'Source'), ''),
+      NULLIF(trim(i.source_payload->'Source'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Ticket_Source'), ''),
+      NULLIF(trim(i.source_payload->'Ticket_Source'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Column_BDSZ_sAHys'), ''),
+      NULLIF(trim(i.source_payload->'Column_BDSZ_sAHys'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Column_hFjGV8lRrn'), ''),
+      NULLIF(trim(i.source_payload->'Column_hFjGV8lRrn'->>'Name'), '')
+    ) AS source_text
   FROM engagement_reporting.item i
   JOIN latest l
     ON i.snapshot_run_id = l.snapshot_run_id
@@ -1429,7 +1443,8 @@ SELECT
         c.created_at,
         c.closed_at,
         c.snapshot_at,
-        c.project_key
+        c.project_key,
+        c.source_text
       FROM filtered c
       ORDER BY c.created_at DESC NULLS LAST
       LIMIT $6 OFFSET $7
