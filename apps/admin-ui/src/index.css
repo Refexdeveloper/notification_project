@@ -76,9 +76,9 @@
   --foreground-900: 0.22 0.035 250;
   --foreground-950: 0.18 0.035 250;
 
-  --font-heading: 'Inter', system-ui, sans-serif;
-  --font-body: 'Inter', system-ui, sans-serif;
-  --font-label: 'Inter', system-ui, sans-serif;
+  --font-heading: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-body: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-label: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 
   --radius-sm: 8px;
   --radius-md: 10px;
@@ -110,7 +110,7 @@
   }
 
   body.embed-shell {
-    font-family: 'Inter', var(--font-body);
+    font-family: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     background-color: #f5f7fa;
     --embed-accent: #0f6cbd;
     --embed-accent-soft: #eef3ff;
@@ -129,7 +129,30 @@
   body.embed-shell h2,
   body.embed-shell h3,
   body.embed-shell .font-heading {
-    font-family: 'Inter', var(--font-heading);
+    font-family: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  .ne-dash {
+    font-family: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    color: #334155;
+    font-size: 0.875rem;
+    text-rendering: optimizeLegibility;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .ne-dash h1,
+  .ne-dash h2,
+  .ne-dash h3 {
+    font-family: Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  .ne-dash button,
+  .ne-dash input,
+  .ne-dash select,
+  .ne-dash textarea {
+    font-family: inherit;
   }
 
   h1, h2, h3, .font-heading {
@@ -182,6 +205,28 @@
     .ne-kpi-card:hover {
       transition: none;
       transform: none;
+    }
+  }
+
+  /* Kissflow Travel / Expense dashboard — light fade-in, no extra JS cost */
+  @keyframes ne-fade-in-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  .ne-dash-finance .ne-kpi-card {
+    animation: ne-fade-in-up 0.42s ease both;
+  }
+  .ne-dash-finance .ne-kpi-card:nth-child(1) { animation-delay: 0ms; }
+  .ne-dash-finance .ne-kpi-card:nth-child(2) { animation-delay: 40ms; }
+  .ne-dash-finance .ne-kpi-card:nth-child(3) { animation-delay: 80ms; }
+  .ne-dash-finance .ne-kpi-card:nth-child(4) { animation-delay: 120ms; }
+  .ne-dash-finance .ne-kpi-card:hover,
+  .ne-dash-finance .ne-finance-pack:hover {
+    transform: translateY(-4px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ne-dash-finance .ne-kpi-card {
+      animation: none;
     }
   }
 
@@ -364,6 +409,15 @@
   .login-shell * {
     scrollbar-width: none;
   }
+}
+
+/* Same count size on every KPI card (main + embed). Do not scale up on wide cards. */
+.ne-kpi-card {
+  container-type: inline-size;
+  container-name: ne-kpi;
+}
+.ne-kpi-value {
+  font-size: 24px;
 }
 
 @keyframes shimmer {

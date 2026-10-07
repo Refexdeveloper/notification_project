@@ -6,7 +6,9 @@ import {
   isPlaceholderPersonName,
   looksLikeKissflowUserId,
   normalizeItsmPersonLabel,
+  personDedupeKey,
 } from '@/lib/personName';
+import { itsmHumanName } from '@/lib/itsmRecordDisplay';
 import {
   buildEntityBucketOptions,
   buildRefexCompanyOptions,
@@ -70,20 +72,24 @@ export function recordMatchesAssigned(
   const requester = normalizeItsmPersonLabel(String(row.requested_by || '').trim());
   const rowId = String(row.assignee_id || '').trim().toLowerCase();
   const email = String(row.assignee_email || '').trim().toLowerCase();
-  const compactWho = compactMisName(who);
-  const compactRequester = compactMisName(requester);
-  const compactName = compactMisName(name);
+  const compactWho = personDedupeKey(who);
+  const compactRequester = personDedupeKey(requester);
+  const compactName = personDedupeKey(name);
   const idl = id.toLowerCase();
   const namel = name.toLowerCase();
 
+  const owner = itsmHumanName(row);
+  const compactOwner = personDedupeKey(owner);
   if (idl) {
     if (rowId && rowId === idl) return true;
     if (email && (email === idl || email.startsWith(`${idl}@`))) return true;
     if (who.toLowerCase() === idl) return true;
+    if (owner && owner.toLowerCase() === idl) return true;
     if (matchRequester && requester.toLowerCase() === idl) return true;
   }
   if (compactName.length >= 3) {
     if (compactWho.length >= 3 && compactWho === compactName) return true;
+    if (compactOwner.length >= 3 && compactOwner === compactName) return true;
     if (matchRequester && compactRequester.length >= 3 && compactRequester === compactName) return true;
   }
   if (namel && who && who.toLowerCase().includes(namel)) return true;
@@ -110,13 +116,43 @@ function toIstYmd(value: string | null | undefined): string {
   }
 }
 
-function recordClosedAt(row: AppRecordRow): string | null | undefined {
+function recordClosedAt(row: AppRecordRow, itsmStrict = false): string | null | undefined {
+  if (itsmStrict) {
+    return (row.closed_at as string | null | undefined) || null;
+  }
   return (
     (row.closed_at as string | null | undefined)
     || (row.completed_at as string | null | undefined)
     || (row.modified_at as string | null | undefined)
     || null
   );
+}
+
+/** Refex IT Tech Reopen / Ticket Reopen + Extrovis ReOpen Window. Not "Ticket Reopened". */
+export function isItsmReopenHoldStep(row: AppRecordRow | Record<string, unknown> | null | undefined): boolean {
+  const hay = `${row?.current_step || ''} ${row?.status_raw || ''} ${row?.form_status || ''}`.toLowerCase();
+  if (!hay.trim() || hay.includes('reopened')) return false;
+  return (
+    hay.includes('it tech reopen')
+    || hay.includes('ticket reopen')
+    || hay.includes('reopen window')
+    || hay.includes('employee feedback')
+  );
+}
+
+/**
+ * Closed Today = moved onto Ticket Reopen / IT Tech Reopen / ReOpen Window today.
+ * Falls back to process completed_at. Never uses comment-bumped modified_at.
+ */
+export function recordItsmClosedTodayAt(row: AppRecordRow | Record<string, unknown> | null | undefined): string | null {
+  if (!row) return null;
+  const reopenAt = String(row.reopen_entered_at || '').trim();
+  if (reopenAt) return reopenAt;
+  if (isItsmReopenHoldStep(row)) {
+    const agentAt = String(row.agent_closed_at || '').trim();
+    return agentAt || null;
+  }
+  return String(row.closed_at || row.completed_at || '').trim() || null;
 }
 
 export function recordEntityKey(row: AppRecordRow, itsmCompanyMode: boolean): string {
@@ -205,7 +241,7 @@ export function filterAppRecords(
 
     if (from || to) {
       const createdYmd = toIstYmd(row.created_at);
-      const closedYmd = activityDates ? toIstYmd(recordClosedAt(row)) : '';
+      const closedYmd = activityDates ? toIstYmd(recordClosedAt(row, itsmCompanyMode)) : '';
       const ymds = [createdYmd, closedYmd].filter(Boolean);
       if (!ymds.length) return false;
       const inWindow = ymds.some((ymd) => (!from || ymd >= from) && (!to || ymd <= to));
@@ -216,9 +252,13 @@ export function filterAppRecords(
       if (toIstYmd(row.created_at) !== todayYmd) return false;
     }
     if (todayKind === 'closed') {
-      const closedYmd = toIstYmd(recordClosedAt(row));
+      const closedYmd = itsmCompanyMode
+        ? toIstYmd(recordItsmClosedTodayAt(row))
+        : toIstYmd(recordClosedAt(row, false));
       if (closedYmd) {
         if (closedYmd !== todayYmd) return false;
+      } else if (itsmCompanyMode) {
+        return false;
       } else if (String(row.status || '').toLowerCase() !== 'closed' || toIstYmd(row.created_at) !== todayYmd) {
         return false;
       }
@@ -241,16 +281,24 @@ export function summarizeAppRecords(items: AppRecordRow[]) {
   return { open, closed, rejected, total: open + closed + rejected };
 }
 
-/** Today's created / closed counts (IST calendar day). Closed prefers closed_at / completed_at. */
-export function countTodayActivity(items: AppRecordRow[], todayYmd: string) {
+/** Today's created / closed counts (IST calendar day). ITSM Closed Today = Reopen-step move. */
+export function countTodayActivity(items: AppRecordRow[], todayYmd: string, opts: { itsmStrict?: boolean } = {}) {
   let opened = 0;
   let closed = 0;
   for (const r of items || []) {
     if (toIstYmd(r.created_at) === todayYmd) opened += 1;
-    const closedYmd = toIstYmd(recordClosedAt(r));
+    if (opts.itsmStrict) {
+      if (String(r.status || '').toLowerCase() !== 'closed') continue;
+      if (toIstYmd(recordItsmClosedTodayAt(r)) === todayYmd) closed += 1;
+      continue;
+    }
+    const closedYmd = toIstYmd(recordClosedAt(r, false));
     if (closedYmd) {
       if (closedYmd === todayYmd) closed += 1;
-    } else if (String(r.status || '').toLowerCase() === 'closed' && toIstYmd(r.created_at) === todayYmd) {
+    } else if (
+      String(r.status || '').toLowerCase() === 'closed'
+      && toIstYmd(r.created_at) === todayYmd
+    ) {
       closed += 1;
     }
   }
@@ -421,7 +469,7 @@ function profileLookupKeys(user: AppDashboardUser): string[] {
     keys.push(String(user.email).toLowerCase());
     keys.push(`email:${String(user.email).toLowerCase()}`);
   }
-  const compact = compactMisName(user.user_name);
+  const compact = personDedupeKey(user.user_name);
   if (compact.length >= 3) {
     keys.push(`name:${compact}`);
     keys.push(compact);
@@ -453,8 +501,8 @@ function resolveProfileForRecord(
     email,
     email ? `email:${email}` : '',
     name.toLowerCase(),
-    compactMisName(name),
-    compactMisName(name) ? `name:${compactMisName(name)}` : '',
+    personDedupeKey(name),
+    personDedupeKey(name) ? `name:${personDedupeKey(name)}` : '',
   ].filter(Boolean);
   for (const key of candidates) {
     const hit = profileByKey.get(key);
@@ -543,6 +591,40 @@ export function isUsableUserFilterLabel(name: string | null | undefined, userId?
   return isDisplayablePersonName(name, userId) && !isPlaceholderPersonName(name);
 }
 
+function preferredFilterLabel(current: string, next: string): string {
+  const left = String(current || '').trim();
+  const right = String(next || '').trim();
+  if (!left) return right;
+  if (!right) return left;
+  const leftCased = left !== left.toLowerCase();
+  const rightCased = right !== right.toLowerCase();
+  if (rightCased && !leftCased) return right;
+  if (right.length > left.length) return right;
+  return left;
+}
+
+/** Merge Sakthivel / sakthivel / two Kissflow ids into one User filter option. */
+export function mergeUserFilterOptions(
+  options: Array<{ id: string; label: string; email?: string }>,
+): Array<{ id: string; label: string }> {
+  const map = new Map<string, { id: string; label: string }>();
+  for (const option of options || []) {
+    const label = normalizeItsmPersonLabel(option.label);
+    if (!isUsableUserFilterLabel(label, option.id)) continue;
+    const key = personDedupeKey(label)
+      || String(option.email || '').trim().toLowerCase()
+      || String(option.id || '').trim().toLowerCase();
+    if (!key) continue;
+    const hit = map.get(key);
+    if (!hit) {
+      map.set(key, { id: option.id, label });
+      continue;
+    }
+    hit.label = preferredFilterLabel(hit.label, label);
+  }
+  return [...map.values()];
+}
+
 /** Keep the selected dropdown value in the list so native <select> does not snap back to All. */
 export function ensureFilterOption(
   options: Array<{ id: string; label: string }>,
@@ -562,17 +644,16 @@ export function filterOptionMatches(
   const sel = String(selectedId || '').trim();
   if (!sel || sel === 'all') return true;
   if (option.id === sel || option.label === sel) return true;
-  const compactSel = compactMisName(sel);
-  const compactLabel = compactMisName(option.label);
+  const compactSel = personDedupeKey(sel);
+  const compactLabel = personDedupeKey(option.label);
   return Boolean(compactSel) && compactSel === compactLabel;
 }
 
-/** MIS / records Assigned-to cell. ITSM = workflow Assigned To only (never closer/requester). */
+/** MIS / records Assigned-to cell. ITSM matches newceo: hide bots, use human closer if needed. */
 export function assignedRecordLabel(row: AppRecordRow, opts: { itsmCompanyMode?: boolean } = {}): string {
   const assigned = normalizeItsmPersonLabel(String(row.assigned_to || '').trim());
   if (opts.itsmCompanyMode) {
-    if (!assigned || isPlaceholderPersonName(assigned) || looksLikeKissflowUserId(assigned)) return '—';
-    return assigned;
+    return itsmHumanName(row) || '—';
   }
   const candidates = [assigned, row.closed_by, row.requested_by];
   for (const raw of candidates) {
@@ -604,7 +685,7 @@ export function buildMisUsersFromRecords(
 
   for (const r of records || []) {
     const profile = resolveProfileForRecord(r, profileByKey);
-    const assignedName = normalizeItsmPersonLabel(String(r.assigned_to || '').trim());
+    const assignedName = itsmHumanName(r) || normalizeItsmPersonLabel(String(r.assigned_to || '').trim());
     const requesterName = normalizeItsmPersonLabel(String(r.requested_by || '').trim());
     const assignedOk = isDisplayablePersonName(assignedName, String(r.assignee_id || ''));
     const name = assignedOk
@@ -615,7 +696,7 @@ export function buildMisUsersFromRecords(
     const email = String(r.assignee_email || profile.email || '').trim().toLowerCase();
     const id = String(r.assignee_id || profile.user_id || '').trim();
     if (!name || !isDisplayablePersonName(name, id) || isPlaceholderPersonName(name)) continue;
-    const mergeKey = compactMisName(name) || email || id || name.toLowerCase();
+    const mergeKey = personDedupeKey(name) || email || id || name.toLowerCase();
     if (!mergeKey) continue;
     const row = byKey.get(mergeKey) || {
       user_id: id || profile.user_id || mergeKey,
@@ -672,7 +753,7 @@ export function buildMisUsersFromRecords(
 function rosterPersonKey(u: AppDashboardUser): string {
   const email = String(u.email || '').trim().toLowerCase();
   if (email.includes('@')) return `email:${email}`;
-  const compact = compactMisName(u.user_name);
+  const compact = personDedupeKey(u.user_name);
   if (compact.length >= 3) return `name:${compact}`;
   return `id:${String(u.user_id || u.user_name || '').trim().toLowerCase()}`;
 }
@@ -683,8 +764,8 @@ function ticketUserForMember(
 ): AppDashboardUser | undefined {
   return countsByKey.get(rosterPersonKey(member))
     || (member.email ? countsByKey.get(`email:${String(member.email).trim().toLowerCase()}`) : undefined)
-    || (compactMisName(member.user_name).length >= 3
-      ? countsByKey.get(`name:${compactMisName(member.user_name)}`)
+    || (personDedupeKey(member.user_name).length >= 3
+      ? countsByKey.get(`name:${personDedupeKey(member.user_name)}`)
       : undefined)
     || (member.user_id ? countsByKey.get(`id:${String(member.user_id).trim().toLowerCase()}`) : undefined);
 }
@@ -695,7 +776,7 @@ function indexTicketUsers(ticketUsers: AppDashboardUser[]): Map<string, AppDashb
     countsByKey.set(rosterPersonKey(u), u);
     const email = String(u.email || '').trim().toLowerCase();
     if (email.includes('@')) countsByKey.set(`email:${email}`, u);
-    const compact = compactMisName(u.user_name);
+    const compact = personDedupeKey(u.user_name);
     if (compact.length >= 3) countsByKey.set(`name:${compact}`, u);
     const id = String(u.user_id || '').trim().toLowerCase();
     if (id) countsByKey.set(`id:${id}`, u);
@@ -742,7 +823,7 @@ export function unionRosterWithTicketUsers(
     seen.add(rosterPersonKey(u));
     const email = String(u.email || '').trim().toLowerCase();
     if (email.includes('@')) seen.add(`email:${email}`);
-    const compact = compactMisName(u.user_name);
+    const compact = personDedupeKey(u.user_name);
     if (compact.length >= 3) seen.add(`name:${compact}`);
     const id = String(u.user_id || '').trim().toLowerCase();
     if (id) seen.add(`id:${id}`);
@@ -752,7 +833,7 @@ export function unionRosterWithTicketUsers(
     const keys = [
       rosterPersonKey(u),
       u.email ? `email:${String(u.email).trim().toLowerCase()}` : '',
-      compactMisName(u.user_name).length >= 3 ? `name:${compactMisName(u.user_name)}` : '',
+      personDedupeKey(u.user_name).length >= 3 ? `name:${personDedupeKey(u.user_name)}` : '',
       u.user_id ? `id:${String(u.user_id).trim().toLowerCase()}` : '',
     ].filter(Boolean);
     if (keys.some((k) => seen.has(k))) continue;

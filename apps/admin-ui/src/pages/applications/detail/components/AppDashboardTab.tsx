@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NE_KPI_GRID_CLASS, NE_KPI_PRIMARY_ROW_CLASS, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, neKpiBalancedGridClass, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
+import NeFinanceProcessCard from '@/components/feature/NeFinanceProcessCard';
 import ItsmSourceBreakdown from '@/components/feature/ItsmSourceBreakdown';
 import { resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
+import { NE_DASH_CLASS, NE_TYPE } from '@/lib/neDashType';
 import EmbedAppRecordsTable from '@/components/feature/EmbedAppRecordsTable';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
 import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
-import { LayoutDashboard, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Plane, Receipt, RefreshCw, Wallet } from 'lucide-react';
 import {
   AlertCircle,
+  ChevronDown,
   Loader2,
   Sparkles,
   Users,
@@ -38,6 +41,7 @@ import {
   filterAppRecords,
   ensureFilterOption,
   filterOptionMatches,
+  mergeUserFilterOptions,
   isUsableUserFilterLabel,
   mergeRosterWithTicketCounts,
   misEligibleUsers,
@@ -47,10 +51,11 @@ import {
   summarizeAppRecords,
   type RecordKpiFocus,
 } from '@/lib/appDashboardClientFilter';
+import { ITSM_CEO_RECORD_COLUMNS } from '@/lib/itsmRecordDisplay';
 import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
 import { itsmSourceFromFilteredRecords, recordsHaveSource } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
-import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel } from '@/lib/personName';
+import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel, personDedupeKey } from '@/lib/personName';
 import {
   buildEntityBucketOptions,
   buildRefexCompanyOptions,
@@ -201,10 +206,10 @@ function userMatchesFilter(u: AppDashboardUser, userFilter: string): boolean {
   if (!userFilter || userFilter === 'all') return true;
   const sel = userFilter.toLowerCase();
   const id = String(u.user_id || u.user_name).toLowerCase();
-  const name = String(u.user_name || '').trim().toLowerCase()
-    .replace(/\./g, '').replace(/\s+/g, '').replace(/m$/, '');
-  const selName = sel.replace(/\./g, '').replace(/\s+/g, '').replace(/m$/, '');
-  return id === sel || name === selName || id.includes(sel) || sel.includes(id);
+  const have = personDedupeKey(u.user_name);
+  const want = personDedupeKey(userFilter);
+  if (have && want && (have === want || have.includes(want) || want.includes(have))) return true;
+  return id === sel || id.includes(sel) || sel.includes(id);
 }
 
 function sumUserKpis(users: AppDashboardUser[]) {
@@ -258,27 +263,50 @@ function DashboardCard({
   className = '',
   right,
   embed = false,
+  collapsible = false,
+  open = true,
+  onToggle,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
   right?: ReactNode;
   embed?: boolean;
+  collapsible?: boolean;
+  open?: boolean;
+  onToggle?: () => void;
 }) {
   return (
     <div
-      className={`flex h-full flex-col p-5 ${
+      className={`flex flex-col p-5 ${
         embed
           ? 'rounded-xl border border-slate-100 bg-white shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
           : `rounded-2xl bg-white shadow-sm ${className}`
       } ${embed ? className : ''}`}
       style={embed ? undefined : { border: `1px solid ${CARD_BORDER}` }}
     >
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        {right}
+      <div className={`flex items-center justify-between gap-2 ${open ? 'mb-4' : ''}`}>
+        {collapsible ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+          >
+            <h3 className={NE_TYPE.sectionTitle}>{title}</h3>
+            <span className="flex shrink-0 items-center gap-2">
+              {right}
+              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </span>
+          </button>
+        ) : (
+          <>
+            <h3 className={NE_TYPE.sectionTitle}>{title}</h3>
+            {right}
+          </>
+        )}
       </div>
-      <div className="min-h-0 flex-1">{children}</div>
+      {open ? <div className="min-h-0 flex-1">{children}</div> : null}
     </div>
   );
 }
@@ -292,6 +320,7 @@ function KpiCard({
   onClick,
   appKind,
   iconContext,
+  valueFormat = 'count',
 }: {
   label: string;
   value: number;
@@ -302,6 +331,7 @@ function KpiCard({
   onClick?: () => void;
   appKind?: NeAppKind;
   iconContext?: string;
+  valueFormat?: 'count' | 'inr';
 }) {
   return (
     <EmbedKpiCard
@@ -313,6 +343,7 @@ function KpiCard({
       iconContext={iconContext}
       active={active}
       onClick={onClick}
+      valueFormat={valueFormat}
     />
   );
 }
@@ -333,6 +364,58 @@ function p2pDocShort(row: { key: string; title: string }): 'PO' | 'PR' {
   return 'PR';
 }
 
+function sumRecordAmount(rows: Array<{ amount?: number | null; status?: string }>, status?: string) {
+  return rows.reduce((sum, row) => {
+    if (status && String(row.status || '').toLowerCase() !== status) return sum;
+    const n = Number(row.amount);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
+const EMS_CLAIM_TYPES = [
+  { key: 'daily', label: 'Daily Allowance', hint: 'Per diem for official travel days', match: /daily|allowance|per.?diem/i },
+  { key: 'food', label: 'Food Claim', hint: 'Meals during official duties', match: /food|meal/i },
+  { key: 'conveyance', label: 'Local Conveyance', hint: 'Local travel within city', match: /convey|local travel|transport/i },
+] as const;
+
+function claimsSub(count: number) {
+  const n = displayDashCount(count);
+  return `${n.toLocaleString('en-IN')} ${n === 1 ? 'claim' : 'claims'}`;
+}
+
+function requestsSub(count: number) {
+  const n = displayDashCount(count);
+  return `${n.toLocaleString('en-IN')} ${n === 1 ? 'request' : 'requests'}`;
+}
+
+function countByStatus(rows: Array<{ status?: string }>, status: string) {
+  return rows.filter((row) => String(row.status || '').toLowerCase() === status).length;
+}
+
+function topLabeledCounts(values: string[], limit = 3): string[] {
+  const map = new Map<string, number>();
+  for (const raw of values) {
+    const key = raw.trim();
+    if (!key) continue;
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+  return [...map.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([label, n]) => `${label} · ${n}`);
+}
+
+function travelRequestFacts(rows: AppRecordRow[]): string[] {
+  const trips = topLabeledCounts(rows.map((row) => String(row.trip_type || '')));
+  const routes = topLabeledCounts(rows.map((row) => {
+    const from = String(row.from_city || '').trim();
+    const to = String(row.to_city || '').trim();
+    if (!from && !to) return '';
+    return `${from || '—'} → ${to || '—'}`;
+  }));
+  return [...trips, ...routes];
+}
+
 function PmSection({
   title,
   hint,
@@ -347,14 +430,16 @@ function PmSection({
     styleIndex: number;
     active?: boolean;
     onClick?: () => void;
+    valueFormat?: 'count' | 'inr';
+    sub?: string;
   }>;
   appKind?: NeAppKind;
 }) {
   return (
     <div className="space-y-2">
       <div>
-        <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">{title}</p>
-        {hint ? <p className="mt-0.5 text-[11px] text-slate-400">{hint}</p> : null}
+        <p className={NE_TYPE.sectionTitle}>{title}</p>
+        {hint ? <p className={`mt-0.5 ${NE_TYPE.meta}`}>{hint}</p> : null}
       </div>
       <div className={neKpiSectionGridClass(cards.length)}>
         {cards.map((card) => (
@@ -362,12 +447,14 @@ function PmSection({
             key={card.label}
             label={card.label}
             value={displayDashCount(card.value)}
+            sub={card.sub}
             styleIndex={card.styleIndex}
             embed
             appKind={appKind}
             iconContext={title}
             active={card.active}
             onClick={card.onClick}
+            valueFormat={card.valueFormat}
           />
         ))}
       </div>
@@ -391,8 +478,12 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [kpiFocus, setKpiFocus] = useState<RecordKpiFocus | null>(null);
+  const [claimTypeFocus, setClaimTypeFocus] = useState<string | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
+  const [misScopedRecords, setMisScopedRecords] = useState<AppRecordRow[] | null>(null);
+  const [sourceScopedRecords, setSourceScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [userPage, setUserPage] = useState(0);
+  const [usersOpen, setUsersOpen] = useState(false);
   const misSectionRef = useRef<HTMLDivElement>(null);
   const refreshGenRef = useRef(0);
   const [loading, setLoading] = useState(false);
@@ -400,8 +491,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AppDashboardData | null>(null);
   const [recordInventory, setRecordInventory] = useState<AppRecordRow[]>([]);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
   const [recordsColumns, setRecordsColumns] = useState<AppRecordColumn[]>([]);
   const [recordsDataSource, setRecordsDataSource] = useState<string | undefined>();
+  const inventoryReadyRef = useRef(false);
+  const inventoryGenRef = useRef(0);
   const [fallbackAppUsers, setFallbackAppUsers] = useState<AppDashboardUser[]>([]);
 
   const resolvedDates = useMemo(
@@ -525,20 +619,30 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   );
 
   const loadInventory = useCallback(
-    async (forceRefresh = false) => {
-      if (!isBackendApiMode() || !appId) return;
+    async (forceRefresh = false, opts: { silent?: boolean } = {}) => {
+      if (!isBackendApiMode() || !appId) {
+        setInventoryLoading(false);
+        return;
+      }
+      const silent = Boolean(opts.silent);
+      const gen = inventoryGenRef.current;
       const environment = (app.environment as 'production' | 'development') || 'production';
+      if (forceRefresh) inventoryReadyRef.current = false;
+      if (!silent) setInventoryLoading(true);
       const inv = await loadApplicationRecordInventory({
         applicationId: appId,
         environment,
         skipCache: forceRefresh,
         forceLive: forceRefresh && isSolarApplicationId(appId),
       });
+      if (gen !== inventoryGenRef.current) return;
       if (inv.ok) {
+        inventoryReadyRef.current = true;
         setRecordInventory(inv.items);
         setRecordsColumns(inv.columns);
         setRecordsDataSource(inv.dataSource);
       }
+      if (!silent) setInventoryLoading(false);
     },
     [app, appId],
   );
@@ -547,13 +651,21 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   useEffect(() => {
     sourceInventoryRefreshRef.current = false;
-    void refresh(false).then(() => {
-      void loadInventory(false);
-    });
-  }, [appId]); // eslint-disable-line react-hooks/exhaustive-deps -- load dashboard + inventory once per app
+    inventoryReadyRef.current = false;
+    inventoryGenRef.current += 1;
+    setRecordInventory([]);
+    setMisScopedRecords(null);
+    setSourceScopedRecords(null);
+    setInventoryLoading(true);
+    void refresh(false);
+    void loadInventory(false);
+  }, [appId]); // eslint-disable-line react-hooks/exhaustive-deps -- load dashboard + full inventory once per app
 
   useEffect(() => {
     if (!refreshNonce) return;
+    inventoryReadyRef.current = false;
+    inventoryGenRef.current += 1;
+    setInventoryLoading(true);
     void refresh(true);
     void loadInventory(true);
   }, [refreshNonce]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -600,7 +712,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     if (!itsmCompanyMode || !recordInventory.length || recordsHaveSource(recordInventory)) return;
     if (sourceInventoryRefreshRef.current) return;
     sourceInventoryRefreshRef.current = true;
-    void loadInventory(true);
+    void loadInventory(true, { silent: true });
   }, [itsmCompanyMode, recordInventory, loadInventory]);
   const travelMode = Boolean(
     data?.report_layout?.kind === 'travel'
@@ -610,7 +722,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     data?.report_layout?.kind === 'lead'
     || /lead/i.test(appId || ''),
   );
-  const hasInventory = recordInventory.length > 0;
+  const hasInventory = !inventoryLoading && recordInventory.length > 0;
   const dropdownFiltersActive = entity !== 'all' || company !== 'all' || userFilter !== 'all';
   const periodFiltersKpis = period !== 'all';
   const useClientKpis = hasInventory && (dropdownFiltersActive || periodFiltersKpis);
@@ -619,6 +731,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     || /project_management|project_tracker/i.test(appId || '');
   const isP2pLayout = data?.report_layout?.kind === 'p2p'
     || /procurement|p2p/i.test(appId || '');
+  const isEmsLayout = appKind === 'expense' && !travelMode;
 
   const appRoster = useMemo(() => {
     const fromPayload = mergeDashboardUsers(data?.app_users || []);
@@ -646,8 +759,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       const name = String(u.user_name || '').trim();
       return userFilter === id
         || userFilter === name
-        || compactMisName(name) === userFilter
-        || compactMisName(name) === compactMisName(userFilter);
+        || personDedupeKey(name) === userFilter
+        || personDedupeKey(name) === personDedupeKey(userFilter);
     });
     return hit?.user_name || userFilter;
   }, [userFilter, userRoster]);
@@ -659,7 +772,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       const name = String(u.user_name || '').trim();
       return userFilter === id
         || userFilter === name
-        || compactMisName(name) === userFilter;
+        || personDedupeKey(name) === userFilter
+        || personDedupeKey(name) === personDedupeKey(userFilter);
     });
     return hit?.user_id || (looksLikeKissflowUserId(userFilter) ? userFilter : undefined);
   }, [userFilter, userRoster]);
@@ -711,16 +825,50 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     useClientInventory,
   ]);
 
+  const amountTotals = useMemo(() => {
+    const all = kpiRecords;
+    const booking = all.filter((r) => /travel_management|travel request|travel booking/i.test(String(r.process_id || r.subject || '')));
+    const advance = all.filter((r) => /advance/i.test(String(r.process_id || r.subject || '')));
+    const claimed = all.filter((r) => /expense_management|amount claimed|travel expense/i.test(String(r.process_id || r.subject || '')));
+    return {
+      all: sumRecordAmount(all),
+      open: sumRecordAmount(all, 'open'),
+      closed: sumRecordAmount(all, 'closed'),
+      rejected: sumRecordAmount(all, 'rejected'),
+      booking: sumRecordAmount(booking),
+      advance: sumRecordAmount(advance),
+      claimed: sumRecordAmount(claimed),
+    };
+  }, [kpiRecords]);
+
+  const ticketKpiRows = itsmCompanyMode && misScopedRecords ? misScopedRecords : kpiRecords;
+  const ticketSourceRows = itsmCompanyMode && sourceScopedRecords ? sourceScopedRecords : ticketKpiRows;
+  const handleColumnScopedRows = useCallback((payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[] }) => {
+    setMisScopedRecords(payload.kpiRows);
+    setSourceScopedRecords(payload.sourceRows);
+  }, []);
+
+  useEffect(() => {
+    setMisScopedRecords(null);
+    setSourceScopedRecords(null);
+    setClaimTypeFocus(null);
+  }, [entity, company, userFilter, period, dateFrom, dateTo]);
+
   const todayKind = kpiFocus === 'opened_today' ? 'opened' : kpiFocus === 'closed_today' ? 'closed' : undefined;
 
   const scopedRecords = useMemo(() => {
     if (!useClientInventory) return [] as AppRecordRow[];
-    if (recordsStatus === 'all' && !todayKind) return kpiRecords;
-    return filterAppRecords(kpiRecords, {
-      status: recordsStatus,
-      todayKind,
-    });
-  }, [kpiRecords, recordsStatus, todayKind, useClientInventory]);
+    const byStatus = (recordsStatus === 'all' && !todayKind)
+      ? kpiRecords
+      : filterAppRecords(kpiRecords, {
+        status: recordsStatus,
+        todayKind,
+      });
+    if (!claimTypeFocus) return byStatus;
+    const type = EMS_CLAIM_TYPES.find((row) => row.key === claimTypeFocus);
+    if (!type) return byStatus;
+    return byStatus.filter((row) => type.match.test(String(row.expense_type || '')));
+  }, [claimTypeFocus, kpiRecords, recordsStatus, todayKind, useClientInventory]);
 
   const misOwnerMode = isP2pLayout ? 'assignee_or_requester' as const : 'assignee' as const;
 
@@ -777,7 +925,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         return isUsableUserFilterLabel(name, u.user_id);
       })
       .map((u) => ({
-        id: String(u.user_id || '').trim() || compactMisName(u.user_name) || String(u.user_name),
+        id: String(u.user_id || '').trim() || personDedupeKey(u.user_name) || String(u.user_name),
         label: u.user_name || String(u.user_id),
         email: String(u.email || '').trim().toLowerCase(),
       }));
@@ -788,7 +936,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         : (o.id ? `id:${o.id.toLowerCase()}` : `name:${o.label.trim().toLowerCase()}`);
       if (!deduped.has(key)) deduped.set(key, { id: o.id, label: o.label });
     }
-    const unique = [...deduped.values()];
+    const unique = mergeUserFilterOptions([...deduped.values()]);
     const base = [
       { id: 'all', label: unique.length ? `All Users (${unique.length})` : 'All Users' },
       ...unique,
@@ -868,10 +1016,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const rejectedVal = Number(data?.metrics.rejected || 0);
 
   const clientKpis = useMemo(() => {
-    if (useClientKpis) return summarizeAppRecords(kpiRecords);
+    if (useClientKpis) return summarizeAppRecords(ticketKpiRows);
     if (userFilter !== 'all' && displayedMisUsers.length) return sumUserKpis(displayedMisUsers);
     return { total: Number(data?.metrics.total ?? 0), open: openVal, closed: closedVal, rejected: rejectedVal };
-  }, [closedVal, data?.metrics.total, displayedMisUsers, kpiRecords, openVal, rejectedVal, useClientKpis, userFilter]);
+  }, [closedVal, data?.metrics.total, displayedMisUsers, openVal, rejectedVal, ticketKpiRows, useClientKpis, userFilter]);
 
   const kpiTotal = clientKpis.total;
   const kpiOpen = clientKpis.open;
@@ -948,14 +1096,18 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const closedLabel = kpiLabels?.closed || 'Closed';
   const rejectedLabel = kpiLabels?.rejected || 'Rejected';
   const todayActivity = useMemo(
-    () => countTodayActivity(useClientInventory ? kpiRecords : recordInventory, istTodayYmd()),
-    [kpiRecords, recordInventory, useClientInventory],
+    () => countTodayActivity(
+      useClientInventory ? ticketKpiRows : recordInventory,
+      istTodayYmd(),
+      { itsmStrict: itsmCompanyMode },
+    ),
+    [itsmCompanyMode, recordInventory, ticketKpiRows, useClientInventory],
   );
   const itsmSource = useMemo(() => {
     if (!itsmCompanyMode) return { all: data?.by_source_all || data?.by_source, today: data?.by_source_today };
-    // Same ticket set as Total / Open / Closed. Do not fall back to the
-    // unfiltered API mix — that is why Company / User / Period looked stuck.
-    if (useClientInventory) return itsmSourceFromFilteredRecords(kpiRecords, istTodayYmd());
+    // Follows MIS filters except Source column (Head / newceo). Never keep
+    // an unfiltered API mix — that is why Company / User / Period looked stuck.
+    if (useClientInventory) return itsmSourceFromFilteredRecords(ticketSourceRows, istTodayYmd());
     return {
       all: data?.by_source_all || data?.by_source,
       today: data?.by_source_today,
@@ -965,7 +1117,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     data?.by_source_all,
     data?.by_source_today,
     itsmCompanyMode,
-    kpiRecords,
+    ticketSourceRows,
     useClientInventory,
   ]);
   const pmPortfolio = useMemo(() => {
@@ -1041,14 +1193,16 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     </>
   );
 
+  const showDashboardLoader = Boolean((loading && !data) || inventoryLoading);
+
   return (
-    <div className="relative rounded-3xl p-1">
+    <div className={`relative rounded-3xl p-1 ${NE_DASH_CLASS}${travelMode || isEmsLayout ? ' ne-dash-finance' : ''}`}>
       <DashboardLoadingOverlay
-        show={Boolean(loading && !data)}
+        show={showDashboardLoader}
         mode="fixed"
-        label="Loading dashboard…"
+        label={inventoryLoading && data ? 'Loading records…' : 'Loading dashboard…'}
       />
-      <div className="space-y-4">
+      <div className={`space-y-4 ${showDashboardLoader ? 'invisible' : ''}`}>
         <EmbedDashboardHero
           actions={
             embed ? (
@@ -1165,26 +1319,59 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     },
                   ]}
                 />
+                <PmSection
+                  appKind={appKind}
+                  title="Status"
+                  hint="Click to filter the records table"
+                  cards={[
+                    { label: 'Open', value: kpiOpen, styleIndex: 1, active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
+                    { label: 'Closed', value: kpiClosed, styleIndex: 2, active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
+                    { label: 'Rejected', value: kpiRejected, styleIndex: 3, active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
+                  ]}
+                />
                 {([
-                  { key: 'Travel_Management_A02', title: 'Travel Booking', match: /travel_management|travel booking|travel request/i },
-                  { key: 'Advance_Payment_Request_Process_A01', title: 'Travel Advance', match: /advance_payment|travel advance/i },
-                  { key: 'Expense_Management_A03', title: 'Travel Booking with amount claimed', match: /expense_management|amount claimed|expense/i },
-                ] as const).map((section) => {
+                  { key: 'Travel_Management_A02', title: 'Travel Booking', match: /travel_management|travel booking|travel request/i, kind: 'booking' as const, icon: Plane, styleIndex: 0 },
+                  { key: 'Advance_Payment_Request_Process_A01', title: 'Travel Advance', match: /advance_payment|travel advance/i, kind: 'advance' as const, icon: Wallet, styleIndex: 1 },
+                  { key: 'Expense_Management_A03', title: 'Travel Expense', match: /expense_management|amount claimed|travel expense|expense/i, kind: 'expense' as const, icon: Receipt, styleIndex: 2 },
+                ]).map((section) => {
                   const rows = kpiRecords.filter((r) => section.match.test(String(r.process_id || r.subject || '')));
                   const total = rows.length;
-                  const open = rows.filter((r) => String(r.status || '').toLowerCase() === 'open').length;
-                  const closed = rows.filter((r) => String(r.status || '').toLowerCase() === 'closed').length;
-                  const rejected = rows.filter((r) => String(r.status || '').toLowerCase() === 'rejected').length;
+                  const open = countByStatus(rows, 'open');
+                  const closed = countByStatus(rows, 'closed');
+                  const facts = travelRequestFacts(rows);
+                  if (section.kind === 'booking') {
+                    return (
+                      <NeFinanceProcessCard
+                        key={section.key}
+                        title={section.title}
+                        hint="All booking data in the current filters"
+                        icon={section.icon}
+                        styleIndex={section.styleIndex}
+                        facts={facts}
+                        metrics={[
+                          { label: 'Total', value: total, hint: requestsSub(total) },
+                          { label: 'Open', value: open },
+                          { label: 'Closed', value: closed },
+                          { label: 'Booked', value: amountTotals.booking, format: 'inr', hint: requestsSub(total) },
+                        ]}
+                      />
+                    );
+                  }
+                  const submitted = section.kind === 'advance' ? amountTotals.advance : amountTotals.claimed;
+                  const claimedAmt = sumRecordAmount(rows, 'closed');
                   return (
-                    <PmSection
-                      appKind={appKind}
+                    <NeFinanceProcessCard
                       key={section.key}
                       title={section.title}
-                      cards={[
-                        { label: 'Total', value: total, styleIndex: 0 },
-                        { label: 'Open', value: open, styleIndex: 1, active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
-                        { label: 'Closed', value: closed, styleIndex: 2, active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
-                        { label: 'Rejected', value: rejected, styleIndex: 3, active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
+                      hint="Submitted and claimed amounts from the current filters"
+                      icon={section.icon}
+                      styleIndex={section.styleIndex}
+                      facts={facts}
+                      metrics={[
+                        { label: 'Requests', value: total, hint: requestsSub(total) },
+                        { label: 'Open', value: open },
+                        { label: 'Submitted', value: submitted, format: 'inr', hint: requestsSub(total) },
+                        { label: 'Claimed', value: claimedAmt, format: 'inr', hint: requestsSub(closed) },
                       ]}
                     />
                   );
@@ -1245,8 +1432,85 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                 ))}
               </div>
+            ) : isEmsLayout ? (
+              <div className="space-y-5">
+                <NeFinanceProcessCard
+                  title="Claims"
+                  hint="Amount and claim count from filtered records — click a cell to filter the table"
+                  icon={Receipt}
+                  styleIndex={0}
+                  metrics={[
+                    { label: 'Total submitted', value: amountTotals.all, format: 'inr', hint: claimsSub(kpiTotal), active: kpiFocus === 'total', onClick: () => handleKpiClick('total') },
+                    { label: 'Pending review', value: amountTotals.open, format: 'inr', hint: claimsSub(kpiOpen), active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
+                    { label: 'Approved', value: amountTotals.closed, format: 'inr', hint: claimsSub(kpiClosed), active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
+                    { label: 'Rejected', value: amountTotals.rejected, format: 'inr', hint: claimsSub(kpiRejected), active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
+                  ]}
+                />
+                <PmSection
+                  appKind={appKind}
+                  title="Today"
+                  cards={[
+                    { label: 'Opened today', value: todayActivity.opened, styleIndex: 0, active: kpiFocus === 'opened_today', onClick: () => handleKpiClick('opened_today') },
+                    { label: 'Closed today', value: todayActivity.closed, styleIndex: 2, active: kpiFocus === 'closed_today', onClick: () => handleKpiClick('closed_today') },
+                  ]}
+                />
+                <div className={neKpiBalancedGridClass(4)}>
+                  <EmbedKpiCard
+                    label="Adoption · overall"
+                    value={adoptionOverall}
+                    suffix="%"
+                    sub="Ever signed in ÷ app users"
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Users"
+                    value={usersCardCount}
+                    icon={Users}
+                    themes={EMBED_KPI_THEMES}
+                    styleIndex={1}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Signed in today"
+                    value={signedInToday}
+                    icon={UserCheck}
+                    themes={EMBED_KPI_THEMES}
+                    styleIndex={2}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Adoption today"
+                    value={adoptionToday}
+                    suffix="%"
+                    icon={Sparkles}
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                </div>
+                <NeFinanceProcessCard
+                  title="Expense claim types"
+                  hint="Click a type to filter the records table"
+                  icon={Wallet}
+                  styleIndex={1}
+                  metrics={EMS_CLAIM_TYPES.map((type) => {
+                    const rows = kpiRecords.filter((row) => type.match.test(String(row.expense_type || '')));
+                    return {
+                      label: type.label,
+                      value: sumRecordAmount(rows),
+                      format: 'inr' as const,
+                      hint: `${type.hint} · ${claimsSub(rows.length)}`,
+                      active: claimTypeFocus === type.key,
+                      onClick: () => setClaimTypeFocus((prev) => (prev === type.key ? null : type.key)),
+                    };
+                  })}
+                />
+              </div>
             ) : (
-              <div className={NE_KPI_PRIMARY_ROW_CLASS}>
+              <div className="space-y-5">
+              <div className={neKpiBalancedGridClass(10)}>
                 <KpiCard
                   label={totalLabel}
                   value={displayDashCount(kpiTotal)}
@@ -1301,10 +1565,57 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   active={kpiFocus === 'closed_today'}
                   onClick={() => handleKpiClick('closed_today')}
                 />
+                {!isP2pLayout ? (
+                  <EmbedKpiCard
+                    label="Adoption · overall"
+                    value={adoptionOverall}
+                    suffix="%"
+                    sub="Ever signed in ÷ app users"
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                ) : (
+                  <EmbedKpiCard
+                    label="Users · P2P app"
+                    value={usersCardCount}
+                    icon={Users}
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                )}
+                <EmbedKpiCard
+                  label="Users"
+                  value={usersCardCount}
+                  icon={Users}
+                  themes={EMBED_KPI_THEMES}
+                  styleIndex={1}
+                  surface="white"
+                />
+                <EmbedKpiCard
+                  label="Signed in today"
+                  value={signedInToday}
+                  icon={UserCheck}
+                  themes={EMBED_KPI_THEMES}
+                  styleIndex={2}
+                  surface="white"
+                />
+                <EmbedKpiCard
+                  label="Adoption today"
+                  value={adoptionToday}
+                  suffix="%"
+                  icon={Sparkles}
+                  themes={[EMBED_ADOPTION_THEME]}
+                  styleIndex={0}
+                  surface="white"
+                />
+              </div>
               </div>
             )}
 
-            <div className={NE_KPI_GRID_CLASS}>
+            {isPmLayout || isP2pLayout ? (
+            <div className={neKpiBalancedGridClass(4)}>
               {!isP2pLayout ? (
                 <EmbedKpiCard
                   label="Adoption · overall"
@@ -1351,6 +1662,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 surface="white"
               />
             </div>
+            ) : null}
 
             {itsmCompanyMode ? (
               <ItsmSourceBreakdown
@@ -1360,8 +1672,37 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
             ) : null}
 
             <div ref={misSectionRef}>
+            <EmbedAppRecordsTable
+              inventory={stampedInventory.length ? stampedInventory : recordInventory}
+              columns={
+                itsmCompanyMode
+                  ? ITSM_CEO_RECORD_COLUMNS
+                  : recordsColumns
+              }
+              dataSource={recordsDataSource}
+              entity={entity}
+              company={company}
+              status={recordsStatus}
+              assigned={assignedFilterName}
+              assignedId={assignedFilterId}
+              dateFrom={resolvedDates.from || undefined}
+              dateTo={resolvedDates.to || undefined}
+              todayKind={todayKind}
+              itsmCompanyMode={itsmCompanyMode}
+              travelMode={travelMode}
+              leadWebsiteMode={leadMode}
+              activityDates={activityDates}
+              filterAnimating={false}
+              inventoryLoading={inventoryLoading}
+              onColumnScopedRowsChange={itsmCompanyMode ? handleColumnScopedRows : undefined}
+            />
+
             <DashboardCard
               embed
+              className="mt-4"
+              collapsible
+              open={usersOpen}
+              onToggle={() => setUsersOpen((prev) => !prev)}
               title={isP2pLayout ? 'MIS · P2P users (requesters / PO creators)' : 'MIS · Users'}
               right={
                 <span className="inline-flex items-center gap-1 text-xs text-slate-500">
@@ -1408,17 +1749,17 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   </button>
                 ) : null}
               </div>
-              <div className="-mx-5 -mb-5 hidden overflow-x-auto lg:block">
+              <div className="hidden overflow-x-auto px-1 lg:block">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
+                  <thead className={NE_TYPE.tableHead}>
                     <tr>
-                      <th className="px-5 py-2.5 font-semibold">User</th>
-                      <th className="px-5 py-2.5 font-semibold">Last sign-in</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Open</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Closed</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Rejected</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Total</th>
-                      <th className="px-5 py-2.5 text-right font-semibold">Closure %</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-left font-semibold">User</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-left font-semibold">Last sign-in</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">Open</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">Closed</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">Rejected</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">Total</th>
+                      <th className="whitespace-nowrap px-5 py-3.5 text-right font-semibold">Closure %</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1429,11 +1770,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                       const login = misUserLoginDisplay(user, formatWhen);
                       const rowKey = `${compactMisName(user.user_name) || user.user_id || user.user_name}-${index}`;
                       return (
-                        <tr key={rowKey} className="border-t border-slate-100">
-                          <td className="min-w-[12rem] max-w-[18rem] whitespace-normal break-words px-5 py-2.5 font-medium text-slate-900">{formatMisUserName(user)}</td>
-                          <td className="px-5 py-2.5 text-sm tabular-nums text-slate-600">
+                        <tr key={rowKey} className="border-t border-slate-200">
+                          <td className="min-w-[12rem] max-w-[18rem] whitespace-normal break-words px-5 py-3.5 font-medium text-slate-900">{formatMisUserName(user)}</td>
+                          <td className="px-5 py-3.5 text-sm tabular-nums text-slate-600">
                             {login.text === '-' ? (
-                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
+                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
                                 {login.text}
                               </span>
                             ) : (
@@ -1442,11 +1783,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                               </span>
                             )}
                           </td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#A96A20]">{open}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#287B5D]">{closed}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-[#B24E66]">{rejected}</td>
-                          <td className="px-5 py-2.5 text-right tabular-nums">{user.total || open + closed + rejected}</td>
-                          <td className="px-5 py-2.5 text-right font-semibold tabular-nums text-slate-700">
+                          <td className="px-5 py-3.5 text-right font-semibold tabular-nums text-[#A96A20]">{open}</td>
+                          <td className="px-5 py-3.5 text-right font-semibold tabular-nums text-[#287B5D]">{closed}</td>
+                          <td className="px-5 py-3.5 text-right font-semibold tabular-nums text-[#B24E66]">{rejected}</td>
+                          <td className="px-5 py-3.5 text-right tabular-nums">{user.total || open + closed + rejected}</td>
+                          <td className="px-5 py-3.5 text-right font-semibold tabular-nums text-slate-700">
                             {closureRatioPct(open, closed)}%
                           </td>
                         </tr>
@@ -1475,29 +1816,6 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               ) : null}
             </DashboardCard>
             </div>
-
-            <EmbedAppRecordsTable
-              inventory={stampedInventory.length ? stampedInventory : recordInventory}
-              columns={
-                isP2pLayout
-                  ? recordsColumns.filter((col) => col.id !== 'amount')
-                  : recordsColumns
-              }
-              dataSource={recordsDataSource}
-              entity={entity}
-              company={company}
-              status={recordsStatus}
-              assigned={assignedFilterName}
-              assignedId={assignedFilterId}
-              dateFrom={resolvedDates.from || undefined}
-              dateTo={resolvedDates.to || undefined}
-              todayKind={todayKind}
-              itsmCompanyMode={itsmCompanyMode}
-              travelMode={travelMode}
-              leadWebsiteMode={leadMode}
-              activityDates={activityDates}
-              filterAnimating={false}
-            />
           </>
         )}
       </div>

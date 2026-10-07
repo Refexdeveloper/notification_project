@@ -8,6 +8,7 @@ import {
   filterAppRecords,
   websiteCountsFromRecords,
   mergeRosterWithTicketCounts,
+  mergeUserFilterOptions,
   misEligibleUsers,
   unionRosterWithTicketUsers,
   recordMatchesAssigned,
@@ -90,7 +91,7 @@ describe('recordMatchesAssigned', () => {
     expect(recordMatchesAssigned(row, 'Reginold J')).toBe(true);
   });
 
-  it('does not treat ITSM requesters as Assigned to', () => {
+  it('does not treat ITSM requesters as Assigned to, but matches the human closer', () => {
     const row: AppRecordRow = {
       id: 't2',
       request_id: 'IT-2',
@@ -100,7 +101,7 @@ describe('recordMatchesAssigned', () => {
       status: 'closed',
     };
     expect(recordMatchesAssigned(row, 'Ada Lovelace', undefined, { matchRequester: false })).toBe(false);
-    expect(recordMatchesAssigned(row, 'Sakthivel', undefined, { matchRequester: false })).toBe(false);
+    expect(recordMatchesAssigned(row, 'Sakthivel', undefined, { matchRequester: false })).toBe(true);
   });
 
   it('matches aliased ITSM role names to the person', () => {
@@ -175,6 +176,48 @@ describe('countTodayActivity', () => {
     expect(counts.opened).toBe(1);
     expect(counts.closed).toBe(1);
   });
+
+  it('ITSM Closed Today uses Reopen-step move — not modified_at or created-today fallback', () => {
+    const today = new Date().toISOString();
+    const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+    const ymd = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const counts = countTodayActivity([
+      { id: '1', request_id: 'A', status: 'closed', created_at: yesterday, closed_at: today },
+      { id: '2', request_id: 'B', status: 'closed', created_at: yesterday, modified_at: today },
+      { id: '3', request_id: 'C', status: 'closed', created_at: today },
+      {
+        id: '4',
+        request_id: 'D',
+        status: 'closed',
+        created_at: yesterday,
+        current_step: 'IT Tech Reopen',
+        reopen_entered_at: today,
+      },
+      {
+        id: '5',
+        request_id: 'E',
+        status: 'closed',
+        created_at: yesterday,
+        current_step: 'ReOpen Window',
+        agent_closed_at: today,
+      },
+      {
+        id: '6',
+        request_id: 'F',
+        status: 'closed',
+        created_at: yesterday,
+        current_step: 'Ticket Reopen',
+        modified_at: today,
+      },
+    ], ymd, { itsmStrict: true });
+    expect(counts.opened).toBe(1);
+    expect(counts.closed).toBe(3);
+  });
 });
 
 describe('filterAppRecords todayKind', () => {
@@ -197,21 +240,25 @@ describe('assignedRecordLabel', () => {
     expect(assignedRecordLabel({ id: '3', assigned_to: '—' })).toBe('—');
   });
 
-  it('ITSM shows workflow Assigned To only — never closer or requester', () => {
+  it('ITSM hides bots and uses the human closer when Assigned To is empty', () => {
     expect(assignedRecordLabel(
       { id: '1', assigned_to: '—', closed_by: 'Sakthivel', requested_by: 'Ada Lovelace' },
       { itsmCompanyMode: true },
-    )).toBe('—');
+    )).toBe('Sakthivel');
     expect(assignedRecordLabel(
-      { id: '2', assigned_to: 'Unknown', requested_by: 'Ada Lovelace' },
+      { id: '2', assigned_to: 'ITSM Bot', closed_by: 'Sakthivel', requested_by: 'Ada Lovelace' },
+      { itsmCompanyMode: true },
+    )).toBe('Sakthivel');
+    expect(assignedRecordLabel(
+      { id: '3', assigned_to: 'Unknown', requested_by: 'Ada Lovelace' },
       { itsmCompanyMode: true },
     )).toBe('—');
     expect(assignedRecordLabel(
-      { id: '3', assigned_to: 'Bhukkay Naik', closed_by: 'Sakthivel', requested_by: 'Ada' },
+      { id: '4', assigned_to: 'Bhukkay Naik', closed_by: 'Sakthivel', requested_by: 'Ada' },
       { itsmCompanyMode: true },
     )).toBe('Bhukkay Naik');
     expect(assignedRecordLabel(
-      { id: '4', assigned_to: 'IT Manager Refex' },
+      { id: '5', assigned_to: 'IT Manager Refex' },
       { itsmCompanyMode: true },
     )).toBe('Sakthivel');
   });
@@ -577,10 +624,36 @@ describe('uniquePersonLabels', () => {
     expect(uniquePersonLabels(['Keerthana', 'Keerthana ', 'Keerthana S', 'keerthana'])).toEqual(['Keerthana S']);
   });
 
+  it('merges Balaraju Ilaiveni spelling variants into one label', () => {
+    expect(uniquePersonLabels(['Balaraju Ilaiveni', 'Balaraju Ilaveni'])).toHaveLength(1);
+    expect(personLabelMatches('Balaraju Ilaveni', 'Balaraju Ilaiveni')).toBe(true);
+  });
+
   it('matches a selected requester to compact name variants', () => {
     expect(personLabelMatches('Keerthana', 'Keerthana S')).toBe(true);
     expect(personLabelMatches('Keerthana S', 'Keerthana')).toBe(true);
     expect(personLabelMatches('Ada Lovelace', 'Keerthana')).toBe(false);
+  });
+});
+
+describe('mergeUserFilterOptions', () => {
+  it('merges Sakthivel casing and separate Kissflow ids into one option', () => {
+    const merged = mergeUserFilterOptions([
+      { id: 'Us-one', label: 'sakthivel' },
+      { id: 'Us-two', label: 'Sakthivel' },
+      { id: 'Us-mgr', label: 'IT Manager Refex' },
+    ]);
+    const sakthivel = merged.filter((row) => /sakthivel/i.test(row.label));
+    expect(sakthivel).toHaveLength(1);
+    expect(sakthivel[0].label).toBe('Sakthivel');
+  });
+
+  it('merges Balaraju Ilaiveni and Ilaveni into one user option', () => {
+    const merged = mergeUserFilterOptions([
+      { id: 'Us-a', label: 'Balaraju Ilaiveni' },
+      { id: 'Us-b', label: 'Balaraju Ilaveni' },
+    ]);
+    expect(merged.filter((row) => /balaraju/i.test(row.label))).toHaveLength(1);
   });
 });
 

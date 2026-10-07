@@ -1,18 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import {
   assignedRecordLabel,
   filterAppRecords,
   summarizeAppRecords,
 } from '@/lib/appDashboardClientFilter';
-import { displayDashText, displayPersonCell, displayWhen, isBlankDash } from '@/lib/dashboardEmpty';
+import { displayDashText, displayPersonCell, displayWhen, formatInr, isBlankDash } from '@/lib/dashboardEmpty';
+import {
+  ITSM_CEO_RECORD_COLUMNS,
+  itsmClosedAtDisplay,
+  itsmExpandTiles,
+  itsmRecordCellText,
+  itsmReopenedStamp,
+  itsmSlaDisplay,
+} from '@/lib/itsmRecordDisplay';
 import type { AppRecordColumn, AppRecordRow } from '@/services/appRecordsApi';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
+import { MisRecordExpandPanel } from '@/components/feature/MisRecordExpandPanel';
+import MisPersonInitialsCell from '@/components/feature/MisPersonInitialsCell';
 import {
   RecordsColumnDateFilter,
   RecordsColumnHeaderFilter,
   isDateRecordColumn,
 } from '@/components/feature/RecordsColumnHeaderFilter';
+import { NE_TYPE } from '@/lib/neDashType';
 
 function formatWhen(value: string | null | undefined): string {
   return displayWhen(value);
@@ -62,6 +73,9 @@ type Props = {
   leadWebsiteMode?: boolean;
   activityDates?: boolean;
   filterAnimating?: boolean;
+  inventoryLoading?: boolean;
+  /** Rows after header + MIS column filters, without KPI status — parent recounts cards. */
+  onColumnScopedRowsChange?: (payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[] }) => void;
 };
 
 export default function EmbedAppRecordsTable({
@@ -81,11 +95,14 @@ export default function EmbedAppRecordsTable({
   leadWebsiteMode = false,
   activityDates = false,
   filterAnimating = false,
+  inventoryLoading = false,
+  onColumnScopedRowsChange,
 }: Props) {
   const [page, setPage] = useState(0);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [dateFilters, setDateFilters] = useState<Record<string, { from: string; to: string }>>({});
-  const pageSize = 50;
+  const pageSize = 10;
 
   useEffect(() => {
     setPage(0);
@@ -94,26 +111,37 @@ export default function EmbedAppRecordsTable({
   }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
 
   const scoped = useMemo(
-    () => filterAppRecords(inventory, {
-      entity,
-      company,
-      status,
-      assigned,
-      assignedId,
-      dateFrom,
-      dateTo,
-      todayKind,
-      itsmCompanyMode,
-      travelMode,
-      leadWebsiteMode,
-      activityDates,
-    }),
+    () => {
+      const rows = filterAppRecords(inventory, {
+        entity,
+        company,
+        status,
+        assigned,
+        assignedId,
+        dateFrom,
+        dateTo,
+        todayKind,
+        itsmCompanyMode,
+        travelMode,
+        leadWebsiteMode,
+        activityDates,
+      });
+      if (!itsmCompanyMode) return rows;
+      return [...rows].sort((a, b) => {
+        const right = new Date(String(b.created_at || 0)).getTime() || 0;
+        const left = new Date(String(a.created_at || 0)).getTime() || 0;
+        if (right !== left) return right - left;
+        return String(b.request_id || '').localeCompare(String(a.request_id || ''));
+      });
+    },
     [inventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
   );
 
   const columns: AppRecordColumn[] = columnsProp?.length
     ? columnsProp
-    : [
+    : itsmCompanyMode
+      ? ITSM_CEO_RECORD_COLUMNS
+      : [
         { id: 'request_id', label: 'Request ID' },
         { id: 'subject', label: 'Subject' },
         { id: 'assigned_to', label: 'Assigned to' },
@@ -126,11 +154,19 @@ export default function EmbedAppRecordsTable({
   const isEmptyCell = (value: unknown) => isBlankDash(value);
 
   const cellValue = (row: AppRecordRow, col: AppRecordColumn) => {
+    if (itsmCompanyMode) {
+      if (col.id === 'closed_at') return formatWhen(itsmClosedAtDisplay(row));
+      if (col.id === 'created_at' || col.id === 'reopened_at') {
+        return formatWhen(String((row as Record<string, unknown>)[col.id] || ''));
+      }
+      return displayDashText(itsmRecordCellText(row, col.id), '—');
+    }
     const raw = (row as Record<string, unknown>)[col.id];
     if (col.id === 'request_id') return displayDashText(raw, '—');
     if (col.id === 'status') return displayDashText(raw || row.status_raw, '—');
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
+    if (col.id === 'amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
   };
@@ -151,25 +187,77 @@ export default function EmbedAppRecordsTable({
     return map;
   }, [scoped, columns, itsmCompanyMode]);
 
-  const filtered = useMemo(() => {
-    const activeValues = Object.entries(columnFilters).filter(([, v]) => v && v !== 'all');
+  const applyColumnAndDateFilters = (rows: AppRecordRow[], omitCols: string[] = []) => {
+    const skip = new Set(omitCols);
+    const activeValues = Object.entries(columnFilters).filter(([colId, v]) => v && v !== 'all' && !skip.has(colId));
     const activeDates = Object.entries(dateFilters).filter(([, range]) => range.from || range.to);
-    if (!activeValues.length && !activeDates.length) return scoped;
-    return scoped.filter((row) => {
+    if (!activeValues.length && !activeDates.length) return rows;
+    return rows.filter((row) => {
       const valueOk = activeValues.every(([colId, wanted]) => {
         const col = columns.find((c) => c.id === colId) || { id: colId, label: colId };
         return String(cellValue(row, col)).trim() === wanted;
       });
       if (!valueOk) return false;
       return activeDates.every(([colId, range]) => {
-        const key = rowDateKey((row as Record<string, unknown>)[colId]);
+        const rawDate = itsmCompanyMode && colId === 'closed_at'
+          ? itsmClosedAtDisplay(row)
+          : (row as Record<string, unknown>)[colId];
+        const key = rowDateKey(rawDate);
         if (!key) return false;
         if (range.from && key < range.from) return false;
         if (range.to && key > range.to) return false;
         return true;
       });
     });
-  }, [scoped, columnFilters, dateFilters, columns, itsmCompanyMode]);
+  };
+
+  const filtered = useMemo(
+    () => applyColumnAndDateFilters(scoped),
+    [scoped, columnFilters, dateFilters, columns, itsmCompanyMode],
+  );
+
+  const headerNoStatus = useMemo(
+    () => filterAppRecords(inventory, {
+      entity,
+      company,
+      assigned,
+      assignedId,
+      dateFrom,
+      dateTo,
+      itsmCompanyMode,
+      travelMode,
+      leadWebsiteMode,
+      activityDates,
+    }),
+    [
+      inventory,
+      entity,
+      company,
+      assigned,
+      assignedId,
+      dateFrom,
+      dateTo,
+      itsmCompanyMode,
+      travelMode,
+      leadWebsiteMode,
+      activityDates,
+    ],
+  );
+
+  const columnScopedForKpis = useMemo(
+    () => applyColumnAndDateFilters(headerNoStatus),
+    [headerNoStatus, columnFilters, dateFilters, columns, itsmCompanyMode],
+  );
+
+  // Same as Head / newceo: Source column does not hide the other 3 channels.
+  const columnScopedForSource = useMemo(
+    () => applyColumnAndDateFilters(headerNoStatus, ['source']),
+    [headerNoStatus, columnFilters, dateFilters, columns, itsmCompanyMode],
+  );
+
+  useEffect(() => {
+    onColumnScopedRowsChange?.({ kpiRows: columnScopedForKpis, sourceRows: columnScopedForSource });
+  }, [columnScopedForKpis, columnScopedForSource, onColumnScopedRowsChange]);
 
   const summary = useMemo(() => summarizeAppRecords(filtered), [filtered]);
 
@@ -179,13 +267,14 @@ export default function EmbedAppRecordsTable({
   }, [filtered, page]);
 
   const visibleColumns = useMemo(() => {
+    if (itsmCompanyMode) return columns;
     if (!pageItems.length) return columns;
     const always = new Set(['request_id', 'subject', 'status', 'entity', 'company_name', 'website', 'created_at']);
     return columns.filter((col) => {
       if (always.has(col.id) || isDateRecordColumn(col.id)) return true;
       return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
     });
-  }, [columns, pageItems]);
+  }, [columns, itsmCompanyMode, pageItems]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
@@ -197,17 +286,17 @@ export default function EmbedAppRecordsTable({
     setDateFilters({});
   };
 
-  const showLoader = filterAnimating;
+  const showLoader = filterAnimating || inventoryLoading;
 
   return (
     <div className="relative rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-      {filterAnimating ? (
+      {showLoader && pageItems.length ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/60 backdrop-blur-[1px]">
           <Loader2 className="h-6 w-6 animate-spin text-[#3977BE]" />
         </div>
       ) : null}
       <div className="mb-4 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900">Records</h3>
+        <h3 className={NE_TYPE.sectionTitle}>Records</h3>
         <div className="flex items-center gap-2">
           {filtersActive ? (
             <button
@@ -240,13 +329,23 @@ export default function EmbedAppRecordsTable({
               const titleCol = visibleColumns.find((c) => c.id === 'subject') || visibleColumns[0];
               const idCol = visibleColumns.find((c) => c.id === 'request_id');
               const statusCol = visibleColumns.find((c) => c.id === 'status');
-              const previewIds = new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
+              const previewIds = itsmCompanyMode
+                ? new Set(['requested_by', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
+                : new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
+              const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
+              const displayField = (col: AppRecordColumn) => {
+                const text = cellValue(row, col);
+                if (itsmCompanyMode && personCols.has(col.id)) {
+                  return <MisPersonInitialsCell name={text === '—' ? '' : text} />;
+                }
+                return text;
+              };
               const fields = visibleColumns
                 .filter((c) => previewIds.has(c.id))
-                .map((c) => ({ label: c.label, value: cellValue(row, c) }));
+                .map((c) => ({ label: c.label, value: displayField(c) }));
               const extraFields = visibleColumns
                 .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
-                .map((c) => ({ label: c.label, value: cellValue(row, c) }));
+                .map((c) => ({ label: c.label, value: displayField(c) }));
               return (
                 <MisMobileRecordCard
                   key={row.id}
@@ -259,16 +358,18 @@ export default function EmbedAppRecordsTable({
                   ) : undefined}
                   fields={fields}
                   extraFields={extraFields}
+                  extra={itsmCompanyMode ? <MisRecordExpandPanel tiles={itsmExpandTiles(row)} inset /> : undefined}
                 />
               );
             })}
           </div>
           <div className="-mx-5 -mb-5 hidden overflow-x-auto overflow-y-visible lg:block">
             <table className="w-full min-w-[780px] text-sm">
-              <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                <tr className="border-b border-slate-100">
+              <thead className={NE_TYPE.tableHead}>
+                <tr className="border-b border-slate-200">
+                  {itsmCompanyMode ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
                   {visibleColumns.map((col) => (
-                    <th key={col.id} className="whitespace-nowrap px-5 py-2.5 font-semibold">
+                    <th key={col.id} className={`${NE_TYPE.tableHeadCell} font-semibold`}>
                       {isDateRecordColumn(col.id) ? (
                         <RecordsColumnDateFilter
                           label={col.label}
@@ -313,10 +414,34 @@ export default function EmbedAppRecordsTable({
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
+                {pageItems.map((row) => {
+                  const rowId = String(row.id || row.request_id || '');
+                  const expanded = itsmCompanyMode && expandedId === rowId;
+                  return (
+                  <Fragment key={rowId}>
+                  <tr className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
+                    {itsmCompanyMode ? (
+                      <td className="px-3 py-2.5">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          aria-label={expanded ? 'Hide details' : 'Show details'}
+                          onClick={() => setExpandedId(expanded ? null : rowId)}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                        </button>
+                      </td>
+                    ) : null}
                     {visibleColumns.map((col) => {
                       const raw = (row as Record<string, unknown>)[col.id];
+                      if (col.id === 'amount') {
+                        return (
+                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
+                            {formatInr(typeof raw === 'number' ? raw : Number(raw))}
+                          </td>
+                        );
+                      }
                       if (col.id === 'request_id') {
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5">
@@ -327,27 +452,68 @@ export default function EmbedAppRecordsTable({
                         );
                       }
                       if (col.id === 'status') {
+                        const reopen = itsmCompanyMode ? itsmReopenedStamp(row) : null;
                         return (
                           <td key={col.id} className="px-5 py-2.5">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
-                            >
-                              {displayDashText(raw || row.status_raw, '—')}
+                            <div className="flex flex-col items-start gap-0.5">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
+                              >
+                                {displayDashText(raw || row.status_raw, '—')}
+                              </span>
+                              {reopen ? (
+                                <span className="text-[11px] font-semibold leading-tight text-orange-700">
+                                  {reopen.label}
+                                  <span className="block font-medium text-slate-500">{formatWhen(reopen.when)}</span>
+                                </span>
+                              ) : null}
+                            </div>
+                          </td>
+                        );
+                      }
+                      if (itsmCompanyMode && col.id === 'sla') {
+                        const sla = itsmSlaDisplay(row);
+                        const primary = sla.primary && sla.primary !== '—' ? sla.primary : 'On track';
+                        const tone = sla.state === 'breached'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : sla.state === 'hold'
+                            ? 'border-slate-200 bg-slate-100 text-slate-600'
+                            : sla.state === 'ok'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-slate-200 bg-slate-50 text-slate-600';
+                        return (
+                          <td key={col.id} className="px-5 py-2.5">
+                            <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                              {primary}
                             </span>
+                            {sla.sub ? <p className="mt-1 text-[11px] text-slate-500">{sla.sub}</p> : null}
                           </td>
                         );
                       }
                       if (isDateRecordColumn(col.id)) {
+                        const dateRaw = itsmCompanyMode && col.id === 'closed_at'
+                          ? itsmClosedAtDisplay(row)
+                          : String(raw || '');
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5 tabular-nums text-slate-600">
-                            {formatWhen(String(raw || ''))}
+                            {formatWhen(dateRaw)}
                           </td>
                         );
                       }
-                      const text = col.id === 'assigned_to'
-                        ? assignedRecordLabel(row, { itsmCompanyMode })
-                        : displayPersonCell(raw);
-                      const wrapIds = new Set(['entity', 'company_name', 'website', 'requested_by', 'assigned_to', 'closed_by', 'subject']);
+                      const text = itsmCompanyMode
+                        ? displayDashText(itsmRecordCellText(row, col.id), '—')
+                        : col.id === 'assigned_to'
+                          ? assignedRecordLabel(row, { itsmCompanyMode })
+                          : displayPersonCell(raw);
+                      const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
+                      if (itsmCompanyMode && personCols.has(col.id)) {
+                        return (
+                          <td key={col.id} title={text} className="px-5 py-2.5">
+                            <MisPersonInitialsCell name={text === '—' ? '' : text} />
+                          </td>
+                        );
+                      }
+                      const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'form_status', 'source', 'ticket_type', 'category']);
                       return (
                         <td
                           key={col.id}
@@ -363,12 +529,26 @@ export default function EmbedAppRecordsTable({
                       );
                     })}
                   </tr>
-                ))}
+                  {expanded ? (
+                    <tr>
+                      <td colSpan={visibleColumns.length + 1} className="p-0">
+                        <MisRecordExpandPanel tiles={itsmExpandTiles(row)} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          {totalPages > 1 ? (
+          {filtered.length > 0 ? (
             <div className="mt-4 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+              <span className="mr-auto text-xs tabular-nums text-slate-500">
+                {filtered.length === 0
+                  ? '0'
+                  : `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filtered.length)} of ${filtered.length.toLocaleString('en-IN')}`}
+              </span>
               <button
                 type="button"
                 disabled={page <= 0}

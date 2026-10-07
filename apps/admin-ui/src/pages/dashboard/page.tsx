@@ -36,7 +36,8 @@ import {
   withEmbedParams,
 } from '@/lib/embedMode';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, neKpiBalancedGridClass } from '@/components/feature/EmbedKpiCard';
+import { NE_DASH_CLASS, NE_INK_SOFT, NE_TYPE } from '@/lib/neDashType';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
 import { buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
 import { loadApplicationRecordInventory } from '@/services/appRecordsApi';
@@ -99,7 +100,7 @@ function SectionHeader({
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#EAF2FF] shadow-sm ring-1 ring-[#D0E0F5]">
           <Icon className="h-3.5 w-3.5 text-[#3977BE]" />
         </div>
-        <span className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{title}</span>
+        <span className={NE_TYPE.sectionTitle}>{title}</span>
       </div>
     </div>
   );
@@ -133,8 +134,8 @@ function DashboardCard({
             </div>
           ) : null}
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-slate-900">{title}</p>
-            {subtitle ? <p className="mt-0.5 text-[11px] text-slate-500">{subtitle}</p> : null}
+            <p className={NE_TYPE.sectionTitle}>{title}</p>
+            {subtitle ? <p className={`mt-0.5 ${NE_TYPE.pageSubtitle}`}>{subtitle}</p> : null}
           </div>
           {action ? <div className="shrink-0">{action}</div> : null}
         </div>
@@ -211,7 +212,7 @@ function AppDetailCard({
         <button
           type="button"
           onClick={onOpen}
-          className="inline-flex items-center gap-1 rounded-full bg-[#E9F1FF] px-2.5 py-1 text-[10px] font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
+          className="inline-flex items-center gap-1 rounded-full bg-[#E9F1FF] px-2.5 py-1 text-xs font-semibold text-[#3977BE] ring-1 ring-[#D0E0F5] hover:bg-[#DCE8FA]"
         >
           Open
           <ArrowRight className="h-3 w-3" />
@@ -225,8 +226,8 @@ function AppDetailCard({
             key={row.metric}
             className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-100"
           >
-            <span className="text-xs font-medium text-slate-600">{row.metric}</span>
-            <span className="text-sm font-bold tabular-nums text-slate-900">{row.value}</span>
+            <span className={`text-xs font-medium ${NE_INK_SOFT}`}>{row.metric}</span>
+            <span className="text-sm font-bold tabular-nums text-slate-800">{row.value}</span>
           </div>
         ))}
       </div>
@@ -589,7 +590,7 @@ export default function DashboardPage() {
 
   return (
     <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
-      <div className="relative rounded-3xl border border-slate-100 bg-transparent shadow-none">
+      <div className={`relative rounded-3xl border border-slate-100 bg-transparent shadow-none ${NE_DASH_CLASS}`}>
         <DashboardLoadingOverlay
           show={Boolean(loading && applications.length === 0)}
           mode="fixed"
@@ -642,7 +643,7 @@ export default function DashboardPage() {
 
               <div className="space-y-4">
                 <div className="space-y-4">
-                  <div className={NE_KPI_GRID_CLASS}>
+                  <div className={neKpiBalancedGridClass(8)}>
                     <KpiCard
                       label="Total items"
                       value={totals.open_tickets + totals.closed_tickets + totals.rejected}

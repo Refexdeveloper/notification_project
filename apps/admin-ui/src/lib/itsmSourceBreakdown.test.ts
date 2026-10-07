@@ -72,6 +72,17 @@ describe('sourceCountsFromBreakdown', () => {
     expect(sourceCountsFromBreakdown(filtered.today).Email).toBe(1);
   });
 
+  it('recounts source when MIS column filters shrink the ticket set', () => {
+    const rows = [
+      { source: 'Email', status: 'open', created_at: '2026-10-03T04:00:00.000Z', category: 'Network' },
+      { source: 'Mobile', status: 'open', created_at: '2026-10-03T05:00:00.000Z', category: 'Hardware' },
+    ];
+    const network = rows.filter((r) => r.category === 'Network');
+    const next = itsmSourceFromFilteredRecords(network, '2026-10-03');
+    expect(sourceCountsFromBreakdown(next.all).Email).toBe(1);
+    expect(sourceCountsFromBreakdown(next.all).Mobile).toBe(0);
+  });
+
   it('keeps Other for the footnote only', () => {
     const counts = sourceCountsFromBreakdown([
       { name: 'Email', count: 2 },

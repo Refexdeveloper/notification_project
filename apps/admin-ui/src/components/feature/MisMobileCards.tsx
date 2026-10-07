@@ -26,15 +26,17 @@ export function MisMobileRecordCard({
   badge,
   fields,
   extraFields,
+  extra,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
   badge?: ReactNode;
   fields: Array<{ label: string; value: ReactNode }>;
   extraFields?: Array<{ label: string; value: ReactNode }>;
+  extra?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const canExpand = Boolean(extraFields?.length);
+  const canExpand = Boolean(extra || extraFields?.length);
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -43,7 +45,7 @@ export function MisMobileRecordCard({
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-slate-800">{title}</p>
             {subtitle ? (
-              <p className="mt-0.5 truncate text-[10px] leading-relaxed text-slate-500">{subtitle}</p>
+              <p className="mt-0.5 truncate text-xs leading-relaxed text-slate-400">{subtitle}</p>
             ) : null}
           </div>
           <div className="flex shrink-0 items-start gap-1.5">
@@ -60,7 +62,7 @@ export function MisMobileRecordCard({
             ) : null}
           </div>
         </div>
-        <div className="mt-2.5 space-y-1.5 text-[11px]">
+        <div className="mt-2.5 space-y-1.5 text-xs">
           {fields.map((field) => (
             <MisMobileFieldRow key={field.label} label={field.label} value={field.value} />
           ))}
@@ -70,7 +72,7 @@ export function MisMobileRecordCard({
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
-              className="inline-flex min-h-[36px] items-center gap-1 rounded-lg px-2 text-[11px] font-semibold text-slate-600"
+              className="inline-flex min-h-[36px] items-center gap-1 rounded-lg px-2 text-xs font-semibold text-slate-600"
             >
               {open ? 'Hide' : 'Expand'}
               <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -78,8 +80,9 @@ export function MisMobileRecordCard({
           </div>
         ) : null}
       </div>
+      {open && extra ? extra : null}
       {open && extraFields?.length ? (
-        <div className="space-y-1.5 border-t border-slate-200/80 bg-slate-50/80 px-3 py-2.5 text-[11px]">
+        <div className="space-y-1.5 border-t border-slate-200/80 bg-slate-50/80 px-3 py-2.5 text-xs">
           {extraFields.map((field) => (
             <MisMobileFieldRow key={field.label} label={field.label} value={field.value} />
           ))}

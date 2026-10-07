@@ -38,6 +38,19 @@ export function compactMisName(name: string | null | undefined): string {
   return parts.join('');
 }
 
+const PERSON_KEY_ALIASES: Record<string, string> = {
+  balarajuilaiveni: 'balarajuilaveni',
+  kotipatchava: 'koteswararaopatchava',
+};
+
+/** Collapse spelling / spacing variants so one person is one filter option. */
+export function personDedupeKey(name: string | null | undefined): string {
+  const compact = compactMisName(name);
+  if (!compact) return '';
+  const aliased = PERSON_KEY_ALIASES[compact] || compact;
+  return aliased.replace(/ilaiveni/g, 'ilaveni');
+}
+
 export function looksLikeKissflowUserId(value: string | null | undefined): boolean {
   const s = String(value || '').trim();
   if (!s) return false;
@@ -85,7 +98,7 @@ export function uniquePersonLabels(names: Array<string | null | undefined>): str
   for (const raw of names) {
     const label = normalizeItsmPersonLabel(String(raw || '').trim());
     if (!isDisplayablePersonName(label)) continue;
-    const key = compactMisName(label);
+    const key = personDedupeKey(label);
     if (!key) continue;
     const prev = byKey.get(key);
     if (!prev || label.length > prev.length) byKey.set(key, label);
@@ -94,10 +107,65 @@ export function uniquePersonLabels(names: Array<string | null | undefined>): str
 }
 
 export function personLabelMatches(value: string | null | undefined, selected: string | null | undefined): boolean {
-  const want = compactMisName(selected);
-  const have = compactMisName(value);
+  const want = personDedupeKey(selected);
+  const have = personDedupeKey(value);
   if (want && have) return have === want || have.includes(want) || want.includes(have);
   const sel = String(selected || '').trim().toLowerCase();
   if (!sel) return true;
   return String(value || '').toLowerCase().includes(sel);
+}
+
+/** Mohamed Aasik → MA, Arun Kumar → AK, Gowtham → GW. Same as aasik_ITSM newceo. */
+export function getPersonInitials(name: string | null | undefined): string {
+  const label = String(name || '').trim();
+  if (!label || label === '—' || label === '-') return '';
+  const parts = label.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    return parts.map((part) => getPersonInitials(part)).filter(Boolean).join(', ');
+  }
+  const words = label.split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  if (words.length === 1) {
+    const token = words[0].replace(/[^A-Za-z]/g, '');
+    if (!token) return words[0].slice(0, 2).toUpperCase();
+    const first = token.charAt(0);
+    const nextConsonant = token.slice(1).split('').find((ch) => !/[aeiou]/i.test(ch));
+    if (nextConsonant) return `${first}${nextConsonant}`.toUpperCase();
+    return token.slice(0, 2).toUpperCase();
+  }
+  const first = words[0].replace(/[^A-Za-z]/g, '').charAt(0);
+  const last = words[words.length - 1].replace(/[^A-Za-z]/g, '').charAt(0);
+  return `${first}${last}`.toUpperCase();
+}
+
+export function splitPersonNames(name: string | null | undefined): string[] {
+  return String(name || '')
+    .trim()
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part && part !== '—' && part !== '-');
+}
+
+const MIS_AVATAR_TONES = [
+  { bg: 'bg-teal-100', text: 'text-teal-800' },
+  { bg: 'bg-sky-100', text: 'text-sky-800' },
+  { bg: 'bg-violet-100', text: 'text-violet-800' },
+  { bg: 'bg-amber-100', text: 'text-amber-800' },
+  { bg: 'bg-rose-100', text: 'text-rose-800' },
+  { bg: 'bg-emerald-100', text: 'text-emerald-800' },
+  { bg: 'bg-indigo-100', text: 'text-indigo-800' },
+  { bg: 'bg-orange-100', text: 'text-orange-800' },
+  { bg: 'bg-fuchsia-100', text: 'text-fuchsia-800' },
+  { bg: 'bg-cyan-100', text: 'text-cyan-800' },
+] as const;
+
+export function getPersonAvatarTone(name: string | null | undefined): { bg: string; text: string } {
+  const label = String(name || '').trim().toLowerCase();
+  if (!label) return MIS_AVATAR_TONES[0];
+  let hash = 0;
+  for (let i = 0; i < label.length; i += 1) {
+    hash = ((hash << 5) - hash) + label.charCodeAt(i);
+    hash |= 0;
+  }
+  return MIS_AVATAR_TONES[Math.abs(hash) % MIS_AVATAR_TONES.length];
 }

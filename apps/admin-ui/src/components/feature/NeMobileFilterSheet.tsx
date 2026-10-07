@@ -2,9 +2,11 @@
  * Mobile filter bottom sheet — same layout as aasik_ITSM ITMisMobileFilterSheet.
  * Responsive chrome only; callers keep their existing filter values/handlers.
  */
-import { useEffect, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Filter, X } from 'lucide-react';
+import { ChevronDown, Filter, X } from 'lucide-react';
+import { anchorFixedMenu } from '@/lib/anchorFixedMenu';
+import { NE_TYPE } from '@/lib/neDashType';
 
 export function NeMobileFiltersButton({
   count = 0,
@@ -45,7 +47,7 @@ export function NeMobileActiveFilterChips({
           key={chip.key}
           type="button"
           onClick={chip.onRemove}
-          className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+          className="inline-flex max-w-full items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700"
         >
           <span className="truncate">{chip.label}</span>
           <X className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
@@ -57,10 +59,124 @@ export function NeMobileActiveFilterChips({
 
 export function NeMobileFilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex w-full flex-col gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+    <div className="flex w-full flex-col gap-1.5">
+      <span className={NE_TYPE.label}>{label}</span>
       {children}
-    </label>
+    </div>
+  );
+}
+
+type SheetSelectOption = { id: string; label: string };
+
+export function NeSheetSelect({
+  value,
+  onChange,
+  options,
+  className = '',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SheetSelectOption[];
+  className?: string;
+}) {
+  const fieldId = useId();
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<ReturnType<typeof anchorFixedMenu> | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const selected = options.find((opt) => opt.id === value);
+  const label = selected?.label || value || 'Select';
+
+  const updateMenuPosition = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setMenuStyle(anchorFixedMenu(rect, {
+      minWidth: rect.width,
+      maxWidth: Math.max(rect.width, 280),
+      estimatedHeight: 240,
+    }));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    updateMenuPosition();
+    const onScrollOrResize = () => updateMenuPosition();
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, [open, updateMenuPosition]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const menuEl = document.getElementById(`${fieldId}-menu`);
+      if (triggerRef.current?.contains(event.target as Node) || menuEl?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, fieldId]);
+
+  const menu = open && menuStyle && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          id={`${fieldId}-menu`}
+          role="listbox"
+          style={menuStyle}
+          className="overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-[0_16px_40px_rgba(40,60,90,0.16)]"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <ul className="overflow-y-auto overscroll-contain py-0.5" style={{ maxHeight: Math.min(224, menuStyle.maxHeight - 8) }}>
+            {options.map((opt) => (
+              <li key={opt.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={opt.id === value}
+                  className={`flex w-full items-center px-3 py-2.5 text-left text-sm font-medium ${
+                    opt.id === value ? 'bg-[#EAF2FF] text-[#3977BE]' : 'text-slate-800 hover:bg-slate-50'
+                  }`}
+                  onClick={() => {
+                    onChange(opt.id);
+                    setOpen(false);
+                  }}
+                >
+                  {opt.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>,
+        document.body,
+      )
+    : null;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={!options.length}
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex h-11 w-full items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-left text-sm font-semibold text-slate-800 ${className}`}
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {menu}
+    </>
   );
 }
 
@@ -96,7 +212,7 @@ export default function NeMobileFilterSheet({
   if (!open || typeof document === 'undefined') return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[10000] lg:hidden" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-[10000]" role="dialog" aria-modal="true" aria-label={title}>
       <button
         type="button"
         className="absolute inset-0 bg-slate-900/40"
@@ -107,7 +223,7 @@ export default function NeMobileFilterSheet({
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-slate-900">{title}</p>
-            <p className="text-[11px] font-medium text-slate-500">Tap Apply to update the view</p>
+            <p className={NE_TYPE.meta}>Tap Apply to update the view</p>
           </div>
           <button
             type="button"

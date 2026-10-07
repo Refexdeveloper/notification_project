@@ -24,18 +24,295 @@ const {
   pickCurrentStep,
   pickString,
   pickDateTime,
+  coerceKissflowDate,
   isItsmBusinessClosed,
   isItsmBusinessOpen,
+  resolveKissflowCredentials,
+  kissflowGetUrl,
+  extractArray,
 } = require('./kissflowClient');
 const { classifyTicketSource, normalizeItsmPersonLabel } = require('./dashboardDisplay');
 const { projectKeyFromRaw, buildPmPortfolioFromRecords, projectKeySql } = require('./pmPortfolio');
 
 const ITSM_APP_ID = 'IT_Service_Management_A00';
+const ITSM_REFEX_PROCESS_ID = 'Live_IT_Service_Request_A00';
+const ITSM_REFEX_REPORT_ID = 'Service_Items_Refex_A00';
+const ITSM_EXTROVIS_PROCESS_ID = 'Live_IT_Service_Request_Extrovis_A00';
+const ITSM_EXTROVIS_REPORT_ID = 'All_tickets_A00';
+const ITSM_REPORT_CLOSER_TTL_MS = 5 * 60 * 1000;
 const TRAVEL_APP_ID = 'Expense_and_Travel_Management_A00';
 const SOLAR_APP_ID = 'Solar_Site_Expense_Governance_Syst_A00';
 
 function sqlLiteral(value) {
   return String(value || '').replace(/'/g, "''");
+}
+
+function cleanItsmDescription(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '—') return '';
+  const text = /<[a-z][\s\S]*>/i.test(raw)
+    ? raw
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/\s+\n/g, '\n')
+      .replace(/\n\s+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim()
+    : raw;
+  return text;
+}
+
+/** Text or {Name} / {v} from a Kissflow source_payload field. */
+function payloadFieldSql(keys) {
+  const parts = [];
+  for (const key of keys) {
+    const safe = sqlLiteral(key);
+    parts.push(`NULLIF(trim(i.source_payload->>'${safe}'), '')`);
+    parts.push(`NULLIF(trim(i.source_payload->'${safe}'->>'Name'), '')`);
+    parts.push(`NULLIF(trim(i.source_payload->'${safe}'->>'v'), '')`);
+    parts.push(`NULLIF(trim(i.source_payload->'${safe}'->>'text'), '')`);
+    parts.push(`NULLIF(trim(i.source_payload->'${safe}'->>'Text'), '')`);
+  }
+  return `COALESCE(${parts.join(', ')})`;
+}
+
+/** Native names + Refex/Extrovis/report Column ids (process ingest often stores Column_* only). */
+const ITSM_TICKET_TYPE_KEYS = [
+  'Request_Type', 'Ticket_Type', 'Ticket_Type_Detail',
+  'Column_EM6o5_acb3', 'Column_MnD5TeiOke', 'Column_ngHfbXhmqj', 'Column_vW-7Jwyvqb',
+];
+const ITSM_CATEGORY_KEYS = [
+  'Category', 'Column_pFbqS2Q9gD', 'Column_53Z2oyBbZk', 'Column_9oE6HPRxGd',
+];
+const ITSM_SUB_CATEGORY_KEYS = [
+  'SubCategory', 'Sub_Category', 'Sub Category',
+  'Column_wgwPyyrhqe', 'Column_AC0_BCY9hP', 'Column_OHkPEsIs52',
+];
+const ITSM_CRITICALITY_KEYS = [
+  'Criticality', 'Column_SjoEGM7XlG', 'Column_nps6UwRtUp', 'Column_AZfxrxgc1d',
+];
+/** Service-queue Subject: Refex Column_iiZk0Xon6N, Extrovis Column_HEiwMtIBBO. */
+const ITSM_SUMMARY_KEYS = [
+  'Column_iiZk0Xon6N',
+  'Column_HEiwMtIBBO',
+  'Summary',
+];
+/** Service-queue Description: Refex Column_E-ofBZkcFS, Extrovis Column_AS7UbLz7Mg. */
+const ITSM_DESCRIPTION_KEYS = [
+  'Column_E-ofBZkcFS',
+  'Column_AS7UbLz7Mg',
+  'Description',
+];
+const ITSM_EXPECTED_AT_KEYS = ['ExpectedAt', 'Expected_At', 'SLA_ExpectedAt', '_expected_at'];
+const ITSM_SLA_BREACHED_KEYS = ['SLA_Breached', 'Sla_Breached', 'Column_qG4mgtZVzY'];
+const ITSM_SLA_MINUTES_KEYS = ['SLA_Timing_Min', 'SLA_Minutes', 'Column_EezOqIO3Qm', 'Column_6FEEbVGpOh'];
+const ITSM_CLOSURE_MINUTES_KEYS = [
+  'Closure_Time', 'Closure_Minutes', 'Column_EJ_2bDMtnD', 'Column_mEZwE_B6CW',
+];
+const ITSM_TAT_MINUTES_KEYS = [
+  'TAT_Minutes', 'TurnAround_Time_TAT', 'Column_uzB76CIUdv', 'Column_VO-1shRU1Q',
+];
+const ITSM_FORM_STATUS_KEYS = [
+  'Statu_1',
+  'Column_ps84EEKkEI',
+  'Column_WRiZDgVSqj',
+  'Column_0GDnNoEuA7',
+  'Column_69zTtmtO92',
+  'Stages',
+  'Column_JUGHj6d2Xj',
+  'Column_GooYV3HuY1',
+  'Status',
+];
+const ITSM_REOPENED_DATE_KEYS = ['Reopened_On', 'Reopened_Date', 'ReopenedOn', 'Reopened_Date_Time'];
+const ITSM_REOPENED_FLAG_KEYS = ['Reopened_Ticket', 'Reopened', 'Column_C7s_oevsgX', 'Column_U0QcqEXR63'];
+const ITSM_MODIFIED_DATE_KEYS = ['_modified_at', 'Modified_At', 'Column_JOmYm9Frwx', 'Column_QpPzei51U2'];
+const ITSM_CLOSED_DATE_KEYS = [
+  '_completed_at', '_closed_at', 'Closed_On', 'Completed_On', 'Closed_Date', 'Completed_Date',
+];
+/** IT Agent Solution / activity DateTime — same columns Head Refex + Extrovis use for Closed Date. */
+const ITSM_AGENT_CLOSED_DATE_KEYS = [
+  'Column__LGAMX8kf0',
+  'Column_R_u4Nyl5q_',
+  'ITAgentDate_Time',
+  'Date_Time',
+  'ActedAt',
+  'actedAt',
+];
+
+function isItsmNonHumanActor(value) {
+  const token = String(value || '').toLowerCase().replace(/[\s._-]+/g, '');
+  if (!token) return true;
+  return token === 'itsm'
+    || token === 'itsmsa'
+    || token.startsWith('itsmbot')
+    || token === 'itsmserviceaccount'
+    || token === 'bot'
+    || token.endsWith('bot')
+    || token.includes('automation')
+    || token.includes('autoclose')
+    || token === 'itagents'
+    || token === 'itagentsextrovis'
+    || token === 'firstapprover'
+    || token === 'firstapproverextrovis'
+    || token === 'itmanager'
+    || token === 'ithead'
+    || token === 'itadmin';
+}
+
+function blankMis(value) {
+  const text = String(value == null ? '' : value).trim();
+  return !text || text === '—' || text === '-';
+}
+
+function blankNumericMis(value) {
+  if (blankMis(value)) return true;
+  const text = String(value).trim();
+  return !/^[0-9]+([.][0-9]+)?$/.test(text) && !/^\d+\s*:\s*\d+$/.test(text);
+}
+
+function applyItsmMisExtras(records, extrasById) {
+  if (!extrasById || !extrasById.size) return records || [];
+  return (records || []).map((row) => {
+    const extra = extrasById.get(String(row.id || ''))
+      || extrasById.get(String(row.instance_id || ''))
+      || extrasById.get(String(row.request_id || ''));
+    if (!extra) return row;
+    const status = String(row.status || '').toLowerCase();
+    const closed = status === 'closed' || status === 'rejected';
+    const closedBy = (blankMis(row.closed_by) || isItsmNonHumanActor(row.closed_by))
+      ? extra.closed_by
+      : row.closed_by;
+    const assigned = usableAssignedName(row.assigned_to);
+    const assignedHuman = assigned && !isItsmNonHumanActor(assigned) ? assigned : '';
+    const description = cleanItsmDescription(blankMis(row.description) ? extra.description : row.description)
+      || cleanItsmDescription(extra.description)
+      || undefined;
+    const summary = String(extra.summary || '').trim();
+    const existingSubject = String(row.subject || '').trim();
+    const subject = summary
+      || (description && existingSubject === description ? '' : existingSubject)
+      || existingSubject;
+    return {
+      ...row,
+      ticket_type: blankMis(row.ticket_type) ? extra.ticket_type : row.ticket_type,
+      subject: subject && subject !== '—' ? subject : row.subject,
+      description,
+      expected_at: row.expected_at || extra.expected_at || null,
+      category: blankMis(row.category) ? extra.category : row.category,
+      sub_category: blankMis(row.sub_category) ? extra.sub_category : row.sub_category,
+      criticality: blankMis(row.criticality) ? extra.criticality : row.criticality,
+      sla_breached: blankMis(row.sla_breached) ? extra.sla_breached : row.sla_breached,
+      sla_minutes: blankNumericMis(row.sla_minutes) ? extra.sla_minutes : row.sla_minutes,
+      closure_minutes: blankNumericMis(row.closure_minutes) ? extra.closure_minutes : row.closure_minutes,
+      tat_minutes: blankNumericMis(row.tat_minutes) ? extra.tat_minutes : row.tat_minutes,
+      form_status: blankMis(row.form_status) ? extra.form_status : row.form_status,
+      reopened_at: row.reopened_at || extra.reopened_at || null,
+      // KPI Closed Today uses reopen_entered_at (step move), not _modified_at.
+      closed_at: row.closed_at || extra.closed_at || extra.completed_at || null,
+      agent_closed_at: row.agent_closed_at || extra.agent_closed_at || null,
+      reopen_entered_at: row.reopen_entered_at || extra.reopen_entered_at || null,
+      modified_at: row.modified_at || extra.modified_at || null,
+      closed_by: closedBy,
+      assigned_to: (closed && !assignedHuman && closedBy && !isItsmNonHumanActor(closedBy))
+        ? closedBy
+        : row.assigned_to,
+    };
+  });
+}
+
+async function loadItsmMisExtrasById(pool, environment, applicationId) {
+  const latestCte = latestRunsCte({
+    environmentParam: '$2',
+    applicationIdParam: '$1',
+    alias: 'latest',
+  });
+  const closedBySql = `COALESCE(
+    ${pickPersonNameSql("i.source_payload->'Closed_By'")},
+    ${pickPersonNameSql("i.source_payload->'ClosedBy'")},
+    ${pickPersonNameSql("i.source_payload->'Resolved_By'")},
+    ${pickPersonNameSql("i.source_payload->'_modified_by'")},
+    ${pickPersonNameSql("i.source_payload->'_current_assigned_to'")}
+  )`;
+  const sql = `
+  WITH ${latestCte}
+  SELECT
+    i.instance_id,
+    COALESCE(
+      NULLIF(trim(i.source_payload->>'_request_number'), ''),
+      NULLIF(trim(i.source_payload->>'Request_ID'), ''),
+      NULLIF(trim(i.source_payload->>'Request_Id'), ''),
+      NULLIF(trim(i.source_payload->>'Ticket_ID'), '')
+    ) AS request_id,
+    (${payloadFieldSql(ITSM_TICKET_TYPE_KEYS)}) AS ticket_type,
+    (${payloadFieldSql(ITSM_SUMMARY_KEYS)}) AS summary,
+    (${payloadFieldSql(ITSM_DESCRIPTION_KEYS)}) AS description,
+    (${payloadTsSql(ITSM_EXPECTED_AT_KEYS)}) AS expected_at,
+    (${payloadFieldSql(ITSM_CATEGORY_KEYS)}) AS category,
+    (${payloadFieldSql(ITSM_SUB_CATEGORY_KEYS)}) AS sub_category,
+    (${payloadFieldSql(ITSM_CRITICALITY_KEYS)}) AS criticality,
+    (${payloadFieldSql(ITSM_SLA_BREACHED_KEYS)}) AS sla_breached,
+    (${payloadNumericSql(ITSM_SLA_MINUTES_KEYS)}) AS sla_minutes,
+    (${payloadNumericSql(ITSM_CLOSURE_MINUTES_KEYS)}) AS closure_minutes,
+    (${payloadNumericSql(ITSM_TAT_MINUTES_KEYS)}) AS tat_minutes,
+    (${payloadFieldSql(ITSM_FORM_STATUS_KEYS)}) AS form_status,
+    COALESCE(
+      ${payloadTsSql(ITSM_REOPENED_DATE_KEYS)},
+      CASE
+        WHEN lower(coalesce(${payloadFieldSql(ITSM_REOPENED_FLAG_KEYS)}, '')) IN ('yes', 'true', '1', 'y')
+          THEN ${payloadTsSql(ITSM_MODIFIED_DATE_KEYS)}
+        ELSE NULL
+      END
+    ) AS reopened_at,
+    COALESCE(
+      ${payloadTsSql(ITSM_CLOSED_DATE_KEYS)}
+    ) AS closed_at,
+    (${payloadTsSql(ITSM_MODIFIED_DATE_KEYS)}) AS modified_at,
+    (${closedBySql}) AS closed_by,
+    i.source_payload
+  FROM engagement_reporting.item i
+  JOIN latest l
+    ON i.snapshot_run_id = l.snapshot_run_id
+   AND i.process_id = l.process_id
+  `;
+  const { rows } = await pool.query(sql, [applicationId, environment]);
+  const map = new Map();
+  for (const row of rows || []) {
+    const fromPayload = extractItsmCloserMeta(row.source_payload);
+    const closedBy = fromPayload.closed_by || (row.closed_by && !isItsmNonHumanActor(row.closed_by)
+      ? normalizeItsmPersonLabel(String(row.closed_by).trim())
+      : '');
+    const extra = {
+      ticket_type: row.ticket_type || undefined,
+      summary: row.summary || undefined,
+      description: cleanItsmDescription(row.description) || undefined,
+      expected_at: row.expected_at || null,
+      category: row.category || undefined,
+      sub_category: row.sub_category || undefined,
+      criticality: row.criticality || undefined,
+      sla_breached: row.sla_breached || undefined,
+      sla_minutes: row.sla_minutes || undefined,
+      closure_minutes: row.closure_minutes || undefined,
+      tat_minutes: row.tat_minutes || undefined,
+      form_status: row.form_status || undefined,
+      reopened_at: row.reopened_at || null,
+      closed_at: row.closed_at || fromPayload.completed_at || null,
+      agent_closed_at: fromPayload.agent_closed_at || null,
+      reopen_entered_at: fromPayload.reopen_entered_at || null,
+      modified_at: row.modified_at || fromPayload.modified_at || null,
+      completed_at: fromPayload.completed_at || null,
+      closed_by: closedBy || undefined,
+    };
+    for (const key of [row.instance_id, row.request_id]) {
+      if (key) map.set(String(key), extra);
+    }
+  }
+  return map;
 }
 
 function isItsmApp(applicationId) {
@@ -78,6 +355,52 @@ function isLeadBusinessClosed(raw) {
 function isEmsApp(applicationId) {
   const hay = String(applicationId || '').toLowerCase();
   return hay.includes('ems');
+}
+
+/** Kissflow currency / number — first finite value in key order. */
+const AMOUNT_FIELD_KEYS = [
+  'Final_amount',
+  'advance_amount_in_number',
+  'Advance_amount_value',
+  'Advance_Amount',
+  'Final_Total_Amount',
+  'Total_Claimable_Amount',
+  'Total_Raised_Amount',
+  'Total_Reimbursable_Amount_single',
+  'Final_Bill_Amount',
+  'Expense_Amount',
+  'Total_Amount',
+  'Ticker_Fare',
+  'FS_Total_Fare_1',
+  'FS_Booking_Amount_1',
+  'FS_Booking_Amount',
+  'MC_Total_Booking_Amount',
+  'Amount',
+  'Grand_Total',
+  'Claimed_Amount',
+  'total_amount',
+];
+
+function coerceAmount(val) {
+  if (val == null || val === '') return null;
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (typeof val === 'object') {
+    return coerceAmount(val.v ?? val.Value ?? val.value ?? val.amount ?? val.Amount);
+  }
+  const n = Number(String(val).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickAmountFromRaw(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  let fallback = null;
+  for (const key of AMOUNT_FIELD_KEYS) {
+    const n = coerceAmount(raw[key]);
+    if (n == null) continue;
+    if (n > 0) return n;
+    if (fallback == null) fallback = n;
+  }
+  return fallback;
 }
 
 function travelProcessTitle(processId) {
@@ -245,7 +568,6 @@ function serializeRecordItem(it, opts = {}) {
   return {
     id: String(it.id || it.instance_id || it.request_id),
     request_id: it.request_id,
-    subject: it.subject,
     expense_type: it.expense_type,
     assignee_id: it.assignee_id,
     assignee_email: it.assignee_email,
@@ -273,6 +595,22 @@ function serializeRecordItem(it, opts = {}) {
     amount: it.amount,
     source: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
     source_channel: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
+    ticket_type: it.ticket_type || it.request_type || undefined,
+    subject: itsm && it.summary ? it.summary : it.subject,
+    description: cleanItsmDescription(it.description) || undefined,
+    expected_at: it.expected_at || null,
+    category: it.category || undefined,
+    sub_category: it.sub_category || undefined,
+    criticality: it.criticality || undefined,
+    sla_breached: it.sla_breached,
+    sla_minutes: it.sla_minutes,
+    closure_minutes: it.closure_minutes,
+    tat_minutes: it.tat_minutes,
+    reopened_at: it.reopened_at || null,
+    agent_closed_at: it.agent_closed_at || null,
+    reopen_entered_at: it.reopen_entered_at || null,
+    modified_at: it.modified_at || null,
+    form_status: it.form_status || undefined,
   };
 }
 
@@ -382,16 +720,20 @@ function columnsForApp(applicationId) {
   }
   if (isItsmApp(applicationId)) {
     return [
-      { id: 'request_id', label: 'Ticket ID' },
-      { id: 'subject', label: 'Subject' },
-      { id: 'requested_by', label: 'Requested by' },
-      { id: 'assigned_to', label: 'Assigned to' },
-      { id: 'closed_by', label: 'Closed by' },
-      { id: 'status', label: 'Status' },
-      { id: 'entity', label: 'Entity' },
-      { id: 'company_name', label: 'Company name' },
-      { id: 'current_step', label: 'Step' },
-      { id: 'created_at', label: 'Created' },
+      { id: 'request_id', label: 'Request ID' },
+      { id: 'requested_by', label: 'Requester' },
+      { id: 'assigned_to', label: 'Assigned To' },
+      { id: 'sla', label: 'SLA' },
+      { id: 'created_at', label: 'Created Date' },
+      { id: 'status', label: 'Ticket Status' },
+      { id: 'form_status', label: 'Stage' },
+      { id: 'source', label: 'Source' },
+      { id: 'ticket_type', label: 'Request Type' },
+      { id: 'category', label: 'Category' },
+      { id: 'sub_category', label: 'Sub Category' },
+      { id: 'criticality', label: 'Criticality' },
+      { id: 'closed_by', label: 'Closed By' },
+      { id: 'closed_at', label: 'Closed Date' },
     ];
   }
   if (isPmApp(applicationId)) {
@@ -421,13 +763,14 @@ function columnsForApp(applicationId) {
   if (isEmsApp(applicationId)) {
     return [
       { id: 'request_id', label: 'Exp ID' },
-      { id: 'subject', label: 'Title' },
-      { id: 'expense_type', label: 'Category' },
-      { id: 'requested_by', label: 'Requester' },
+      { id: 'expense_type', label: 'Expense type' },
+      { id: 'requested_by', label: 'Requestor' },
+      { id: 'amount', label: 'Amount' },
+      { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
       { id: 'company_name', label: 'Company name' },
-      { id: 'created_at', label: 'Created' },
+      { id: 'created_at', label: 'Requested' },
     ];
   }
   if (isSolarApp(applicationId)) {
@@ -445,13 +788,16 @@ function columnsForApp(applicationId) {
   if (isTravelApp(applicationId)) {
     return [
       { id: 'request_id', label: 'Request ID' },
-      { id: 'subject', label: 'Title' },
-      { id: 'requested_by', label: 'Requester' },
-      { id: 'assigned_to', label: 'Assigned to' },
+      { id: 'requested_by', label: 'Requestor' },
+      { id: 'trip_type', label: 'Trip type' },
+      { id: 'departure_date', label: 'Departure date' },
+      { id: 'from_city', label: 'Source (From)' },
+      { id: 'to_city', label: 'Destination (To)' },
+      { id: 'amount', label: 'Booking amount' },
+      { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
-      { id: 'entity', label: 'Entity' },
-      { id: 'company_name', label: 'Company name' },
       { id: 'process_id', label: 'Process' },
+      { id: 'company_name', label: 'Company name' },
       { id: 'created_at', label: 'Created' },
     ];
   }
@@ -530,35 +876,7 @@ function dedupeRecords(rows) {
 }
 
 function closedByFromRaw(raw) {
-  const fields = [
-    raw?.Closed_By,
-    raw?.ClosedBy,
-    raw?.Resolved_By,
-    raw?.Completed_By,
-    raw?.Closed_by,
-    raw?.ResolvedBy,
-    raw?._completed_by,
-    raw?.Modified_By,
-    raw?._modified_by,
-    raw?.Last_Action_By,
-    raw?._last_action_performed_by,
-    raw?.Completer,
-  ];
-  for (const field of fields) {
-    const name = normalizeItsmPersonLabel(personNameFromRaw(field));
-    if (name) return name;
-  }
-  if (isItsmBusinessClosed(raw)) {
-    const fromModified = normalizeItsmPersonLabel(personNameFromRaw(raw?._modified_by || raw?.Modified_By));
-    if (fromModified) return fromModified;
-    const fromStep = normalizeItsmPersonLabel(
-      personNameFromRaw(raw?._current_assigned_to || raw?.Assigned_To || raw?.Assignee),
-    );
-    if (fromStep && !/^(it manager|it head)$/i.test(fromStep.replace(/\s+/g, ' ').trim())) {
-      return fromStep;
-    }
-  }
-  return '';
+  return extractItsmCloserMeta(raw).closed_by;
 }
 
 function isDraftSql(alias = 'i') {
@@ -588,10 +906,83 @@ function personIdFromRaw(val) {
 }
 
 function kissflowTsSql(expr) {
+  const text = `NULLIF(trim(coalesce((${expr})->>'v', (${expr})->>'dv', (${expr}) #>> '{}')), '')`;
   return `CASE
-    WHEN jsonb_typeof(${expr}) = 'object' THEN NULLIF(trim((${expr})->>'v'), '')::timestamptz
-    ELSE NULLIF(trim((${expr}) #>> '{}'), '')::timestamptz
+    WHEN ${expr} IS NULL THEN NULL
+    WHEN jsonb_typeof(${expr}) = 'number' AND (${expr})::text ~ '^[0-9]{12,}$' THEN to_timestamp((${expr})::numeric / 1000.0)
+    WHEN jsonb_typeof(${expr}) = 'number' AND (${expr})::text ~ '^[0-9]{9,11}$' THEN to_timestamp((${expr})::numeric)
+    WHEN ${text} IS NULL THEN NULL
+    WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND ${text} ~ '(Z|[+-][0-9]{2}(:?[0-9]{2})?)$' THEN ${text}::timestamptz
+    WHEN ${text} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN ${text}::timestamp AT TIME ZONE 'Asia/Kolkata'
+    WHEN ${text} ~ '^[0-9]{12,}$' THEN to_timestamp((${text})::numeric / 1000.0)
+    WHEN ${text} ~ '^[0-9]{9,11}$' THEN to_timestamp((${text})::numeric)
+    ELSE NULL
   END`;
+}
+
+function latestActedBySql() {
+  return `(
+    SELECT COALESCE(
+      NULLIF(trim(obj->'ActedBy'->>'Name'), ''),
+      NULLIF(trim(obj->'actedBy'->>'Name'), ''),
+      NULLIF(trim(obj->'Acted_By'->>'Name'), ''),
+      NULLIF(trim(obj->'AssignedTo'->>'Name'), ''),
+      NULLIF(trim(obj->'assignedTo'->>'Name'), '')
+    )
+    FROM (
+      SELECT j.value AS obj
+      FROM jsonb_path_query(
+        i.source_payload,
+        '$.** ? ((exists(@.ActedAt) || exists(@.actedAt)) && (exists(@.ActedBy) || exists(@.actedBy) || exists(@.Acted_By) || exists(@.AssignedTo)))'
+      ) AS j(value)
+    ) acted
+    WHERE COALESCE(
+      NULLIF(trim(obj->'ActedBy'->>'Name'), ''),
+      NULLIF(trim(obj->'actedBy'->>'Name'), ''),
+      NULLIF(trim(obj->'Acted_By'->>'Name'), ''),
+      NULLIF(trim(obj->'AssignedTo'->>'Name'), ''),
+      NULLIF(trim(obj->'assignedTo'->>'Name'), '')
+    ) IS NOT NULL
+    ORDER BY COALESCE(
+      ${kissflowTsSql("obj->'ActedAt'")},
+      ${kissflowTsSql("obj->'actedAt'")}
+    ) DESC NULLS LAST
+    LIMIT 1
+  )`;
+}
+
+function payloadNumericSql(keys) {
+  const parts = [];
+  for (const key of keys) {
+    const safe = sqlLiteral(key);
+    const candidates = [
+      `i.source_payload->>'${safe}'`,
+      `i.source_payload->'${safe}'->>'v'`,
+      `i.source_payload->'${safe}'->>'value'`,
+      `i.source_payload->'${safe}'->>'${safe}'`,
+      `i.source_payload->'${safe}'->>'Minutes'`,
+      `i.source_payload->'${safe}'->>'minutes'`,
+    ];
+    for (const expr of candidates) {
+      const raw = `NULLIF(trim(${expr}), '')`;
+      parts.push(`CASE WHEN ${raw} ~ '^[0-9]+([.][0-9]+)?$' THEN ${raw} ELSE NULL END`);
+    }
+  }
+  return `COALESCE(${parts.join(', ')})`;
+}
+
+function payloadTsSql(keys) {
+  return `COALESCE(${keys.map((key) => kissflowTsSql(`i.source_payload->'${sqlLiteral(key)}'`)).join(',\n      ')})`;
+}
+
+function nestedMaxTsSql(keys) {
+  const unions = (keys || []).map((key) => {
+    const safe = sqlLiteral(key);
+    return `SELECT ${kissflowTsSql('j.value')} AS ts
+      FROM jsonb_path_query(i.source_payload, '$.**."${safe}"') AS j(value)`;
+  });
+  if (!unions.length) return 'NULL';
+  return `(SELECT max(ts) FROM (${unions.join(' UNION ALL ')}) nested_ts)`;
 }
 
 function assigneeMetaFromRaw(raw, { itsm = false } = {}) {
@@ -637,6 +1028,267 @@ function personNameFromRaw(val) {
     );
   }
   return '';
+}
+
+function humanCloserName(value) {
+  const name = normalizeItsmPersonLabel(personNameFromRaw(value));
+  if (!name || name === '—' || isItsmNonHumanActor(name)) return '';
+  return name;
+}
+
+function itsmStepEntries(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === 'object') {
+    if (value.ActedBy || value.actedBy || value.Acted_By || value.AssignedTo || value.ActedAt || value.Status) {
+      return [value];
+    }
+    const nested = value.Items || value.items || value.Data || value.data;
+    if (Array.isArray(nested)) return nested.filter(Boolean);
+  }
+  return [];
+}
+
+function isTerminalStepStatus(status) {
+  const token = String(status || '').toLowerCase().replace(/[\s_-]+/g, '');
+  return token === 'completed' || token === 'complete' || token === 'cancelled'
+    || token === 'canceled' || token === 'resolved' || token === 'closed';
+}
+
+function pickSolverFromEntries(entries) {
+  for (const entry of entries || []) {
+    const name = humanCloserName(entry?.ActedBy ?? entry?.actedBy ?? entry?.Acted_By)
+      || humanCloserName(entry?.AssignedTo ?? entry?.assignedTo ?? entry?.Assignee);
+    if (!name || !isTerminalStepStatus(entry?.Status ?? entry?.status ?? entry?._status)) continue;
+    return {
+      name,
+      actedAt: coerceKissflowDate(entry?.ActedAt ?? entry?.actedAt ?? entry?.CompletedAt)
+        || coerceKissflowDate(entry?.Column__LGAMX8kf0)
+        || coerceKissflowDate(entry?.Column_R_u4Nyl5q_),
+    };
+  }
+  for (let idx = (entries || []).length - 1; idx >= 0; idx -= 1) {
+    const entry = entries[idx];
+    const name = humanCloserName(entry?.ActedBy ?? entry?.actedBy ?? entry?.Acted_By)
+      || humanCloserName(entry?.AssignedTo ?? entry?.assignedTo ?? entry?.Assignee);
+    if (!name) continue;
+    return {
+      name,
+      actedAt: coerceKissflowDate(entry?.ActedAt ?? entry?.actedAt ?? entry?.CompletedAt)
+        || coerceKissflowDate(entry?.Column__LGAMX8kf0)
+        || coerceKissflowDate(entry?.Column_R_u4Nyl5q_),
+    };
+  }
+  return { name: '', actedAt: null };
+}
+
+function pickSolverFromKeys(raw, keys) {
+  for (const key of keys) {
+    if (!raw || raw[key] == null) continue;
+    const found = pickSolverFromEntries(itsmStepEntries(raw[key]));
+    if (found.name) return found;
+  }
+  return { name: '', actedAt: null };
+}
+
+/** Head IT Agent / My Team solver columns — Solution / Tech Support before PickUp pool. */
+const ITSM_SOLVER_STEP_KEYS = [
+  'IT Tech Support',
+  'IT Agent Solution',
+  'IT Tech Support After Dependency',
+  'IT Agent Solution After Dependency',
+  'Column_M6Lo8-DcO7',
+  'Column_PdcW660jHk',
+  'Column_tW6JKl_LzQ',
+  'Column_GalsKhjIfg',
+  'Column_0XG6fyWN7c',
+  'Column_JliIS4CsP9',
+  'IT__Agent_Solution',
+  'It_Agent_Solution',
+  'Column_KaubOsozAz',
+  'Column_qr_9gP_vE5',
+];
+
+const ITSM_PICKUP_STEP_KEYS = [
+  'IT Tech',
+  'IT Tech Pickup',
+  'IT Agent Pickup',
+  'Column_LVQSPzDsbD',
+  'Column_9gnIPdxah5',
+  'Column_7WajlrHQ7C',
+];
+
+function walkNamedSolverKeys(raw) {
+  if (!raw || typeof raw !== 'object') return { name: '', actedAt: null };
+  for (const [key, val] of Object.entries(raw)) {
+    const token = String(key).toLowerCase();
+    if (/reopen|feedback|approval|manager|head|l1|l2|pickup|pick up/.test(token)) continue;
+    if (!/tech support|agent solution|after dependency|it__agent|it_agent/.test(token)) continue;
+    const found = pickSolverFromEntries(itsmStepEntries(val));
+    if (found.name) return found;
+  }
+  return { name: '', actedAt: null };
+}
+
+/**
+ * Head My Team / IT Agent Closed By + Closed Date from a Kissflow item payload.
+ * ActedBy may be `{Name}` or `[{Name}]` — SQL jsonb ->>'Name' misses the array form.
+ */
+const ITSM_REOPEN_STEP_KEYS = [
+  'IT Tech Reopen',
+  'Ticket Reopen',
+  'ReOpen Window',
+  'Employee Feedback',
+  'Column_yjgVKIjsC3',
+  'Column_pCWmiiKhh4',
+  'Column_9edMpjzOjb',
+  'Activity_Ot8GrzZvSl',
+  'Activity_7rCa3_zSic',
+];
+
+function isItsmReopenHoldStepName(name) {
+  const token = String(name || '').toLowerCase().replace(/[_-]+/g, ' ');
+  if (!token || token.includes('reopened')) return false;
+  return (
+    token.includes('it tech reopen')
+    || token.includes('ticket reopen')
+    || token.includes('reopen window')
+    || token.includes('employee feedback')
+  );
+}
+
+function pickActedAtFromEntries(entries) {
+  let inProgress = null;
+  let latest = null;
+  let latestMs = 0;
+  for (const entry of entries || []) {
+    const at = coerceKissflowDate(entry?.ActedAt ?? entry?.actedAt ?? entry?.CompletedAt);
+    if (!at) continue;
+    const status = String(entry?.Status ?? entry?.status ?? '').toLowerCase();
+    if (status === 'inprogress' || status === 'pending' || status === 'assigned') inProgress = at;
+    const ms = Date.parse(at);
+    if (Number.isFinite(ms) && ms >= latestMs) {
+      latestMs = ms;
+      latest = at;
+    }
+  }
+  return inProgress || latest;
+}
+
+/** When the ticket moved onto Ticket Reopen / IT Tech Reopen / ReOpen Window. */
+function extractItsmReopenEnteredAt(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  for (const key of ITSM_REOPEN_STEP_KEYS) {
+    if (raw[key] == null) continue;
+    const at = pickActedAtFromEntries(itsmStepEntries(raw[key]));
+    if (at) return at;
+  }
+  for (const [key, val] of Object.entries(raw)) {
+    if (!isItsmReopenHoldStepName(key)) continue;
+    const at = pickActedAtFromEntries(itsmStepEntries(val));
+    if (at) return at;
+  }
+  return null;
+}
+
+function extractItsmCloserMeta(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { closed_by: '', modified_at: null, agent_closed_at: null, completed_at: null, reopen_entered_at: null };
+  }
+  const fromSolver = pickSolverFromKeys(raw, ITSM_SOLVER_STEP_KEYS);
+  const fromNamed = fromSolver.name ? fromSolver : walkNamedSolverKeys(raw);
+  const fromPickup = fromNamed.name ? fromNamed : pickSolverFromKeys(raw, ITSM_PICKUP_STEP_KEYS);
+  const solver = fromNamed.name ? fromNamed : fromPickup;
+  const closedBy = solver.name
+    || humanCloserName(raw.Closed_By || raw.ClosedBy || raw.Resolved_By || raw.Completed_By || raw.Closed_by)
+    || humanCloserName(raw._modified_by || raw.Modified_By)
+    || (isItsmBusinessClosed(raw)
+      ? humanCloserName(raw._current_assigned_to || raw.Assigned_To || raw.Assignee)
+      : '');
+  return {
+    closed_by: closedBy,
+    modified_at: pickDateTime(raw, ITSM_MODIFIED_DATE_KEYS),
+    agent_closed_at: solver.actedAt || pickDateTime(raw, ITSM_AGENT_CLOSED_DATE_KEYS),
+    completed_at: pickDateTime(raw, ITSM_CLOSED_DATE_KEYS),
+    reopen_entered_at: extractItsmReopenEnteredAt(raw),
+  };
+}
+
+let itsmReportCloserCache = { at: 0, environment: '', map: null };
+
+async function fetchKissflowReportItems(environment, processId, reportId, credentials) {
+  const account = credentials.accountId;
+  const all = [];
+  for (let page = 1; page <= 30; page += 1) {
+    const urlPath = `/process-report/2/${encodeURIComponent(account)}/${encodeURIComponent(processId)}/${encodeURIComponent(reportId)}?page_number=${page}&page_size=200&_application_id=${encodeURIComponent(ITSM_APP_ID)}`;
+    const { data } = await kissflowGetUrl({ environment, urlPath, credentials });
+    const batch = extractArray(data);
+    if (!batch.length) break;
+    all.push(...batch);
+    if (batch.length < 200) break;
+  }
+  return all;
+}
+
+function extractItsmStageFromPayload(raw) {
+  if (!raw || typeof raw !== 'object') return '';
+  for (const key of ITSM_FORM_STATUS_KEYS) {
+    const value = pickString(raw, [key]);
+    if (!value || /^(yes|no)$/i.test(value)) continue;
+    return value;
+  }
+  return '';
+}
+
+function closerExtraFromRaw(raw) {
+  const meta = extractItsmCloserMeta(raw);
+  return {
+    closed_by: meta.closed_by || undefined,
+    modified_at: meta.modified_at || null,
+    agent_closed_at: meta.agent_closed_at || null,
+    reopen_entered_at: meta.reopen_entered_at || null,
+    completed_at: meta.completed_at || null,
+    closed_at: meta.completed_at || null,
+    form_status: extractItsmStageFromPayload(raw) || undefined,
+  };
+}
+
+function indexItsmCloserExtra(map, raw, extra) {
+  const keys = [
+    raw?._id,
+    raw?.instance_id,
+    raw?._request_number,
+    raw?.Request_ID,
+    raw?.Request_Id,
+    raw?.Ticket_ID,
+    pickString(raw || {}, ['Column_0jda6rzCc3', 'Column_rPLlKkQoX4']),
+  ];
+  for (const key of keys) {
+    if (key) map.set(String(key), extra);
+  }
+}
+
+/** Head My Team source: Refex + Extrovis process reports (ActedBy / _modified_at). */
+async function loadItsmReportCloserById(environment) {
+  const env = String(environment || 'production');
+  if (
+    itsmReportCloserCache.map
+    && itsmReportCloserCache.environment === env
+    && (Date.now() - itsmReportCloserCache.at) < ITSM_REPORT_CLOSER_TTL_MS
+  ) {
+    return itsmReportCloserCache.map;
+  }
+  const credentials = await resolveKissflowCredentials(env);
+  const [refex, extrovis] = await Promise.all([
+    fetchKissflowReportItems(env, ITSM_REFEX_PROCESS_ID, ITSM_REFEX_REPORT_ID, credentials),
+    fetchKissflowReportItems(env, ITSM_EXTROVIS_PROCESS_ID, ITSM_EXTROVIS_REPORT_ID, credentials),
+  ]);
+  const map = new Map();
+  for (const raw of [...refex, ...extrovis]) {
+    indexItsmCloserExtra(map, raw, closerExtraFromRaw(raw));
+  }
+  itsmReportCloserCache = { at: Date.now(), environment: env, map };
+  return map;
 }
 
 function statusBucketFromRaw(raw, applicationId) {
@@ -819,6 +1471,7 @@ function buildLiveRecordRows(allItems, applicationId) {
         || ''
       )
       : '';
+    const closer = itsm ? extractItsmCloserMeta(raw) : {};
     const closedAt = pickDateTime(raw, [
       '_completed_at',
       '_closed_at',
@@ -826,14 +1479,14 @@ function buildLiveRecordRows(allItems, applicationId) {
       'Closed_On',
       'Completed_Date',
       'Closed_Date',
-    ]) || (statusBucketFromRaw(raw, applicationId) === 'closed'
-      ? pickDateTime(raw, ['_modified_at'])
-      : null);
+    ]) || closer.completed_at || null;
+    const assignedName = assigneeMeta.assigned_name || '';
+    const assignedHuman = assignedName && !isItsmNonHumanActor(assignedName) ? assignedName : '';
     const assigned = itsm
-      ? (assigneeMeta.assigned_name || '—')
+      ? (assignedHuman || closer.closed_by || assignedName || '—')
       : lead
-        ? (assigneeMeta.assigned_name || leadOwner || '—')
-        : (assigneeMeta.assigned_name || personNameFromRaw(raw?._created_by) || '—');
+        ? (assignedName || leadOwner || '—')
+        : (assignedName || personNameFromRaw(raw?._created_by) || '—');
     const requested = itsm
       ? (personNameFromRaw(raw?.Requester) || personNameFromRaw(raw?.Requester_Name) || '—')
       : lead
@@ -851,7 +1504,7 @@ function buildLiveRecordRows(allItems, applicationId) {
           ? pickString(raw, ['Task_ID_Formulated', 'Task_ID', 'Sub_Task_ID', 'Task_Id', '_request_number', 'Request_ID', '_id'])
           : pickString(raw, ['Project_ID_Formulated', 'Project_ID', 'Project_Id', '_request_number', 'Request_ID', '_id']))
         : travel
-          ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Request_No', '_request_number'])
+          ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Travel_Request_ID_1', 'Advance_Request_ID', 'Request_No', '_request_number'])
           : lead
             ? pickString(raw, ['Lead_ID', 'Lead_Id', 'Lead_Number', '_request_number', '_id'])
             : solar
@@ -875,12 +1528,24 @@ function buildLiveRecordRows(allItems, applicationId) {
       || (raw?._created_at?.v)
       || null;
     const expenseType = solar || ems
-      ? (pickString(raw, ['Expense_Type', 'Category', 'Service_Category', 'Expense_Category']) || '—')
+      ? (pickString(raw, ['Expense_Type', 'Expense_Type_1', 'Expense_Category', 'Category', 'Service_Category']) || '—')
+      : undefined;
+    const tripType = travel
+      ? (pickString(raw, ['Trip_Type', 'Travel_Type', 'OnewayRound_tripNot_applicable']) || undefined)
+      : undefined;
+    const fromCity = travel
+      ? (pickString(raw, ['Boarding_from', 'FS_From_City', 'Source', 'From_City']) || undefined)
+      : undefined;
+    const toCity = travel
+      ? (pickString(raw, ['Destination_to_1', 'FS_To_City', 'Destination', 'To_City']) || undefined)
+      : undefined;
+    const departureDate = travel
+      ? (pickDateTime(raw, ['Departure_Date', 'FS_Departure_Date', 'From_Date']) || null)
       : undefined;
     const subject = solar
       ? (pickString(raw, ['Site_Name', 'Site', 'Location', 'Site_Location', 'Subject', 'Title']) || pickCurrentStep(raw) || '—')
       : travel
-        ? (pickString(raw, ['Title', 'Travel_Title', 'Request_Title', 'Subject', 'Summary']) || travelProcessTitle(processId))
+        ? (pickString(raw, ['Purpose_of_Travel', 'Purpose', 'Title', 'Travel_Title', 'Request_Title', 'Subject', 'Summary', 'Name']) || travelProcessTitle(processId))
         : pm
           ? (isTask
             ? pickString(raw, ['Task_Name', 'Task_Title', 'Sub_Task_Name', 'Subject', 'Title'])
@@ -888,9 +1553,11 @@ function buildLiveRecordRows(allItems, applicationId) {
           : lead
             ? (pickString(raw, ['Lead_Name', 'Name', 'Contact_Name', 'Company_Name', 'Subject']) || '—')
             : ems
-              ? (pickString(raw, ['Title', 'Subject', 'Description', 'Expense_Title']) || '—')
-              : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
-    const closedBy = itsm ? (closedByFromRaw(raw) || undefined) : undefined;
+              ? (pickString(raw, ['Title', 'Subject', 'Expense_Title', 'Name', 'Description']) || '—')
+              : itsm
+                ? (pickString(raw, ITSM_SUMMARY_KEYS) || pickCurrentStep(raw) || processId || '—')
+                : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
+    const closedBy = itsm ? (closer.closed_by || undefined) : undefined;
     const entityText = entityTextFromRaw(raw);
     const companyText = companyTextFromRaw(raw, applicationId);
     const solarEntityDisplay = solar
@@ -941,10 +1608,30 @@ function buildLiveRecordRows(allItems, applicationId) {
       website_name: website || undefined,
       current_step: pickCurrentStep(raw) || String(raw?._status || ''),
       created_at: created,
+      amount: (travel || ems) ? pickAmountFromRaw(raw) : undefined,
+      trip_type: tripType,
+      from_city: fromCity,
+      to_city: toCity,
+      departure_date: departureDate || undefined,
       closed_at: closedAt,
+      modified_at: pickDateTime(raw, ['_modified_at', 'Modified_At']) || closer.modified_at || null,
+      agent_closed_at: closer.agent_closed_at || null,
+      reopen_entered_at: closer.reopen_entered_at || null,
       project_id: projectKey,
       project_key: projectKey,
       source: itsm ? classifyTicketSource(raw) : undefined,
+      ticket_type: itsm ? (pickString(raw, ITSM_TICKET_TYPE_KEYS) || undefined) : undefined,
+      description: itsm ? (cleanItsmDescription(pickString(raw, ITSM_DESCRIPTION_KEYS)) || undefined) : undefined,
+      expected_at: itsm ? (pickDateTime(raw, ITSM_EXPECTED_AT_KEYS) || null) : null,
+      category: itsm ? (pickString(raw, ITSM_CATEGORY_KEYS) || undefined) : undefined,
+      sub_category: itsm ? (pickString(raw, ITSM_SUB_CATEGORY_KEYS) || undefined) : undefined,
+      criticality: itsm ? (pickString(raw, ITSM_CRITICALITY_KEYS) || undefined) : undefined,
+      sla_breached: itsm ? (pickString(raw, ITSM_SLA_BREACHED_KEYS) || undefined) : undefined,
+      sla_minutes: itsm ? (pickString(raw, ITSM_SLA_MINUTES_KEYS) || undefined) : undefined,
+      closure_minutes: itsm ? (pickString(raw, ITSM_CLOSURE_MINUTES_KEYS) || undefined) : undefined,
+      tat_minutes: itsm ? (pickString(raw, ITSM_TAT_MINUTES_KEYS) || undefined) : undefined,
+      form_status: itsm ? (extractItsmStageFromPayload(raw) || undefined) : undefined,
+      reopened_at: itsm ? (pickDateTime(raw, ['Reopened_On', 'Reopened_Date', 'ReopenedOn']) || null) : null,
       source_channel: itsm ? classifyTicketSource(raw) : undefined,
     };
   });
@@ -1124,7 +1811,7 @@ async function loadKissflowRecords(pool, {
       || (cache.records || []).some((row) => String(row.website || row.website_name || '').trim());
 
     if (cacheUsable && leadWebsiteReady) {
-      const all = enrichRecordsWithAssigneeCompany(
+      let all = enrichRecordsWithAssigneeCompany(
         overlayLeadWebsiteFromItems(
           dedupeRecords(cache.records.filter((row) => !isDraftRow(row))),
           cache.items || [],
@@ -1133,6 +1820,20 @@ async function loadKissflowRecords(pool, {
         cache.items || [],
         { skipAssigneeStamp: itsm },
       );
+      if (inventory && itsm) {
+        try {
+          const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
+          all = applyItsmMisExtras(all, extras);
+        } catch {
+          /* keep cache rows — extras overlay is display-only */
+        }
+        try {
+          const reportExtras = await loadItsmReportCloserById(environment);
+          all = applyItsmMisExtras(all, reportExtras);
+        } catch {
+          /* report overlay is display-only — keep snapshot/cache rows */
+        }
+      }
       const filtered = dedupeRecords(filterRecordRows(all, {
         status,
         entity,
@@ -1218,9 +1919,9 @@ async function loadKissflowRecords(pool, {
     alias: 'latest',
   });
 
+  const lead = isLeadApp(applicationId);
   const statusSql = statusBucketSql(itsm, lead);
   const entitySql = entityKeySql(applicationId);
-  const lead = isLeadApp(applicationId);
 
   // ITSM Requested by = Requester.Name only (never Created By).
   const requestedBySql = itsm
@@ -1345,14 +2046,20 @@ classified AS (
     (${assignedToSql}) AS assigned_to,
     (${closedBySql}) AS closed_by,
     (${requestedBySql}) AS requested_by,
-    COALESCE(
+    ${itsm
+    ? `COALESCE(
+      (${payloadFieldSql(ITSM_SUMMARY_KEYS)}),
+      NULLIF(trim(i.current_step), ''),
+      i.process_id
+    )`
+    : `COALESCE(
       NULLIF(trim(i.source_payload->>'Subject'), ''),
       NULLIF(trim(i.source_payload->>'Title'), ''),
       NULLIF(trim(i.source_payload->>'Summary'), ''),
       NULLIF(trim(i.source_payload->>'Description'), ''),
       NULLIF(trim(i.current_step), ''),
       i.process_id
-    ) AS subject,
+    )`} AS subject,
     COALESCE(
       NULLIF(trim(i.current_step), ''),
       NULLIF(trim(i.source_payload->>'_current_step'), ''),
@@ -1377,7 +2084,24 @@ classified AS (
       NULLIF(trim(i.source_payload->'Column_BDSZ_sAHys'->>'Name'), ''),
       NULLIF(trim(i.source_payload->>'Column_hFjGV8lRrn'), ''),
       NULLIF(trim(i.source_payload->'Column_hFjGV8lRrn'->>'Name'), '')
-    ) AS source_text
+    ) AS source_text,
+    (${payloadFieldSql(ITSM_TICKET_TYPE_KEYS)}) AS ticket_type,
+    (${payloadFieldSql(ITSM_SUMMARY_KEYS)}) AS summary,
+    (${payloadFieldSql(ITSM_DESCRIPTION_KEYS)}) AS description,
+    (${kissflowTsSql("i.source_payload->'ExpectedAt'")}) AS expected_at,
+    (${payloadFieldSql(ITSM_CATEGORY_KEYS)}) AS category,
+    (${payloadFieldSql(ITSM_SUB_CATEGORY_KEYS)}) AS sub_category,
+    (${payloadFieldSql(ITSM_CRITICALITY_KEYS)}) AS criticality,
+    (${payloadFieldSql(ITSM_SLA_BREACHED_KEYS)}) AS sla_breached,
+    (${payloadFieldSql(ITSM_SLA_MINUTES_KEYS)}) AS sla_minutes,
+    (${payloadFieldSql(ITSM_CLOSURE_MINUTES_KEYS)}) AS closure_minutes,
+    (${payloadFieldSql(ITSM_TAT_MINUTES_KEYS)}) AS tat_minutes,
+    (${payloadFieldSql(ITSM_FORM_STATUS_KEYS)}) AS form_status,
+    COALESCE(
+      ${kissflowTsSql("i.source_payload->'Reopened_On'")},
+      ${kissflowTsSql("i.source_payload->'Reopened_Date'")},
+      ${kissflowTsSql("i.source_payload->'ReopenedOn'")}
+    ) AS reopened_at
   FROM engagement_reporting.item i
   JOIN latest l
     ON i.snapshot_run_id = l.snapshot_run_id
@@ -1444,7 +2168,20 @@ SELECT
         c.closed_at,
         c.snapshot_at,
         c.project_key,
-        c.source_text
+        c.source_text,
+        c.ticket_type,
+        c.summary,
+        c.description,
+        c.expected_at,
+        c.category,
+        c.sub_category,
+        c.criticality,
+        c.sla_breached,
+        c.sla_minutes,
+        c.closure_minutes,
+        c.tat_minutes,
+        c.form_status,
+        c.reopened_at
       FROM filtered c
       ORDER BY c.created_at DESC NULLS LAST
       LIMIT $6 OFFSET $7
@@ -1744,6 +2481,9 @@ module.exports = {
   buildLiveRecordRows,
   enrichRecordsWithAssigneeCompany,
   extractItsmCompanyNameFromRaw,
+  extractItsmCloserMeta,
+  applyItsmMisExtras,
+  loadItsmReportCloserById,
   companyTextFromRaw,
   isItsmApp,
   isDraftRaw,
@@ -1751,4 +2491,5 @@ module.exports = {
   assigneeMetaFromRaw,
   isPmApp,
   buildPmPortfolioFromRecords,
+  pickAmountFromRaw,
 };

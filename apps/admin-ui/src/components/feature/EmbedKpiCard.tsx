@@ -1,7 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
 import { CheckCircle2, FolderKanban, Layers, Percent, UserCheck, Users, XCircle } from 'lucide-react';
-import { displayDashCount } from '@/lib/dashboardEmpty';
+import { displayDashCount, formatInr, formatInrExact } from '@/lib/dashboardEmpty';
 import { iconForNeKpi, type NeAppKind } from '@/lib/neKpiIcons';
+import { NE_TYPE } from '@/lib/neDashType';
 
 export type EmbedKpiTheme = {
   bg: string;
@@ -14,32 +15,50 @@ export type EmbedKpiTheme = {
 };
 
 /**
- * Project Tracker DASHBOARD_CARD_GRID — always 4-up on xl.
- * Count is ignored so 3/6 cards stay the same width as 4 (never stretch to 1/3).
+ * Project Tracker DASHBOARD_CARD_GRID — 2-up on mobile.
+ * 6+ cards split into two equal rows (10→5+5, 8→4+4, 12→6+6, 6→3+3).
+ * 4 cards stay 4-up. 2–3 cards fill the row (no empty right cells).
  * Reference: /Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx
  */
 export const NE_KPI_GRID_CLASS =
-  'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4 [&>*]:min-w-0 [&>*]:h-full';
+  'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 lg:grid-cols-4 [&>*]:min-w-0 [&>*]:h-full';
 
-/** Six primary KPIs in one desktop row; mobile stays 2-up. */
-export const NE_KPI_PRIMARY_ROW_CLASS =
-  'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-6 [&>*]:min-w-0 [&>*]:h-full';
+const NE_KPI_LG_COLS: Record<number, string> = {
+  1: 'lg:grid-cols-1',
+  2: 'lg:grid-cols-2',
+  3: 'lg:grid-cols-3',
+  4: 'lg:grid-cols-4',
+  5: 'lg:grid-cols-5',
+  6: 'lg:grid-cols-6',
+};
 
-/** P2P / Project Tracker section rows — fill the row so leftover 4-up cells are not empty. */
-export function neKpiSectionGridClass(count: number) {
+const NE_KPI_GRID_BASE =
+  'grid min-w-0 w-full items-stretch gap-2.5 sm:gap-4 md:gap-5 [&>*]:min-w-0 [&>*]:h-full';
+
+/** Two equal rows when count >= 6; 2–4 fill the row; mobile stays 2-up. */
+export function neKpiBalancedGridClass(count: number) {
   const n = Math.max(1, Number(count) || 0);
-  if (n <= 2) {
-    return 'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 [&>*]:min-w-0 [&>*]:h-full';
+  if (n <= 4) {
+    const lg = NE_KPI_LG_COLS[n] || 'lg:grid-cols-4';
+    const mobile = n === 1 ? 'grid-cols-1' : 'grid-cols-2';
+    return `${NE_KPI_GRID_BASE} ${mobile} ${lg}`;
   }
-  if (n === 3) {
-    return 'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-3 [&>*]:min-w-0 [&>*]:h-full';
-  }
-  return NE_KPI_GRID_CLASS;
+  const cols = Math.min(6, Math.max(3, Math.ceil(n / 2)));
+  const lg = NE_KPI_LG_COLS[cols] || 'lg:grid-cols-4';
+  return `${NE_KPI_GRID_BASE} grid-cols-2 ${lg}`;
+}
+
+/** Six primary KPIs in two rows of three on xl; mobile stays 2-up. */
+export const NE_KPI_PRIMARY_ROW_CLASS = neKpiBalancedGridClass(6);
+
+/** Section rows share the same 2-up mobile / balanced-desktop rule as the main KPI grid. */
+export function neKpiSectionGridClass(count: number) {
+  return neKpiBalancedGridClass(count);
 }
 
 export const NE_KPI_CARD_MIN_H = 'min-h-[96px] lg:min-h-[112px]';
 
-/** @deprecated count is ignored — always returns NE_KPI_GRID_CLASS */
+/** @deprecated count is ignored — use neKpiBalancedGridClass */
 export function neKpiGridClass(_count = 4) {
   return NE_KPI_GRID_CLASS;
 }
@@ -129,6 +148,8 @@ type Props = {
   value: number;
   sub?: string;
   suffix?: string;
+  /** `inr` shows ₹ rounded Indian grouping; default is a plain count. */
+  valueFormat?: 'count' | 'inr';
   styleIndex?: number;
   themes?: EmbedKpiTheme[];
   /** Overrides the theme icon (e.g. calendar for Opened today). */
@@ -145,13 +166,14 @@ type Props = {
 
 /**
  * Project Tracker PremiumKPICard (UserSpecificPT) — embed + normal.
- * Label + value left, icon badge right. Inter / slate-400 / themed value.
+ * Label + value left, icon badge right. Inter / dark-grey label / low-grey hint / themed value.
  */
 export default function EmbedKpiCard({
   label,
   value,
   sub,
   suffix,
+  valueFormat = 'count',
   styleIndex = 0,
   themes = EMBED_KPI_THEMES,
   icon,
@@ -188,7 +210,6 @@ export default function EmbedKpiCard({
         interactive ? 'cursor-pointer' : ''
       } ${active ? 'border-[#1E88E5] ring-2 ring-[#1E88E5]/35' : ''}`}
       style={{
-        fontFamily: "Inter, 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif",
         borderColor: active ? undefined : (whiteSurface ? '#e2e8f0' : theme.border),
         backgroundImage: whiteSurface
           ? 'none'
@@ -201,18 +222,21 @@ export default function EmbedKpiCard({
     >
       <div className="relative flex w-full items-start justify-between gap-2 sm:gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 sm:text-[11px] sm:tracking-[0.14em]">
+          <p className={NE_TYPE.kpiLabel}>
             {label}
           </p>
           <p
-            className="mt-1 text-[22px] font-bold leading-none tracking-tight tabular-nums sm:mt-1.5 sm:text-[26px]"
+            className={`mt-1 min-w-0 sm:mt-1.5 ${NE_TYPE.kpiValue}`}
             style={{ color: whiteSurface ? '#0f172a' : theme.value }}
+            title={valueFormat === 'inr' ? formatInrExact(value) : undefined}
           >
-            {displayDashCount(value).toLocaleString('en-IN')}
+            {valueFormat === 'inr'
+              ? formatInr(value)
+              : displayDashCount(value).toLocaleString('en-IN')}
             {suffix}
           </p>
           {sub ? (
-            <p className="mt-1 line-clamp-1 text-[10px] font-medium leading-tight text-slate-400 sm:text-[11px]">
+            <p className={NE_TYPE.kpiSub}>
               {sub}
             </p>
           ) : null}

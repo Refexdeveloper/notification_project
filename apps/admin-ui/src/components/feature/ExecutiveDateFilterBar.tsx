@@ -20,11 +20,14 @@ import {
   weeksInMonth,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
+import { anchorFixedMenu } from '@/lib/anchorFixedMenu';
 import NeMobileFilterSheet, {
   NeMobileActiveFilterChips,
   NeMobileFilterField,
   NeMobileFiltersButton,
+  NeSheetSelect,
 } from '@/components/feature/NeMobileFilterSheet';
+import { NE_TYPE } from '@/lib/neDashType';
 
 type PeriodTab = 'weekly' | 'monthly' | 'year' | 'custom';
 
@@ -124,9 +127,8 @@ export default function ExecutiveDateFilterBar({
   const [tab, setTab] = useState<PeriodTab>(() => tabForPeriod(period));
   const [browseYear, setBrowseYear] = useState(calendarYear || currentIstYear());
   const [browseMonth, setBrowseMonth] = useState(calendarMonth || currentIstMonth());
-  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [panelPos, setPanelPos] = useState<ReturnType<typeof anchorFixedMenu> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const desktopTriggerRef = useRef<HTMLButtonElement>(null);
   const mobileTriggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -179,7 +181,12 @@ export default function ExecutiveDateFilterBar({
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      if (
+        rootRef.current?.contains(t)
+        || panelRef.current?.contains(t)
+        || desktopTriggerRef.current?.contains(t)
+        || mobileTriggerRef.current?.contains(t)
+      ) return;
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -194,17 +201,19 @@ export default function ExecutiveDateFilterBar({
   }, [open]);
 
   useLayoutEffect(() => {
-    if (!open || !triggerRef.current) {
+    const trigger = sheetOpen ? mobileTriggerRef.current : desktopTriggerRef.current;
+    if (!open || !trigger) {
       setPanelPos(null);
       return;
     }
     const place = () => {
-      const r = triggerRef.current!.getBoundingClientRect();
-      const width = Math.min(Math.max(r.width, 320), 448);
-      let left = r.left;
-      if (left + width > window.innerWidth - 12) left = Math.max(12, window.innerWidth - width - 12);
-      const top = r.bottom + 8;
-      setPanelPos({ top, left, width });
+      const el = sheetOpen ? mobileTriggerRef.current : desktopTriggerRef.current;
+      if (!el) return;
+      setPanelPos(anchorFixedMenu(el.getBoundingClientRect(), {
+        minWidth: 320,
+        maxWidth: 448,
+        estimatedHeight: 420,
+      }));
     };
     place();
     window.addEventListener('resize', place);
@@ -213,7 +222,7 @@ export default function ExecutiveDateFilterBar({
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
     };
-  }, [open]);
+  }, [open, sheetOpen]);
 
   const applyQuick = (id: DatePresetId) => {
     onPeriodChange(id);
@@ -285,10 +294,6 @@ export default function ExecutiveDateFilterBar({
     ? Boolean(onUserChange && userOptions)
     : Boolean(onUserChange && userOptions && userOptions.length > 1);
 
-  useEffect(() => {
-    triggerRef.current = sheetOpen ? mobileTriggerRef.current : desktopTriggerRef.current;
-  }, [sheetOpen, open]);
-
   const entityLabelText = entitySelectOptions.find((o) => o.id === entityValue)?.label || entityValue;
   const companyLabelText = companySelectOptions.find((o) => o.id === companyValue)?.label || companyValue;
   const userLabelText = userSelectOptions.find((o) => o.id === userValue)?.label || userValue;
@@ -325,34 +330,38 @@ export default function ExecutiveDateFilterBar({
   const sheetSelectClass = embedLayout
     ? 'h-11 w-full appearance-none rounded-2xl border border-slate-100 bg-white pl-3.5 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none'
     : 'h-11 w-full appearance-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-8 text-sm font-semibold text-slate-800 outline-none';
+  /** Compact CEO-sized controls (max 180px / 18rem) — do not stretch across the row. */
   const filterSelectClass = embedLayout
-    ? 'h-11 w-full min-w-0 appearance-none truncate rounded-2xl border border-slate-100 bg-white pl-10 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe]'
+    ? 'h-9 w-full min-w-0 appearance-none truncate rounded-xl border border-slate-100 bg-white pl-9 pr-7 text-xs font-medium text-slate-700 shadow-sm outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe] sm:text-sm'
     : 'h-11 w-full appearance-none rounded-2xl border border-emerald-200/80 bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none ring-emerald-100/50 transition hover:border-emerald-300 focus:ring-2';
 
   const filterLabelClass = embedLayout
-    ? 'mb-1.5 block truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400'
-    : 'mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400';
+    ? `mb-1.5 block truncate ${NE_TYPE.label}`
+    : `mb-1 block ${NE_TYPE.label}`;
 
   const embedPeriodBtnClass =
-    'group inline-flex h-11 w-full min-w-0 items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2.5 text-left shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-[#c7daf5]';
+    'group inline-flex h-9 w-full min-w-0 items-center gap-2 rounded-xl border border-slate-100 bg-white px-2.5 text-left shadow-sm transition hover:border-[#c7daf5]';
 
-  const embedIconWrap = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#eef3ff]';
-  const embedFieldClass = 'flex min-w-0 w-full flex-col';
+  const embedIconWrap = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#eef3ff]';
+  const embedFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[10.5rem] lg:max-w-[180px]';
+  const embedPeriodFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[12.5rem] lg:max-w-[18rem]';
+  const embedAppFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[10.5rem] lg:max-w-[18rem]';
+  const embedClearFieldClass = 'inline-flex shrink-0 flex-col lg:w-auto';
   const embedControlWrapClass = 'relative block min-w-0';
-  const embedIconClass = 'pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#0f6cbd]';
-  const embedChevronClass = 'pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400';
+  const embedIconClass = 'pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#0f6cbd]';
+  const embedChevronClass = 'pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400';
 
   return (
     <div ref={rootRef} className="relative z-30 overflow-visible">
-      <div className="flex w-full flex-col gap-2 lg:hidden">
+      <div className="flex w-full flex-col items-end gap-2 lg:hidden">
         <NeMobileFiltersButton count={activeFilterCount} onClick={() => setSheetOpen(true)} />
         <NeMobileActiveFilterChips chips={filterChips} />
       </div>
       <div
         className={
           embedLayout
-            ? 'hidden w-full lg:grid lg:grid-cols-2 lg:items-end lg:gap-3 xl:grid-cols-5'
-            : 'hidden items-end gap-2.5 lg:flex lg:flex-wrap'
+            ? 'hidden w-full min-w-0 max-w-full flex-wrap items-end justify-end gap-2 lg:flex'
+            : 'hidden items-end justify-end gap-2.5 lg:flex lg:flex-wrap'
         }
       >
         {showEntity ? (
@@ -478,7 +487,7 @@ export default function ExecutiveDateFilterBar({
         ) : null}
 
         {embedLayout && showApplication ? (
-          <label className={embedFieldClass}>
+          <label className={embedAppFieldClass}>
             <span className={filterLabelClass}>Application</span>
             <span className={embedControlWrapClass}>
               <LayoutGrid className={embedIconClass} aria-hidden />
@@ -499,7 +508,7 @@ export default function ExecutiveDateFilterBar({
           </label>
         ) : null}
 
-        <div className={embedLayout ? embedFieldClass : 'contents'}>
+        <div className={embedLayout ? embedPeriodFieldClass : 'contents'}>
           {embedLayout ? <span className={filterLabelClass}>Period</span> : null}
         <button
           type="button"
@@ -517,7 +526,7 @@ export default function ExecutiveDateFilterBar({
           </span>
           <span className="min-w-0 flex-1">
             {!embedLayout ? (
-              <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Period</span>
+              <span className={`block ${NE_TYPE.label}`}>Period</span>
             ) : null}
             <span className={`block truncate ${embedLayout ? 'text-sm font-medium text-slate-700' : 'text-sm font-semibold text-slate-900'}`}>
               {embedLayout ? embedSummary : summary}
@@ -532,14 +541,14 @@ export default function ExecutiveDateFilterBar({
         </div>
 
         {onClearFilters ? (
-          <div className={embedLayout ? embedFieldClass : 'inline-flex shrink-0 flex-col'}>
+          <div className={embedLayout ? embedClearFieldClass : 'inline-flex shrink-0 flex-col'}>
             {embedLayout ? <span className={filterLabelClass} aria-hidden>&nbsp;</span> : null}
             <button
               type="button"
               onClick={onClearFilters}
               className={
                 embedLayout
-                  ? 'inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-100 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.12)] transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
+                  ? 'inline-flex h-9 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-100 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 lg:w-auto'
                   : 'inline-flex h-11 items-center gap-1.5 whitespace-nowrap rounded-2xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700'
               }
             >
@@ -575,10 +584,11 @@ export default function ExecutiveDateFilterBar({
         ? createPortal(
             <div
               ref={panelRef}
-              className="fixed z-[200] rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
-              style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
+              className="overflow-y-auto rounded-3xl border border-[#E6EBF2] bg-white p-4 shadow-[0_2px_8px_rgba(40,60,90,0.08),0_16px_40px_rgba(40,60,90,0.08)]"
+              style={panelPos}
+              onMouseDown={(e) => e.stopPropagation()}
             >
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+          <p className={`mb-3 ${NE_TYPE.label}`}>
             Choose period type
           </p>
 
@@ -629,8 +639,8 @@ export default function ExecutiveDateFilterBar({
             <div>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-medium text-slate-500">Weeks in month · Mon → Sun</p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className={`${NE_TYPE.meta}`}>Weeks in month · Mon → Sun</p>
+                  <p className={`${NE_TYPE.meta}`}>
                     {weekOptions.length} weeks available · no future weeks
                   </p>
                 </div>
@@ -679,7 +689,7 @@ export default function ExecutiveDateFilterBar({
                       </p>
                       {w.badge ? (
                         <span
-                          className="mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                          className="mt-2 inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide"
                           style={{ background: 'rgba(15,118,110,0.12)', color: ACCENT }}
                         >
                           {w.badge}
@@ -739,7 +749,7 @@ export default function ExecutiveDateFilterBar({
                       <p className="mt-0.5 text-[11px] text-slate-500">
                         {isCurrent ? `1 ${MONTH_NAMES[m - 1].slice(0, 3)} → Today` : 'Full month'}
                       </p>
-                      <p className="mt-1 text-[10px] text-slate-400">
+                      <p className={`mt-1 ${NE_TYPE.meta}`}>
                         {bounds.from.slice(8)} → {bounds.to.slice(8)}
                       </p>
                     </button>
@@ -779,7 +789,7 @@ export default function ExecutiveDateFilterBar({
                         </p>
                         {start === currentFyStart ? (
                           <span
-                            className="mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                            className="mt-2 inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide"
                             style={{ background: 'rgba(15,118,110,0.12)', color: ACCENT }}
                           >
                             Current financial year
@@ -864,6 +874,11 @@ export default function ExecutiveDateFilterBar({
 
       {period !== 'all' && !hideHints ? (
         <p className="mt-2 text-[11px] text-slate-500">
+          Counts items <strong>created</strong> in this window (activity dates in IST). Sign-in today is always
+          current-day and not changed by this filter.
+        </p>
+      ) : null}
+
       <NeMobileFilterSheet
         open={sheetOpen}
         title="Dashboard filters"
@@ -873,38 +888,42 @@ export default function ExecutiveDateFilterBar({
       >
         {showEntity ? (
           <NeMobileFilterField label={resolvedEntityLabel}>
-            <select value={entityValue} onChange={(e) => onEntityChange?.(e.target.value)} className={sheetSelectClass}>
-              {entitySelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>{opt.label}</option>
-              ))}
-            </select>
+            <NeSheetSelect
+              value={entityValue}
+              onChange={(next) => onEntityChange?.(next)}
+              options={entitySelectOptions}
+              className={sheetSelectClass}
+            />
           </NeMobileFilterField>
         ) : null}
         {showCompany ? (
           <NeMobileFilterField label={resolvedCompanyLabel}>
-            <select value={companyValue} onChange={(e) => onCompanyChange?.(e.target.value)} className={sheetSelectClass}>
-              {companySelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>{opt.label}</option>
-              ))}
-            </select>
+            <NeSheetSelect
+              value={companyValue}
+              onChange={(next) => onCompanyChange?.(next)}
+              options={companySelectOptions}
+              className={sheetSelectClass}
+            />
           </NeMobileFilterField>
         ) : null}
         {showUser ? (
           <NeMobileFilterField label="User">
-            <select value={userValue} onChange={(e) => onUserChange?.(e.target.value)} className={sheetSelectClass}>
-              {userSelectOptions.map((opt) => (
-                <option key={opt.id} value={opt.id}>{opt.label}</option>
-              ))}
-            </select>
+            <NeSheetSelect
+              value={userValue}
+              onChange={(next) => onUserChange?.(next)}
+              options={userSelectOptions}
+              className={sheetSelectClass}
+            />
           </NeMobileFilterField>
         ) : null}
         {showApplication ? (
           <NeMobileFilterField label={applicationLabel}>
-            <select value={applicationValue} onChange={(e) => onApplicationChange?.(e.target.value)} className={sheetSelectClass}>
-              {applicationOptions!.map((opt) => (
-                <option key={opt.id} value={opt.id}>{opt.label}</option>
-              ))}
-            </select>
+            <NeSheetSelect
+              value={applicationValue}
+              onChange={(next) => onApplicationChange?.(next)}
+              options={applicationOptions || []}
+              className={sheetSelectClass}
+            />
           </NeMobileFilterField>
         ) : null}
         <NeMobileFilterField label="Period">
@@ -919,11 +938,6 @@ export default function ExecutiveDateFilterBar({
           </button>
         </NeMobileFilterField>
       </NeMobileFilterSheet>
-
-          Counts items <strong>created</strong> in this window (activity dates in IST). Sign-in today is always
-          current-day and not changed by this filter.
-        </p>
-      ) : null}
     </div>
   );
 }

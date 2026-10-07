@@ -34,14 +34,23 @@ import {
 } from '@/lib/appDashboardClientFilter';
 import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverlay';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
+import MisPersonInitialsCell from '@/components/feature/MisPersonInitialsCell';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
+import { NE_DASH_CLASS, NE_TYPE } from '@/lib/neDashType';
 import {
   currentIstYear,
   resolveDateScope,
   type DatePresetId,
 } from '@/lib/executiveDateFilters';
-import { displayDashCount, displayDashText, displayPersonCell, displayWhen } from '@/lib/dashboardEmpty';
+import { displayDashText, displayPersonCell, displayWhen, formatInr } from '@/lib/dashboardEmpty';
 import { personLabelMatches, uniquePersonLabels } from '@/lib/personName';
+import {
+  ITSM_CEO_RECORD_COLUMNS,
+  itsmClosedAtDisplay,
+  itsmRecordCellText,
+  itsmReopenedStamp,
+  itsmSlaDisplay,
+} from '@/lib/itsmRecordDisplay';
 import { duration, easeOutSoft } from '@/lib/motion';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
 import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
@@ -65,10 +74,6 @@ const STATUS_PILLS = [
 
 function formatWhen(value: string | null | undefined): string {
   return displayWhen(value);
-}
-
-function formatInr(n: number | null | undefined): string {
-  return `₹${Math.round(displayDashCount(n)).toLocaleString('en-IN')}`;
 }
 
 function statusTone(status: string): string {
@@ -175,7 +180,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
 
   const filteredRows = useMemo(() => {
     if (!inventoryReady) return [];
-    return filterAppRecords(stampedInventory, {
+    const rows = filterAppRecords(stampedInventory, {
       entity,
       company,
       status,
@@ -208,20 +213,32 @@ export default function RecordsTab({ app, embed = false }: Props) {
     }).filter((row) => {
       const valueOk = Object.entries(columnFilters).every(([colId, wanted]) => {
         if (!wanted || wanted === 'all') return true;
-        const raw = colId === 'assigned_to'
-          ? assignedRecordLabel(row, { itsmCompanyMode })
-          : String((row as Record<string, unknown>)[colId] ?? '');
+        const raw = itsmCompanyMode
+          ? itsmRecordCellText(row, colId)
+          : colId === 'assigned_to'
+            ? assignedRecordLabel(row, { itsmCompanyMode })
+            : String((row as Record<string, unknown>)[colId] ?? '');
         return String(raw).trim() === wanted;
       });
       if (!valueOk) return false;
       return Object.entries(dateColumnFilters).every(([colId, range]) => {
         if (!range.from && !range.to) return true;
-        const key = String((row as Record<string, unknown>)[colId] || '').slice(0, 10);
+        const rawDate = itsmCompanyMode && colId === 'closed_at'
+          ? itsmClosedAtDisplay(row)
+          : String((row as Record<string, unknown>)[colId] || '');
+        const key = rawDate.slice(0, 10);
         if (!key) return false;
         if (range.from && key < range.from) return false;
         if (range.to && key > range.to) return false;
         return true;
       });
+    });
+    if (!itsmCompanyMode) return rows;
+    return [...rows].sort((a, b) => {
+      const right = new Date(String(b.created_at || 0)).getTime() || 0;
+      const left = new Date(String(a.created_at || 0)).getTime() || 0;
+      if (right !== left) return right - left;
+      return String(b.request_id || '').localeCompare(String(a.request_id || ''));
     });
   }, [
     stampedInventory,
@@ -242,6 +259,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
     travelMode,
     columnFilters,
     dateColumnFilters,
+    period,
   ]);
 
   useEffect(() => {
@@ -255,7 +273,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       total: filteredRows.length,
       limit: pageSize,
       offset: page * pageSize,
-      columns: recordColumns,
+      columns: itsmCompanyMode ? ITSM_CEO_RECORD_COLUMNS : recordColumns,
       items: pageRows,
       summary,
       inventory_summary: summary,
@@ -369,7 +387,9 @@ export default function RecordsTab({ app, embed = false }: Props) {
     setPage(0);
   };
 
-  const columns = data?.columns?.length
+  const columns = itsmCompanyMode
+    ? ITSM_CEO_RECORD_COLUMNS
+    : data?.columns?.length
     ? data.columns
     : [
         { id: 'request_id', label: 'Request ID' },
@@ -442,7 +462,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.fast, ease: easeOutSoft }}
-      className={`relative ${embed ? 'space-y-4' : 'space-y-3'}`}
+      className={`relative ${embed ? 'space-y-4' : 'space-y-3'} ${NE_DASH_CLASS}`}
     >
       <DashboardLoadingOverlay
         show={loading && !inventoryReady}
@@ -583,7 +603,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       >
         {embed ? (
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-900">Records</h3>
+            <h3 className={NE_TYPE.sectionTitle}>Records</h3>
             <span className="text-xs font-semibold tabular-nums text-slate-500">
               {Number(summary.total || 0).toLocaleString('en-IN')} rows
               {data?.data_source === 'live_cache' ? ' · live' : ''}
@@ -601,8 +621,19 @@ export default function RecordsTab({ app, embed = false }: Props) {
                 const titleCol = columns.find((c) => c.id === 'subject') || columns[0];
                 const idCol = columns.find((c) => c.id === 'request_id');
                 const statusCol = columns.find((c) => c.id === 'status');
-                const previewIds = new Set(['assigned_to', 'entity', 'company_name', 'website', 'created_at']);
+                const previewIds = itsmCompanyMode
+                  ? new Set(['requested_by', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
+                  : new Set(['assigned_to', 'entity', 'company_name', 'website', 'created_at']);
+                const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
                 const fieldValue = (col: (typeof columns)[number]) => {
+                  if (itsmCompanyMode) {
+                    if (col.id === 'closed_at') return formatWhen(itsmClosedAtDisplay(row));
+                    if (col.id === 'created_at' || col.id === 'reopened_at') {
+                      return formatWhen(String((row as Record<string, unknown>)[col.id] || ''));
+                    }
+                    if (col.id === 'sla') return itsmSlaDisplay(row).primary;
+                    return displayDashText(itsmRecordCellText(row, col.id), '—');
+                  }
                   const raw = (row as Record<string, unknown>)[col.id];
                   if (col.id === 'request_id') return displayDashText(raw, '—');
                   if (col.id === 'status') return displayDashText(raw || row.status_raw, '—');
@@ -610,6 +641,13 @@ export default function RecordsTab({ app, embed = false }: Props) {
                   if (col.id === 'amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
                   if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
                   return displayPersonCell(raw);
+                };
+                const displayField = (col: (typeof columns)[number]) => {
+                  const text = fieldValue(col);
+                  if (itsmCompanyMode && personCols.has(col.id)) {
+                    return <MisPersonInitialsCell name={text === '—' ? '' : String(text)} />;
+                  }
+                  return text;
                 };
                 return (
                   <MisMobileRecordCard
@@ -621,22 +659,22 @@ export default function RecordsTab({ app, embed = false }: Props) {
                         {fieldValue(statusCol)}
                       </span>
                     ) : undefined}
-                    fields={columns.filter((c) => previewIds.has(c.id)).map((c) => ({ label: c.label, value: fieldValue(c) }))}
+                    fields={columns.filter((c) => previewIds.has(c.id)).map((c) => ({ label: c.label, value: displayField(c) }))}
                     extraFields={columns
                       .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
-                      .map((c) => ({ label: c.label, value: fieldValue(c) }))}
+                      .map((c) => ({ label: c.label, value: displayField(c) }))}
                   />
                 );
               })}
             </div>
             <div className={`hidden overflow-x-auto lg:block ${embed ? '-mx-5 -mb-5' : ''}`}>
               <table className="w-full min-w-[780px] text-sm sm:min-w-[980px]">
-                <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
-                  <tr className="border-b border-slate-100">
+                <thead className={NE_TYPE.tableHead}>
+                  <tr className="border-b border-slate-200">
                     {columns.map((col) => (
                       <th
                         key={col.id}
-                        className={`whitespace-nowrap font-semibold ${embed ? 'px-5 py-2.5' : 'px-3 py-2.5'} ${
+                        className={`${NE_TYPE.tableHeadCell} font-semibold ${
                           col.id === 'request_id' ? 'min-w-[7.5rem]' : ''
                         }`}
                       >
@@ -675,9 +713,11 @@ export default function RecordsTab({ app, embed = false }: Props) {
                             options={[...new Set(
                               stampedInventory
                                 .map((row) => {
-                                  const raw = col.id === 'assigned_to'
-                                    ? assignedRecordLabel(row, { itsmCompanyMode })
-                                    : String((row as Record<string, unknown>)[col.id] ?? '');
+                                  const raw = itsmCompanyMode
+                                    ? itsmRecordCellText(row, col.id)
+                                    : col.id === 'assigned_to'
+                                      ? assignedRecordLabel(row, { itsmCompanyMode })
+                                      : String((row as Record<string, unknown>)[col.id] ?? '');
                                   return String(raw).trim();
                                 })
                                 .filter((v) => v && v !== '—'),
@@ -708,20 +748,51 @@ export default function RecordsTab({ app, embed = false }: Props) {
                           );
                         }
                         if (col.id === 'status') {
+                          const reopen = itsmCompanyMode ? itsmReopenedStamp(row) : null;
                           return (
                             <td key={col.id} className={cellPad}>
-                              <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
-                              >
-                                {displayDashText(raw || row.status_raw, '—')}
-                              </span>
+                              <div className="flex flex-col items-start gap-0.5">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
+                                >
+                                  {displayDashText(raw || row.status_raw, '—')}
+                                </span>
+                                {reopen ? (
+                                  <span className="text-[11px] font-semibold leading-tight text-orange-700">
+                                    {reopen.label}
+                                    <span className="block font-medium text-slate-500">{formatWhen(reopen.when)}</span>
+                                  </span>
+                                ) : null}
+                              </div>
                             </td>
                           );
                         }
-                        if (col.id === 'created_at') {
+                        if (itsmCompanyMode && col.id === 'sla') {
+                          const sla = itsmSlaDisplay(row);
+                          const primary = sla.primary && sla.primary !== '—' ? sla.primary : 'On track';
+                          const tone = sla.state === 'breached'
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : sla.state === 'hold'
+                              ? 'border-slate-200 bg-slate-100 text-slate-600'
+                              : sla.state === 'ok'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-slate-200 bg-slate-50 text-slate-600';
+                          return (
+                            <td key={col.id} className={cellPad}>
+                              <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                                {primary}
+                              </span>
+                              {sla.sub ? <p className="mt-1 text-[11px] text-slate-500">{sla.sub}</p> : null}
+                            </td>
+                          );
+                        }
+                        if (isDateRecordColumn(col.id) || col.id === 'created_at') {
+                          const dateRaw = itsmCompanyMode && col.id === 'closed_at'
+                            ? itsmClosedAtDisplay(row)
+                            : String(raw || '');
                           return (
                             <td key={col.id} className={`whitespace-nowrap tabular-nums text-slate-600 ${cellPad}`}>
-                              {formatWhen(String(raw || ''))}
+                              {formatWhen(dateRaw)}
                             </td>
                           );
                         }
@@ -732,10 +803,19 @@ export default function RecordsTab({ app, embed = false }: Props) {
                             </td>
                           );
                         }
-                        const text = col.id === 'assigned_to'
-                          ? assignedRecordLabel(row, { itsmCompanyMode })
-                          : displayPersonCell(raw);
-                        const wrapIds = new Set(['entity', 'company_name', 'website', 'requested_by', 'assigned_to', 'subject']);
+                        const text = itsmCompanyMode
+                          ? displayDashText(itsmRecordCellText(row, col.id), '—')
+                          : col.id === 'assigned_to'
+                            ? assignedRecordLabel(row, { itsmCompanyMode })
+                            : displayPersonCell(raw);
+                        if (itsmCompanyMode && (col.id === 'requested_by' || col.id === 'assigned_to' || col.id === 'closed_by')) {
+                          return (
+                            <td key={col.id} title={text} className={cellPad}>
+                              <MisPersonInitialsCell name={text === '—' ? '' : text} />
+                            </td>
+                          );
+                        }
+                        const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'form_status', 'source', 'ticket_type', 'category']);
                         return (
                           <td
                             key={col.id}

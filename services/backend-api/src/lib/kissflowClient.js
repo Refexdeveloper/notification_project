@@ -319,7 +319,7 @@ function pickString(obj, keys) {
     if (typeof val === 'string' && val.trim()) return val.trim();
     if (typeof val === 'number' && Number.isFinite(val)) return String(val);
     if (val && typeof val === 'object') {
-      const nested = val.Name || val.name || val.v || val.value || val.Id || val.id;
+      const nested = val.Name || val.name || val.v || val.value || val.text || val.Text || val.Id || val.id;
       if (typeof nested === 'string' && nested.trim()) return nested.trim();
       if (typeof nested === 'number' && Number.isFinite(nested)) return String(nested);
     }
@@ -395,6 +395,7 @@ function isItsmBusinessClosed(raw) {
       step.includes('it tech reopen')
       || step.includes('reopen window')
       || step.includes('employee feedback')
+      || (step.includes('ticket reopen') && !step.includes('reopened'))
     );
   }
   return false;
