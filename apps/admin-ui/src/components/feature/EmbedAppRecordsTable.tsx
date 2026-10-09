@@ -14,9 +14,18 @@ import {
   itsmReopenedStamp,
   itsmSlaDisplay,
 } from '@/lib/itsmRecordDisplay';
+import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
+import {
+  isTravelCoreColumn,
+  travelExpandTiles,
+  travelPurposeText,
+  travelRouteSummary,
+  type TravelPackKind,
+} from '@/lib/travelRecordDisplay';
+import TravelRouteBanner from '@/components/feature/TravelRouteBanner';
 import type { AppRecordColumn, AppRecordRow } from '@/services/appRecordsApi';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
-import { MisRecordExpandPanel } from '@/components/feature/MisRecordExpandPanel';
+import { hasVisibleMisTiles, MisRecordExpandPanel } from '@/components/feature/MisRecordExpandPanel';
 import MisPersonInitialsCell from '@/components/feature/MisPersonInitialsCell';
 import {
   RecordsColumnDateFilter,
@@ -70,6 +79,8 @@ type Props = {
   todayKind?: 'opened' | 'closed';
   itsmCompanyMode?: boolean;
   travelMode?: boolean;
+  travelPackKind?: TravelPackKind | null;
+  emsMode?: boolean;
   leadWebsiteMode?: boolean;
   activityDates?: boolean;
   filterAnimating?: boolean;
@@ -92,6 +103,8 @@ export default function EmbedAppRecordsTable({
   todayKind,
   itsmCompanyMode = false,
   travelMode = false,
+  travelPackKind = null,
+  emsMode = false,
   leadWebsiteMode = false,
   activityDates = false,
   filterAnimating = false,
@@ -166,7 +179,8 @@ export default function EmbedAppRecordsTable({
     if (col.id === 'status') return displayDashText(raw || row.status_raw, '—');
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
-    if (col.id === 'amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
+    if (col.id === 'purpose') return displayDashText(travelPurposeText(row), '—');
+    if (col.id === 'amount' || col.id === 'raised_amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
   };
@@ -268,13 +282,32 @@ export default function EmbedAppRecordsTable({
 
   const visibleColumns = useMemo(() => {
     if (itsmCompanyMode) return columns;
+    if (travelMode) {
+      if (!pageItems.length) {
+        return columns.filter((col) => isTravelCoreColumn(col.id, travelPackKind));
+      }
+      return columns.filter((col) => {
+        if (isTravelCoreColumn(col.id, travelPackKind)) return true;
+        if (col.id === 'purpose') return pageItems.some((row) => Boolean(travelPurposeText(row)));
+        return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
+      });
+    }
+    if (emsMode) {
+      if (!pageItems.length) {
+        return columns.filter((col) => isEmsCoreColumn(col.id));
+      }
+      return columns.filter((col) => {
+        if (isEmsCoreColumn(col.id)) return true;
+        return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
+      });
+    }
     if (!pageItems.length) return columns;
     const always = new Set(['request_id', 'subject', 'status', 'entity', 'company_name', 'website', 'created_at']);
     return columns.filter((col) => {
       if (always.has(col.id) || isDateRecordColumn(col.id)) return true;
       return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
     });
-  }, [columns, itsmCompanyMode, pageItems]);
+  }, [columns, emsMode, itsmCompanyMode, pageItems, travelMode, travelPackKind]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
@@ -287,6 +320,26 @@ export default function EmbedAppRecordsTable({
   };
 
   const showLoader = filterAnimating || inventoryLoading;
+  const expandEnabled = itsmCompanyMode || travelMode || emsMode;
+  const expandTilesFor = (row: AppRecordRow) => {
+    if (travelMode) {
+      const route = travelRouteSummary(row);
+      return travelExpandTiles(row, {
+        hideRouteFields: Boolean(route),
+        hideTravelMode: travelPackKind === 'booking',
+      });
+    }
+    return emsMode ? emsExpandTiles(row) : itsmExpandTiles(row);
+  };
+  const expandBannerFor = (row: AppRecordRow) => {
+    if (!travelMode) return null;
+    const route = travelRouteSummary(row);
+    return route ? <TravelRouteBanner {...route} /> : null;
+  };
+  const rowCanExpand = (row: AppRecordRow) => (
+    expandEnabled && (hasVisibleMisTiles(expandTilesFor(row)) || Boolean(expandBannerFor(row)))
+  );
+  const showExpandColumn = expandEnabled && pageItems.some((row) => rowCanExpand(row));
 
   return (
     <div className="relative rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
@@ -331,7 +384,15 @@ export default function EmbedAppRecordsTable({
               const statusCol = visibleColumns.find((c) => c.id === 'status');
               const previewIds = itsmCompanyMode
                 ? new Set(['requested_by', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
-                : new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
+                : travelMode
+                  ? new Set(
+                    travelPackKind === 'booking'
+                      ? ['requested_by', 'assigned_to', 'purpose', 'from_city', 'to_city', 'trip_type', 'created_at']
+                      : ['requested_by', 'assigned_to', 'purpose', 'created_at'],
+                  )
+                  : emsMode
+                    ? new Set(['requested_by', 'assigned_to', 'expense_type', 'entity', 'created_at'])
+                  : new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
               const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
               const displayField = (col: AppRecordColumn) => {
                 const text = cellValue(row, col);
@@ -345,7 +406,11 @@ export default function EmbedAppRecordsTable({
                 .map((c) => ({ label: c.label, value: displayField(c) }));
               const extraFields = visibleColumns
                 .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
-                .map((c) => ({ label: c.label, value: displayField(c) }));
+                .map((c) => ({ label: c.label, value: displayField(c) }))
+                .filter((field) => {
+                  const text = typeof field.value === 'string' ? field.value.trim() : '';
+                  return Boolean(text) && text !== '—';
+                });
               return (
                 <MisMobileRecordCard
                   key={row.id}
@@ -358,7 +423,7 @@ export default function EmbedAppRecordsTable({
                   ) : undefined}
                   fields={fields}
                   extraFields={extraFields}
-                  extra={itsmCompanyMode ? <MisRecordExpandPanel tiles={itsmExpandTiles(row)} inset /> : undefined}
+                  extra={rowCanExpand(row) ? <MisRecordExpandPanel tiles={expandTilesFor(row)} banner={expandBannerFor(row)} inset /> : undefined}
                 />
               );
             })}
@@ -367,7 +432,7 @@ export default function EmbedAppRecordsTable({
             <table className="w-full min-w-[780px] text-sm">
               <thead className={NE_TYPE.tableHead}>
                 <tr className="border-b border-slate-200">
-                  {itsmCompanyMode ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
+                  {showExpandColumn ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
                   {visibleColumns.map((col) => (
                     <th key={col.id} className={`${NE_TYPE.tableHeadCell} font-semibold`}>
                       {isDateRecordColumn(col.id) ? (
@@ -416,12 +481,14 @@ export default function EmbedAppRecordsTable({
               <tbody>
                 {pageItems.map((row) => {
                   const rowId = String(row.id || row.request_id || '');
-                  const expanded = itsmCompanyMode && expandedId === rowId;
+                  const canExpand = rowCanExpand(row);
+                  const expanded = canExpand && expandedId === rowId;
                   return (
                   <Fragment key={rowId}>
                   <tr className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
-                    {itsmCompanyMode ? (
+                    {showExpandColumn ? (
                       <td className="px-3 py-2.5">
+                        {canExpand ? (
                         <button
                           type="button"
                           aria-expanded={expanded}
@@ -431,11 +498,12 @@ export default function EmbedAppRecordsTable({
                         >
                           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                         </button>
+                        ) : null}
                       </td>
                     ) : null}
                     {visibleColumns.map((col) => {
                       const raw = (row as Record<string, unknown>)[col.id];
-                      if (col.id === 'amount') {
+                      if (col.id === 'amount' || col.id === 'raised_amount') {
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
                             {formatInr(typeof raw === 'number' ? raw : Number(raw))}
@@ -504,7 +572,9 @@ export default function EmbedAppRecordsTable({
                         ? displayDashText(itsmRecordCellText(row, col.id), '—')
                         : col.id === 'assigned_to'
                           ? assignedRecordLabel(row, { itsmCompanyMode })
-                          : displayPersonCell(raw);
+                          : col.id === 'purpose'
+                            ? displayDashText(travelPurposeText(row), '—')
+                            : displayPersonCell(raw);
                       const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
                       if (itsmCompanyMode && personCols.has(col.id)) {
                         return (
@@ -513,7 +583,7 @@ export default function EmbedAppRecordsTable({
                           </td>
                         );
                       }
-                      const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'form_status', 'source', 'ticket_type', 'category']);
+                      const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'purpose', 'from_city', 'to_city', 'trip_type', 'form_status', 'source', 'ticket_type', 'category', 'expense_type']);
                       return (
                         <td
                           key={col.id}
@@ -531,8 +601,8 @@ export default function EmbedAppRecordsTable({
                   </tr>
                   {expanded ? (
                     <tr>
-                      <td colSpan={visibleColumns.length + 1} className="p-0">
-                        <MisRecordExpandPanel tiles={itsmExpandTiles(row)} />
+                      <td colSpan={visibleColumns.length + (showExpandColumn ? 1 : 0)} className="p-0">
+                        <MisRecordExpandPanel tiles={expandTilesFor(row)} banner={expandBannerFor(row)} />
                       </td>
                     </tr>
                   ) : null}

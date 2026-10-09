@@ -6,11 +6,12 @@ export type MisExpandTile = {
   value?: ReactNode;
 };
 
-const RICH_TEXT_LABELS = new Set(['Description', 'Summary', 'Subject']);
+const RICH_TEXT_LABELS = new Set(['Description', 'Summary', 'Subject', 'Purpose']);
 const RICH_TEXT_ICONS: Record<string, typeof FileText> = {
   Description: AlignLeft,
   Summary: FileText,
   Subject: FileText,
+  Purpose: FileText,
 };
 
 function tileText(value: ReactNode): string {
@@ -19,12 +20,16 @@ function tileText(value: ReactNode): string {
   return '';
 }
 
-function visibleMisTiles(tiles: MisExpandTile[]): MisExpandTile[] {
+export function visibleMisTiles(tiles: MisExpandTile[]): MisExpandTile[] {
   return (tiles || []).filter((tile) => {
     const text = tileText(tile.value);
     if (text) return text !== '—';
     return tile.value != null && tile.value !== '';
   });
+}
+
+export function hasVisibleMisTiles(tiles: MisExpandTile[]): boolean {
+  return visibleMisTiles(tiles).length > 0;
 }
 
 function MisRichTextSections({ blocks }: { blocks: MisExpandTile[] }) {
@@ -72,15 +77,17 @@ function MisMetaGrid({ tiles }: { tiles: MisExpandTile[] }) {
 
 export function MisRecordExpandPanel({
   tiles,
+  banner,
   inset = false,
 }: {
   tiles: MisExpandTile[];
+  banner?: ReactNode;
   inset?: boolean;
 }) {
   const visible = visibleMisTiles(tiles);
   const rich = visible.filter((tile) => RICH_TEXT_LABELS.has(tile.label));
   const meta = visible.filter((tile) => !RICH_TEXT_LABELS.has(tile.label));
-  const body = !visible.length ? (
+  const body = !visible.length && !banner ? (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-slate-200/90 bg-white px-4 py-10 text-center shadow-[0_1px_3px_rgba(15,23,42,0.05),0_4px_16px_rgba(15,23,42,0.04)]">
       <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
         <FileText className="h-5 w-5" />
@@ -90,6 +97,11 @@ export function MisRecordExpandPanel({
     </div>
   ) : (
     <div className="space-y-3">
+      {banner ? (
+        <div className={inset ? '-mx-3 -mt-4 sm:-mx-4 sm:-mt-5' : '-mx-3 -mt-4 sm:-mx-5 sm:-mt-5'}>
+          {banner}
+        </div>
+      ) : null}
       {rich.length ? <MisRichTextSections blocks={rich} /> : null}
       {meta.length ? <MisMetaGrid tiles={meta} /> : null}
     </div>

@@ -52,6 +52,8 @@ import {
   type RecordKpiFocus,
 } from '@/lib/appDashboardClientFilter';
 import { ITSM_CEO_RECORD_COLUMNS } from '@/lib/itsmRecordDisplay';
+import { EMS_DASH_COLUMNS } from '@/lib/emsRecordDisplay';
+import { travelColumnsForPack, type TravelPackKind } from '@/lib/travelRecordDisplay';
 import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
 import { itsmSourceFromFilteredRecords, recordsHaveSource } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
@@ -372,11 +374,27 @@ function sumRecordAmount(rows: Array<{ amount?: number | null; status?: string }
   }, 0);
 }
 
+function sumRecordField(rows: Array<Record<string, unknown>>, key: string, fallbackKey?: string) {
+  return rows.reduce((sum, row) => {
+    const n = Number(row[key]);
+    if (Number.isFinite(n) && n > 0) return sum + n;
+    if (!fallbackKey) return sum;
+    const fallback = Number(row[fallbackKey]);
+    return sum + (Number.isFinite(fallback) ? fallback : 0);
+  }, 0);
+}
+
 const EMS_CLAIM_TYPES = [
-  { key: 'daily', label: 'Daily Allowance', hint: 'Per diem for official travel days', match: /daily|allowance|per.?diem/i },
-  { key: 'food', label: 'Food Claim', hint: 'Meals during official duties', match: /food|meal/i },
   { key: 'conveyance', label: 'Local Conveyance', hint: 'Local travel within city', match: /convey|local travel|transport/i },
 ] as const;
+
+type TravelPackMetric = 'total' | 'open' | 'closed' | 'amount';
+
+const TRAVEL_PROCESS_SECTIONS = [
+  { kind: 'booking' as const, title: 'Travel Booking', match: /travel_management|travel booking|travel request/i, icon: Plane, styleIndex: 0 },
+  { kind: 'advance' as const, title: 'Travel Advance', match: /advance_payment|travel advance/i, icon: Wallet, styleIndex: 1 },
+  { kind: 'expense' as const, title: 'Travel Expense', match: /expense_management|amount claimed|travel expense|expense/i, icon: Receipt, styleIndex: 2 },
+];
 
 function claimsSub(count: number) {
   const n = displayDashCount(count);
@@ -390,30 +408,6 @@ function requestsSub(count: number) {
 
 function countByStatus(rows: Array<{ status?: string }>, status: string) {
   return rows.filter((row) => String(row.status || '').toLowerCase() === status).length;
-}
-
-function topLabeledCounts(values: string[], limit = 3): string[] {
-  const map = new Map<string, number>();
-  for (const raw of values) {
-    const key = raw.trim();
-    if (!key) continue;
-    map.set(key, (map.get(key) || 0) + 1);
-  }
-  return [...map.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([label, n]) => `${label} · ${n}`);
-}
-
-function travelRequestFacts(rows: AppRecordRow[]): string[] {
-  const trips = topLabeledCounts(rows.map((row) => String(row.trip_type || '')));
-  const routes = topLabeledCounts(rows.map((row) => {
-    const from = String(row.from_city || '').trim();
-    const to = String(row.to_city || '').trim();
-    if (!from && !to) return '';
-    return `${from || '—'} → ${to || '—'}`;
-  }));
-  return [...trips, ...routes];
 }
 
 function PmSection({
@@ -479,6 +473,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [dateTo, setDateTo] = useState('');
   const [kpiFocus, setKpiFocus] = useState<RecordKpiFocus | null>(null);
   const [claimTypeFocus, setClaimTypeFocus] = useState<string | null>(null);
+  const [travelPackFocus, setTravelPackFocus] = useState<{ key: TravelPackKind; metric: TravelPackMetric } | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
   const [misScopedRecords, setMisScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [sourceScopedRecords, setSourceScopedRecords] = useState<AppRecordRow[] | null>(null);
@@ -752,6 +747,23 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     [itsmCompanyMode, recordInventory, userRoster],
   );
 
+  const tableInventory = useMemo(() => {
+    let base = stampedInventory.length ? stampedInventory : recordInventory;
+    if (travelMode && travelPackFocus) {
+      const section = TRAVEL_PROCESS_SECTIONS.find((row) => row.kind === travelPackFocus.key);
+      if (section) {
+        base = base.filter((row) => section.match.test(String(row.process_id || row.subject || '')));
+      }
+    }
+    if (isEmsLayout && claimTypeFocus) {
+      const type = EMS_CLAIM_TYPES.find((row) => row.key === claimTypeFocus);
+      if (type) {
+        base = base.filter((row) => type.match.test(String(row.expense_type || '')));
+      }
+    }
+    return base;
+  }, [claimTypeFocus, isEmsLayout, recordInventory, stampedInventory, travelMode, travelPackFocus]);
+
   const assignedFilterName = useMemo(() => {
     if (userFilter === 'all') return undefined;
     const hit = userRoster.find((u) => {
@@ -852,6 +864,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setMisScopedRecords(null);
     setSourceScopedRecords(null);
     setClaimTypeFocus(null);
+    setTravelPackFocus(null);
   }, [entity, company, userFilter, period, dateFrom, dateTo]);
 
   const todayKind = kpiFocus === 'opened_today' ? 'opened' : kpiFocus === 'closed_today' ? 'closed' : undefined;
@@ -1076,6 +1089,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   }, [data?.by_process, isP2pLayout, kpiRecords, useClientKpis]);
 
   const handleKpiClick = useCallback((focus: RecordKpiFocus) => {
+    setTravelPackFocus(null);
     setKpiFocus((prev) => {
       const next = prev === focus ? null : focus;
       if (!next || next === 'total' || next === 'opened_today' || next === 'closed_today') {
@@ -1084,6 +1098,21 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         setRecordsStatus(next);
       }
       return next;
+    });
+    window.requestAnimationFrame(() => {
+      misSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
+  const handleTravelPackClick = useCallback((key: TravelPackKind, metric: TravelPackMetric) => {
+    setKpiFocus(null);
+    setTravelPackFocus((prev) => {
+      if (prev?.key === key && prev?.metric === metric) {
+        setRecordsStatus('all');
+        return null;
+      }
+      setRecordsStatus(metric === 'open' ? 'open' : metric === 'closed' ? 'closed' : 'all');
+      return { key, metric };
     });
     window.requestAnimationFrame(() => {
       misSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1299,79 +1328,138 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               </div>
             ) : travelMode ? (
               <div className="space-y-5">
-                <PmSection
-                  appKind={appKind}
-                  title="Today"
-                  cards={[
-                    {
-                      label: 'Opened today',
-                      value: todayActivity.opened,
-                      styleIndex: 0,
-                      active: kpiFocus === 'opened_today',
-                      onClick: () => handleKpiClick('opened_today'),
-                    },
-                    {
-                      label: 'Closed today',
-                      value: todayActivity.closed,
-                      styleIndex: 2,
-                      active: kpiFocus === 'closed_today',
-                      onClick: () => handleKpiClick('closed_today'),
-                    },
-                  ]}
-                />
-                <PmSection
-                  appKind={appKind}
-                  title="Status"
-                  hint="Click to filter the records table"
-                  cards={[
-                    { label: 'Open', value: kpiOpen, styleIndex: 1, active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
-                    { label: 'Closed', value: kpiClosed, styleIndex: 2, active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
-                    { label: 'Rejected', value: kpiRejected, styleIndex: 3, active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
-                  ]}
-                />
-                {([
-                  { key: 'Travel_Management_A02', title: 'Travel Booking', match: /travel_management|travel booking|travel request/i, kind: 'booking' as const, icon: Plane, styleIndex: 0 },
-                  { key: 'Advance_Payment_Request_Process_A01', title: 'Travel Advance', match: /advance_payment|travel advance/i, kind: 'advance' as const, icon: Wallet, styleIndex: 1 },
-                  { key: 'Expense_Management_A03', title: 'Travel Expense', match: /expense_management|amount claimed|travel expense|expense/i, kind: 'expense' as const, icon: Receipt, styleIndex: 2 },
-                ]).map((section) => {
+                <div className={neKpiBalancedGridClass(10)}>
+                  <KpiCard
+                    label={totalLabel}
+                    value={displayDashCount(kpiTotal)}
+                    styleIndex={0}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'total'}
+                    onClick={() => handleKpiClick('total')}
+                  />
+                  <KpiCard
+                    label={openLabel}
+                    value={displayDashCount(kpiOpen)}
+                    styleIndex={1}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'open'}
+                    onClick={() => handleKpiClick('open')}
+                  />
+                  <KpiCard
+                    label={closedLabel}
+                    value={displayDashCount(kpiClosed)}
+                    styleIndex={2}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'closed'}
+                    onClick={() => handleKpiClick('closed')}
+                  />
+                  <KpiCard
+                    label={rejectedLabel}
+                    value={displayDashCount(kpiRejected)}
+                    styleIndex={3}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'rejected'}
+                    onClick={() => handleKpiClick('rejected')}
+                  />
+                  <KpiCard
+                    label="Opened today"
+                    value={displayDashCount(todayActivity.opened)}
+                    styleIndex={0}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'opened_today'}
+                    onClick={() => handleKpiClick('opened_today')}
+                  />
+                  <KpiCard
+                    label="Closed today"
+                    value={displayDashCount(todayActivity.closed)}
+                    styleIndex={2}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'closed_today'}
+                    onClick={() => handleKpiClick('closed_today')}
+                  />
+                  <EmbedKpiCard
+                    label="Adoption · overall"
+                    value={adoptionOverall}
+                    suffix="%"
+                    sub="Ever signed in ÷ app users"
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Users"
+                    value={usersCardCount}
+                    icon={Users}
+                    themes={EMBED_KPI_THEMES}
+                    styleIndex={1}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Signed in today"
+                    value={signedInToday}
+                    icon={UserCheck}
+                    themes={EMBED_KPI_THEMES}
+                    styleIndex={2}
+                    surface="white"
+                  />
+                  <EmbedKpiCard
+                    label="Adoption today"
+                    value={adoptionToday}
+                    suffix="%"
+                    icon={Sparkles}
+                    themes={[EMBED_ADOPTION_THEME]}
+                    styleIndex={0}
+                    surface="white"
+                  />
+                </div>
+                {TRAVEL_PROCESS_SECTIONS.map((section) => {
                   const rows = kpiRecords.filter((r) => section.match.test(String(r.process_id || r.subject || '')));
                   const total = rows.length;
                   const open = countByStatus(rows, 'open');
                   const closed = countByStatus(rows, 'closed');
-                  const facts = travelRequestFacts(rows);
+                  const packActive = (metric: TravelPackMetric) => (
+                    travelPackFocus?.key === section.kind && travelPackFocus?.metric === metric
+                  );
                   if (section.kind === 'booking') {
                     return (
                       <NeFinanceProcessCard
-                        key={section.key}
+                        key={section.kind}
                         title={section.title}
                         hint="All booking data in the current filters"
                         icon={section.icon}
                         styleIndex={section.styleIndex}
-                        facts={facts}
                         metrics={[
-                          { label: 'Total', value: total, hint: requestsSub(total) },
-                          { label: 'Open', value: open },
-                          { label: 'Closed', value: closed },
-                          { label: 'Booked', value: amountTotals.booking, format: 'inr', hint: requestsSub(total) },
+                          { label: 'Total', value: total, hint: requestsSub(total), active: packActive('total'), onClick: () => handleTravelPackClick('booking', 'total') },
+                          { label: 'Open', value: open, active: packActive('open'), onClick: () => handleTravelPackClick('booking', 'open') },
+                          { label: 'Closed', value: closed, active: packActive('closed'), onClick: () => handleTravelPackClick('booking', 'closed') },
+                          { label: 'Booked', value: amountTotals.booking, format: 'inr', hint: requestsSub(total), active: packActive('amount'), onClick: () => handleTravelPackClick('booking', 'amount') },
                         ]}
                       />
                     );
                   }
                   const submitted = section.kind === 'advance' ? amountTotals.advance : amountTotals.claimed;
                   const claimedAmt = sumRecordAmount(rows, 'closed');
+                  const lastMetric = claimedAmt > 0
+                    ? { label: 'Claimed', value: claimedAmt, format: 'inr' as const, hint: requestsSub(closed), active: packActive('amount'), onClick: () => handleTravelPackClick(section.kind, 'amount') }
+                    : { label: 'Submitted', value: submitted, format: 'inr' as const, hint: requestsSub(total), active: packActive('amount'), onClick: () => handleTravelPackClick(section.kind, 'amount') };
                   return (
                     <NeFinanceProcessCard
-                      key={section.key}
+                      key={section.kind}
                       title={section.title}
                       hint="Submitted and claimed amounts from the current filters"
                       icon={section.icon}
                       styleIndex={section.styleIndex}
-                      facts={facts}
                       metrics={[
-                        { label: 'Requests', value: total, hint: requestsSub(total) },
-                        { label: 'Open', value: open },
-                        { label: 'Submitted', value: submitted, format: 'inr', hint: requestsSub(total) },
-                        { label: 'Claimed', value: claimedAmt, format: 'inr', hint: requestsSub(closed) },
+                        { label: 'Total', value: total, hint: requestsSub(total), active: packActive('total'), onClick: () => handleTravelPackClick(section.kind, 'total') },
+                        { label: 'Open', value: open, active: packActive('open'), onClick: () => handleTravelPackClick(section.kind, 'open') },
+                        { label: 'Closed', value: closed, active: packActive('closed'), onClick: () => handleTravelPackClick(section.kind, 'closed') },
+                        lastMetric,
                       ]}
                     />
                   );
@@ -1434,27 +1522,61 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               </div>
             ) : isEmsLayout ? (
               <div className="space-y-5">
-                <NeFinanceProcessCard
-                  title="Claims"
-                  hint="Amount and claim count from filtered records — click a cell to filter the table"
-                  icon={Receipt}
-                  styleIndex={0}
-                  metrics={[
-                    { label: 'Total submitted', value: amountTotals.all, format: 'inr', hint: claimsSub(kpiTotal), active: kpiFocus === 'total', onClick: () => handleKpiClick('total') },
-                    { label: 'Pending review', value: amountTotals.open, format: 'inr', hint: claimsSub(kpiOpen), active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
-                    { label: 'Approved', value: amountTotals.closed, format: 'inr', hint: claimsSub(kpiClosed), active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
-                    { label: 'Rejected', value: amountTotals.rejected, format: 'inr', hint: claimsSub(kpiRejected), active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
-                  ]}
-                />
-                <PmSection
-                  appKind={appKind}
-                  title="Today"
-                  cards={[
-                    { label: 'Opened today', value: todayActivity.opened, styleIndex: 0, active: kpiFocus === 'opened_today', onClick: () => handleKpiClick('opened_today') },
-                    { label: 'Closed today', value: todayActivity.closed, styleIndex: 2, active: kpiFocus === 'closed_today', onClick: () => handleKpiClick('closed_today') },
-                  ]}
-                />
-                <div className={neKpiBalancedGridClass(4)}>
+                <div className={neKpiBalancedGridClass(10)}>
+                  <KpiCard
+                    label={totalLabel}
+                    value={displayDashCount(kpiTotal)}
+                    styleIndex={0}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'total'}
+                    onClick={() => handleKpiClick('total')}
+                  />
+                  <KpiCard
+                    label={openLabel}
+                    value={displayDashCount(kpiOpen)}
+                    styleIndex={1}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'open'}
+                    onClick={() => handleKpiClick('open')}
+                  />
+                  <KpiCard
+                    label={closedLabel}
+                    value={displayDashCount(kpiClosed)}
+                    styleIndex={2}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'closed'}
+                    onClick={() => handleKpiClick('closed')}
+                  />
+                  <KpiCard
+                    label={rejectedLabel}
+                    value={displayDashCount(kpiRejected)}
+                    styleIndex={3}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'rejected'}
+                    onClick={() => handleKpiClick('rejected')}
+                  />
+                  <KpiCard
+                    label="Opened today"
+                    value={displayDashCount(todayActivity.opened)}
+                    styleIndex={0}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'opened_today'}
+                    onClick={() => handleKpiClick('opened_today')}
+                  />
+                  <KpiCard
+                    label="Closed today"
+                    value={displayDashCount(todayActivity.closed)}
+                    styleIndex={2}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'closed_today'}
+                    onClick={() => handleKpiClick('closed_today')}
+                  />
                   <EmbedKpiCard
                     label="Adoption · overall"
                     value={adoptionOverall}
@@ -1491,21 +1613,47 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                 </div>
                 <NeFinanceProcessCard
+                  title="Claims"
+                  hint="Amount and claim count from filtered records — click a cell to filter the table"
+                  icon={Receipt}
+                  styleIndex={0}
+                  metrics={[
+                    { label: 'Total submitted', value: amountTotals.all, format: 'inr', hint: claimsSub(kpiTotal), active: kpiFocus === 'total', onClick: () => handleKpiClick('total') },
+                    { label: 'Pending review', value: amountTotals.open, format: 'inr', hint: claimsSub(kpiOpen), active: kpiFocus === 'open', onClick: () => handleKpiClick('open') },
+                    { label: 'Approved', value: amountTotals.closed, format: 'inr', hint: claimsSub(kpiClosed), active: kpiFocus === 'closed', onClick: () => handleKpiClick('closed') },
+                    { label: 'Rejected', value: amountTotals.rejected, format: 'inr', hint: claimsSub(kpiRejected), active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
+                  ]}
+                />
+                <NeFinanceProcessCard
                   title="Expense claim types"
                   hint="Click a type to filter the records table"
                   icon={Wallet}
                   styleIndex={1}
-                  metrics={EMS_CLAIM_TYPES.map((type) => {
-                    const rows = kpiRecords.filter((row) => type.match.test(String(row.expense_type || '')));
-                    return {
-                      label: type.label,
-                      value: sumRecordAmount(rows),
+                  metrics={[
+                    ...EMS_CLAIM_TYPES.map((type) => {
+                      const rows = kpiRecords.filter((row) => type.match.test(String(row.expense_type || '')));
+                      return {
+                        label: type.label,
+                        value: sumRecordAmount(rows),
+                        format: 'inr' as const,
+                        hint: `${type.hint} · ${claimsSub(rows.length)}`,
+                        active: claimTypeFocus === type.key,
+                        onClick: () => setClaimTypeFocus((prev) => (prev === type.key ? null : type.key)),
+                      };
+                    }),
+                    {
+                      label: 'Total raised',
+                      value: sumRecordField(kpiRecords, 'raised_amount', 'amount'),
                       format: 'inr' as const,
-                      hint: `${type.hint} · ${claimsSub(rows.length)}`,
-                      active: claimTypeFocus === type.key,
-                      onClick: () => setClaimTypeFocus((prev) => (prev === type.key ? null : type.key)),
-                    };
-                  })}
+                      hint: 'Sum of Total raised amount from expense fields',
+                    },
+                    {
+                      label: 'Total claimed',
+                      value: sumRecordField(kpiRecords, 'claimed_amount', 'amount'),
+                      format: 'inr' as const,
+                      hint: 'Sum of Claimed amount from expense fields',
+                    },
+                  ]}
                 />
               </div>
             ) : (
@@ -1673,11 +1821,16 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
             <div ref={misSectionRef}>
             <EmbedAppRecordsTable
-              inventory={stampedInventory.length ? stampedInventory : recordInventory}
+              key={travelMode ? `tv-${travelPackFocus?.key || 'all'}-${travelPackFocus?.metric || recordsStatus}` : 'records'}
+              inventory={tableInventory}
               columns={
                 itsmCompanyMode
                   ? ITSM_CEO_RECORD_COLUMNS
-                  : recordsColumns
+                  : travelMode
+                    ? travelColumnsForPack(travelPackFocus?.key)
+                    : isEmsLayout
+                      ? EMS_DASH_COLUMNS
+                    : recordsColumns
               }
               dataSource={recordsDataSource}
               entity={entity}
@@ -1690,6 +1843,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               todayKind={todayKind}
               itsmCompanyMode={itsmCompanyMode}
               travelMode={travelMode}
+              travelPackKind={travelMode ? travelPackFocus?.key || null : null}
+              emsMode={isEmsLayout}
               leadWebsiteMode={leadMode}
               activityDates={activityDates}
               filterAnimating={false}

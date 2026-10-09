@@ -220,8 +220,7 @@
   .ne-dash-finance .ne-kpi-card:nth-child(2) { animation-delay: 40ms; }
   .ne-dash-finance .ne-kpi-card:nth-child(3) { animation-delay: 80ms; }
   .ne-dash-finance .ne-kpi-card:nth-child(4) { animation-delay: 120ms; }
-  .ne-dash-finance .ne-kpi-card:hover,
-  .ne-dash-finance .ne-finance-pack:hover {
+  .ne-dash-finance .ne-kpi-card:hover {
     transform: translateY(-4px);
   }
   @media (prefers-reduced-motion: reduce) {

@@ -411,6 +411,181 @@ function travelProcessTitle(processId) {
   return processId.replace(/_/g, ' ');
 }
 
+const TRAVEL_TRIP_TYPE_KEYS = ['OnewayRound_tripNot_applicable', 'Travel_Type', 'FS_Trip_Type', 'Trip_Type'];
+const TRAVEL_FROM_CITY_KEYS = ['Boarding_from', 'FS_From_City', 'common_From', 'Source', 'From_City'];
+const TRAVEL_TO_CITY_KEYS = ['Destination_to_1', 'FS_To_City', 'common_To', 'Destination', 'To_City'];
+const TRAVEL_DEPARTURE_KEYS = ['Departure_Date', 'FS_Departure_Date', 'From_Date', 'Common_from_date'];
+
+function travelPlaceFieldsFromRaw(raw) {
+  return {
+    trip_type: pickString(raw, TRAVEL_TRIP_TYPE_KEYS) || undefined,
+    from_city: pickString(raw, TRAVEL_FROM_CITY_KEYS) || undefined,
+    to_city: pickString(raw, TRAVEL_TO_CITY_KEYS) || undefined,
+    departure_date: pickDateTime(raw, TRAVEL_DEPARTURE_KEYS) || undefined,
+  };
+}
+
+function pickTravelExpenseType(raw) {
+  const text = pickString(raw, ['Expense_Type_Concatenation', 'Expense_Typefiled', 'Expense_Type_1']);
+  if (text) return text;
+  const arr = raw?.Expense_Type;
+  if (!Array.isArray(arr)) return undefined;
+  const parts = arr.map((item) => {
+    if (typeof item === 'string' && item.trim()) return item.trim();
+    return pickString(item || {}, ['Name', 'name', 'v', 'text']) || '';
+  }).filter(Boolean);
+  return parts.length ? parts.join(', ') : undefined;
+}
+
+function yesNoFromRaw(value) {
+  if (value === true || value === 'true' || value === 'Yes') return 'Yes';
+  if (value === false || value === 'false' || value === 'No') return 'No';
+  const text = String(value || '').trim();
+  return text || undefined;
+}
+
+const EMS_RAISED_KEYS = [
+  'Total_Raised_Amount', 'Final_amount', 'Final_Total_Amount', 'Total_Amount', 'Amount',
+];
+const EMS_CLAIMED_KEYS = [
+  'Claimed_Amount', 'Total_Claimable_Amount', 'Total_Reimbursable_Amount_single', 'Final_Bill_Amount',
+];
+
+function pickFirstPositiveAmount(raw, keys) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  for (const key of keys) {
+    const n = coerceAmount(raw[key]);
+    if (n != null && n > 0) return n;
+  }
+  return undefined;
+}
+
+function parseExpenseTypeList(raw) {
+  const joined = pickTravelExpenseType(raw) || pickString(raw, ['Expense_Type', 'Expense_Category']);
+  if (!joined) return [];
+  return String(joined).split(/[,;/|]+/).map((part) => part.trim()).filter(Boolean);
+}
+
+function childTableLooksLikeSplits(rows) {
+  if (!Array.isArray(rows) || !rows.length || typeof rows[0] !== 'object' || Array.isArray(rows[0])) {
+    return false;
+  }
+  return rows.some((row) => {
+    const type = pickString(row || {}, ['Expense_Type', 'Type', 'Category', 'Name', 'Expense_Type_1']);
+    const amount = coerceAmount(row?.Amount ?? row?.Expense_Amount ?? row?.Claim_Amount ?? row?.Raised_Amount);
+    return Boolean(type) || amount != null;
+  });
+}
+
+function emsSplitsFromRaw(raw) {
+  if (!raw || typeof raw !== 'object') return [];
+  const fromTables = [];
+  for (const value of Object.values(raw)) {
+    if (!childTableLooksLikeSplits(value)) continue;
+    for (const row of value) {
+      const type = pickString(row || {}, ['Expense_Type', 'Type', 'Category', 'Name', 'Expense_Type_1']);
+      if (!type) continue;
+      fromTables.push({
+        type,
+        amount: coerceAmount(row.Amount ?? row.Expense_Amount ?? row.Claim_Amount ?? row.Raised_Amount),
+        vehicle: pickString(row || {}, ['Vehicle_Type', 'Vehicle', 'Travel_Mode', 'Travel_Mode_1', 'Mode']) || undefined,
+      });
+    }
+    if (fromTables.length) return fromTables;
+  }
+
+  const types = parseExpenseTypeList(raw);
+  if (!types.length) return [];
+  const amountKeys = [
+    { match: /daily|allowance|per.?diem/i, keys: ['Daily_Allowance_Amount', 'Daily_Allowance', 'DA_Amount', 'Per_Diem_Amount'] },
+    { match: /food|meal/i, keys: ['Food_Claim_Amount', 'Food_Amount', 'Meal_Amount', 'Food_Claim'] },
+    { match: /convey|local travel|transport/i, keys: ['Local_Conveyance_Amount', 'Conveyance_Amount', 'Local_Amount'] },
+  ];
+  return types.map((type) => {
+    const hit = amountKeys.find((row) => row.match.test(type));
+    return {
+      type,
+      amount: hit ? pickFirstPositiveAmount(raw, hit.keys) : undefined,
+      vehicle: /convey|local travel|transport/i.test(type)
+        ? (pickString(raw, ['Vehicle_Type', 'Vehicle_Type_1', 'Travel_Mode_1', 'Travel_Mode']) || undefined)
+        : undefined,
+    };
+  });
+}
+
+function emsDetailFieldsFromRaw(raw) {
+  const splits = emsSplitsFromRaw(raw);
+  const vehicle = pickString(raw, ['Vehicle_Type', 'Vehicle_Type_1', 'Travel_Mode_1', 'Travel_Mode'])
+    || splits.map((row) => row.vehicle).find(Boolean);
+  return {
+    expense_date: pickDateTime(raw, ['Expense_Date', 'Request_Date']) || undefined,
+    designation: pickString(raw, ['Designation', 'Requester_Designation']) || undefined,
+    department: pickString(raw, ['Department']) || undefined,
+    expense_by: pickString(raw, ['Expense_By']) || undefined,
+    restaurant: pickString(raw, ['Restaurant_Name']) || undefined,
+    from_city: pickString(raw, ['From_1']) || undefined,
+    to_city: pickString(raw, ['To_1']) || undefined,
+    travel_mode: pickString(raw, ['Travel_Mode_1', 'Travel_Mode']) || vehicle || undefined,
+    vehicle_type: vehicle || undefined,
+    have_advance: yesNoFromRaw(raw?.Have_Advance),
+    l1_status: pickString(raw, ['L1_Manager_Status']) || undefined,
+    raised_amount: pickFirstPositiveAmount(raw, EMS_RAISED_KEYS),
+    claimed_amount: pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS),
+    expense_splits: splits.length ? splits : undefined,
+  };
+}
+
+const EMS_DETAIL_KEYS = [
+  'expense_date', 'designation', 'department', 'expense_by', 'restaurant',
+  'from_city', 'to_city', 'travel_mode', 'vehicle_type', 'have_advance', 'l1_status',
+  'raised_amount', 'claimed_amount', 'expense_splits',
+];
+
+function pickTravelDays(raw) {
+  for (const key of ['Number_of_Travel_days', 'No_of_Travel_days', 'Number_of_days']) {
+    const n = Number(raw?.[key]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+function pickLinkedTravelRequestId(raw, requestId) {
+  const linked = pickString(raw, ['Travel_Request_ID']);
+  if (!linked) return undefined;
+  if (linked === requestId) return undefined;
+  if (/^Pk[A-Za-z0-9_-]{8,}$/.test(linked)) return undefined;
+  return linked;
+}
+
+function travelDetailFieldsFromRaw(raw, requestId) {
+  const places = travelPlaceFieldsFromRaw(raw);
+  return {
+    ...places,
+    purpose: pickString(raw, ['Purpose_of_Travel', 'Purpose']) || undefined,
+    travel_mode: pickString(raw, ['Travel_Mode', 'Travel_Mode_1']) || undefined,
+    return_date: pickDateTime(raw, ['To_Date', 'Common_to_date', 'FS_Return_Departure_Date']) || undefined,
+    travel_days: pickTravelDays(raw),
+    linked_request_id: pickLinkedTravelRequestId(raw, requestId),
+    advance_claim_status: pickString(raw, ['Travel_Advance_Claim_Status']) || undefined,
+    expense_type: pickTravelExpenseType(raw),
+    expense_date: pickDateTime(raw, ['Expense_Date', 'Date_of_Travel', 'Date_of_Travel_1', 'Common_date_date']) || undefined,
+    airline: pickString(raw, ['FS_Airline_Name']) || undefined,
+    flight_number: pickString(raw, ['FS_Flight_Number']) || undefined,
+    designation: pickString(raw, ['Designation', 'Employee_designation', 'Requester_Designation']) || undefined,
+    remarks: pickString(raw, ['Remarks']) || undefined,
+    payment_status: pickString(raw, ['Payment_Status_1', 'Payement_Type']) || undefined,
+    raised_amount: pickFirstPositiveAmount(raw, EMS_RAISED_KEYS),
+    claimed_amount: pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS),
+  };
+}
+
+const TRAVEL_DETAIL_KEYS = [
+  'trip_type', 'from_city', 'to_city', 'departure_date', 'purpose', 'travel_mode',
+  'return_date', 'travel_days', 'linked_request_id', 'advance_claim_status',
+  'expense_type', 'expense_date', 'airline', 'flight_number', 'designation',
+  'remarks', 'payment_status', 'raised_amount', 'claimed_amount',
+];
+
 /** Person Name from jsonb user object — never dump raw JSON text. */
 function pickPersonNameSql(expr) {
   return `CASE
@@ -593,6 +768,31 @@ function serializeRecordItem(it, opts = {}) {
     created_at: it.created_at,
     closed_at: it.closed_at || it.completed_at || null,
     amount: it.amount,
+    trip_type: it.trip_type || undefined,
+    from_city: it.from_city || undefined,
+    to_city: it.to_city || undefined,
+    departure_date: it.departure_date || undefined,
+    purpose: it.purpose || undefined,
+    travel_mode: it.travel_mode || undefined,
+    return_date: it.return_date || undefined,
+    travel_days: it.travel_days || undefined,
+    linked_request_id: it.linked_request_id || undefined,
+    advance_claim_status: it.advance_claim_status || undefined,
+    expense_date: it.expense_date || undefined,
+    airline: it.airline || undefined,
+    flight_number: it.flight_number || undefined,
+    designation: it.designation || undefined,
+    remarks: it.remarks || undefined,
+    payment_status: it.payment_status || undefined,
+    department: it.department || undefined,
+    expense_by: it.expense_by || undefined,
+    restaurant: it.restaurant || undefined,
+    vehicle_type: it.vehicle_type || undefined,
+    raised_amount: it.raised_amount,
+    claimed_amount: it.claimed_amount,
+    expense_splits: Array.isArray(it.expense_splits) && it.expense_splits.length ? it.expense_splits : undefined,
+    have_advance: it.have_advance || undefined,
+    l1_status: it.l1_status || undefined,
     source: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
     source_channel: it.source || it.source_channel || (it.source_text ? classifyTicketSource(String(it.source_text)) : undefined),
     ticket_type: it.ticket_type || it.request_type || undefined,
@@ -631,6 +831,63 @@ function recordHasProcessCompany(rec) {
  * Skips user lookup when the process record already carries company / entity.
  * ITSM: never overlay assignee company — requester lookup is the source of truth.
  */
+function overlayTravelPlacesFromItems(records, items, applicationId) {
+  const travel = isTravelApp(applicationId);
+  const ems = isEmsApp(applicationId);
+  if ((!travel && !ems) || !items?.length) return records || [];
+  const byId = new Map();
+  for (const raw of items) {
+    const id = pickString(raw, ['_id', 'Id', 'id', 'Instance_ID']);
+    if (id) byId.set(id, raw);
+  }
+  const keys = travel ? TRAVEL_DETAIL_KEYS : EMS_DETAIL_KEYS;
+  return (records || []).map((rec) => {
+    const raw = byId.get(String(rec.id || rec.instance_id || rec.request_id || ''));
+    if (!raw) return rec;
+    const details = travel
+      ? travelDetailFieldsFromRaw(raw, rec.request_id)
+      : emsDetailFieldsFromRaw(raw);
+    const next = { ...rec };
+    for (const key of keys) {
+      if (key === 'expense_splits') {
+        if (!Array.isArray(next[key]) || !next[key].length) next[key] = details[key];
+        continue;
+      }
+      if (next[key] == null || next[key] === '') next[key] = details[key];
+    }
+    if (ems && (!next.expense_type || next.expense_type === '—')) {
+      next.expense_type = pickTravelExpenseType(raw) || next.expense_type;
+    }
+    return next;
+  });
+}
+
+async function overlayTravelDetailsFromDb(pool, environment, applicationId, records) {
+  if ((!isTravelApp(applicationId) && !isEmsApp(applicationId)) || !records?.length) return records || [];
+  const ids = [...new Set(records.map((row) => String(row.id || row.instance_id || '')).filter(Boolean))];
+  if (!ids.length) return records;
+  try {
+    const latest = latestRunsCte({ environmentParam: '$1', applicationIdParam: '$2', alias: 'latest' });
+    const { rows } = await pool.query(
+      `WITH ${latest}
+       SELECT i.instance_id, i.source_payload
+       FROM engagement_reporting.item i
+       JOIN latest l
+         ON i.snapshot_run_id = l.snapshot_run_id
+        AND i.process_id = l.process_id
+       WHERE i.instance_id = ANY($3::text[])`,
+      [environment, applicationId, ids],
+    );
+    const items = (rows || []).map((row) => ({
+      _id: String(row.instance_id || ''),
+      ...(row.source_payload && typeof row.source_payload === 'object' ? row.source_payload : {}),
+    }));
+    return overlayTravelPlacesFromItems(records, items, applicationId);
+  } catch {
+    return records;
+  }
+}
+
 function overlayLeadWebsiteFromItems(records, items, applicationId) {
   if (!isLeadApp(applicationId) || !items?.length) return records || [];
   const byId = new Map();
@@ -765,12 +1022,14 @@ function columnsForApp(applicationId) {
       { id: 'request_id', label: 'Exp ID' },
       { id: 'expense_type', label: 'Expense type' },
       { id: 'requested_by', label: 'Requestor' },
+      { id: 'assigned_to', label: 'Assigned to' },
       { id: 'amount', label: 'Amount' },
       { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
       { id: 'company_name', label: 'Company name' },
-      { id: 'created_at', label: 'Requested' },
+      { id: 'expense_date', label: 'Expense date' },
+      { id: 'created_at', label: 'Requested on' },
     ];
   }
   if (isSolarApp(applicationId)) {
@@ -789,16 +1048,14 @@ function columnsForApp(applicationId) {
     return [
       { id: 'request_id', label: 'Request ID' },
       { id: 'requested_by', label: 'Requestor' },
-      { id: 'trip_type', label: 'Trip type' },
-      { id: 'departure_date', label: 'Departure date' },
-      { id: 'from_city', label: 'Source (From)' },
-      { id: 'to_city', label: 'Destination (To)' },
+      { id: 'assigned_to', label: 'Assigned to' },
+      { id: 'purpose', label: 'Purpose' },
+      { id: 'company_name', label: 'Company name' },
       { id: 'amount', label: 'Booking amount' },
       { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
       { id: 'process_id', label: 'Process' },
-      { id: 'company_name', label: 'Company name' },
-      { id: 'created_at', label: 'Created' },
+      { id: 'created_at', label: 'Created by' },
     ];
   }
   return [
@@ -1527,21 +1784,19 @@ function buildLiveRecordRows(allItems, applicationId) {
       (typeof raw?._created_at === 'string' && raw._created_at)
       || (raw?._created_at?.v)
       || null;
-    const expenseType = solar || ems
+    const travelDetails = travel ? travelDetailFieldsFromRaw(raw, requestId) : {};
+    const emsDetails = ems ? emsDetailFieldsFromRaw(raw) : {};
+    const expenseType = solar
       ? (pickString(raw, ['Expense_Type', 'Expense_Type_1', 'Expense_Category', 'Category', 'Service_Category']) || '—')
-      : undefined;
-    const tripType = travel
-      ? (pickString(raw, ['Trip_Type', 'Travel_Type', 'OnewayRound_tripNot_applicable']) || undefined)
-      : undefined;
-    const fromCity = travel
-      ? (pickString(raw, ['Boarding_from', 'FS_From_City', 'Source', 'From_City']) || undefined)
-      : undefined;
-    const toCity = travel
-      ? (pickString(raw, ['Destination_to_1', 'FS_To_City', 'Destination', 'To_City']) || undefined)
-      : undefined;
-    const departureDate = travel
-      ? (pickDateTime(raw, ['Departure_Date', 'FS_Departure_Date', 'From_Date']) || null)
-      : undefined;
+      : ems
+        ? (pickTravelExpenseType(raw) || pickString(raw, ['Expense_Type', 'Expense_Category', 'Category']) || '—')
+      : travel
+        ? travelDetails.expense_type
+        : undefined;
+    const tripType = travelDetails.trip_type;
+    const fromCity = travelDetails.from_city || emsDetails.from_city;
+    const toCity = travelDetails.to_city || emsDetails.to_city;
+    const departureDate = travelDetails.departure_date || null;
     const subject = solar
       ? (pickString(raw, ['Site_Name', 'Site', 'Location', 'Site_Location', 'Subject', 'Title']) || pickCurrentStep(raw) || '—')
       : travel
@@ -1613,6 +1868,27 @@ function buildLiveRecordRows(allItems, applicationId) {
       from_city: fromCity,
       to_city: toCity,
       departure_date: departureDate || undefined,
+      purpose: travelDetails.purpose,
+      return_date: travelDetails.return_date,
+      travel_days: travelDetails.travel_days,
+      linked_request_id: travelDetails.linked_request_id,
+      advance_claim_status: travelDetails.advance_claim_status,
+      expense_date: travelDetails.expense_date || emsDetails.expense_date,
+      airline: travelDetails.airline,
+      flight_number: travelDetails.flight_number,
+      designation: travelDetails.designation || emsDetails.designation,
+      department: emsDetails.department,
+      expense_by: emsDetails.expense_by,
+      restaurant: emsDetails.restaurant,
+      vehicle_type: emsDetails.vehicle_type,
+      raised_amount: travelDetails.raised_amount || emsDetails.raised_amount,
+      claimed_amount: travelDetails.claimed_amount || emsDetails.claimed_amount,
+      expense_splits: emsDetails.expense_splits,
+      have_advance: emsDetails.have_advance,
+      l1_status: emsDetails.l1_status,
+      remarks: travelDetails.remarks,
+      payment_status: travelDetails.payment_status,
+      travel_mode: travelDetails.travel_mode || emsDetails.travel_mode,
       closed_at: closedAt,
       modified_at: pickDateTime(raw, ['_modified_at', 'Modified_At']) || closer.modified_at || null,
       agent_closed_at: closer.agent_closed_at || null,
@@ -1812,14 +2088,19 @@ async function loadKissflowRecords(pool, {
 
     if (cacheUsable && leadWebsiteReady) {
       let all = enrichRecordsWithAssigneeCompany(
-        overlayLeadWebsiteFromItems(
-          dedupeRecords(cache.records.filter((row) => !isDraftRow(row))),
+        overlayTravelPlacesFromItems(
+          overlayLeadWebsiteFromItems(
+            dedupeRecords(cache.records.filter((row) => !isDraftRow(row))),
+            cache.items || [],
+            applicationId,
+          ),
           cache.items || [],
           applicationId,
         ),
         cache.items || [],
         { skipAssigneeStamp: itsm },
       );
+      all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
       if (inventory && itsm) {
         try {
           const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
@@ -1920,6 +2201,10 @@ async function loadKissflowRecords(pool, {
   });
 
   const lead = isLeadApp(applicationId);
+  const travel = isTravelApp(applicationId);
+  const ems = isEmsApp(applicationId);
+  const payloadColSql = (travel || ems) ? 'i.source_payload AS source_payload,' : '';
+  const payloadSelectSql = (travel || ems) ? 'c.source_payload,' : '';
   const statusSql = statusBucketSql(itsm, lead);
   const entitySql = entityKeySql(applicationId);
 
@@ -2010,6 +2295,7 @@ classified AS (
     i.process_id,
     i.process_status,
     i.snapshot_at,
+    ${payloadColSql}
     (${statusSql}) AS status_bucket,
     (${entitySql}) AS entity_key,
     COALESCE(
@@ -2180,6 +2466,7 @@ SELECT
         c.sla_minutes,
         c.closure_minutes,
         c.tat_minutes,
+        ${payloadSelectSql}
         c.form_status,
         c.reopened_at
       FROM filtered c
@@ -2259,8 +2546,15 @@ SELECT
         }
         const companyKey = resolveCompanyIdFromText(entityRaw) || resolveCompanyIdFromText(entityKey) || undefined;
         const website = String(it.website_raw || '').trim();
+        const details = travel
+          ? travelDetailFieldsFromRaw(it.source_payload || {}, it.request_id)
+          : ems
+            ? emsDetailFieldsFromRaw(it.source_payload || {})
+            : {};
+        const { source_payload: _payload, ...rest } = it;
         return serializeRecordItem({
-          ...it,
+          ...rest,
+          ...details,
           id: String(it.instance_id || it.request_id),
           entity: entityDisplay,
           entity_key: entityKey,
@@ -2479,6 +2773,12 @@ module.exports = {
   loadKissflowRecords,
   loadP2pRecords,
   buildLiveRecordRows,
+  serializeRecordItem,
+  travelPlaceFieldsFromRaw,
+  travelDetailFieldsFromRaw,
+  overlayTravelPlacesFromItems,
+  emsDetailFieldsFromRaw,
+  emsSplitsFromRaw,
   enrichRecordsWithAssigneeCompany,
   extractItsmCompanyNameFromRaw,
   extractItsmCloserMeta,
