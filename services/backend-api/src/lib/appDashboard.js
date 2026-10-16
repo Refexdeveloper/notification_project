@@ -10,7 +10,7 @@ const TRAVEL_APP_ID = 'Expense_and_Travel_Management_A00';
 const { recommendedResourcesForApp } = require('./reportStarters');
 const {
   classifyTicketSource,
-  classifySolarCategory,
+  solarPackCountsFromRecords,
   cleanMisUsers,
   friendlyApplicationName,
 } = require('./dashboardDisplay');
@@ -991,6 +991,22 @@ function recordMatchesProcessFilter(record, processIdFilter) {
   return String(record?.process_id || '') === processIdFilter;
 }
 
+const SOLAR_CAT_ORDER = ['Operation', 'Finance'];
+
+function solarCategoryBreakdownFromRecords(records) {
+  const packs = solarPackCountsFromRecords(records);
+  return SOLAR_CAT_ORDER.map((name) => {
+    const st = name === 'Finance' ? packs.finance : packs.operation;
+    return {
+      name,
+      count: st.open + st.closed + st.rejected,
+      open: st.open,
+      closed: st.closed,
+      rejected: st.rejected,
+    };
+  }).filter((row) => row.open + row.closed + row.rejected > 0);
+}
+
 function dashboardReportLayout({ travel, itsm, solar, pm, lead }) {
   if (travel) {
     return {
@@ -1010,8 +1026,8 @@ function dashboardReportLayout({ travel, itsm, solar, pm, lead }) {
   if (solar) {
     return {
       kind: 'solar',
-      rows: ['Overall KPIs', 'Entity + company', 'Operation vs Finance category', 'MIS users'],
-      note: 'Entity and Company filters match other apps. Operation / Finance remain request categories.',
+      rows: ['Overall KPIs', 'Entity + company', 'Operation vs Finance (by step)', 'MIS users'],
+      note: 'Entity and Company filters match other apps. Operation = Start → HO Review → VP Approval (Closed = moved to Finance). Finance = BU Approval onward. Rejected uses the last real step. Drafts are excluded.',
     };
   }
   if (pm) {
@@ -1347,7 +1363,7 @@ async function buildDashboardFromEngagementCache(pool, ctx) {
     by_source,
     by_source_all,
     by_source_today,
-    by_category: [],
+    by_category: solar ? solarCategoryBreakdownFromRecords(filteredRecords) : [],
     portfolio: cachePortfolio,
     users: sortByClosureRatioDesc(users).slice(0, 80),
     app_users: appUsers.length ? appUsers : [],
@@ -1539,7 +1555,15 @@ classified AS (
       NULLIF(trim(i.source_payload->'_created_by'->>'Email'), '')
     ))), '') AS requester_email,
     i.source_payload,
-    COALESCE(NULLIF(trim(i.current_step), ''), NULLIF(trim(i.source_payload->>'_current_step'), '')) AS current_step
+    COALESCE(
+      CASE
+        WHEN jsonb_typeof(i.source_payload->'_current_step') = 'object'
+          THEN NULLIF(trim(i.source_payload->'_current_step'->>'Name'), '')
+        ELSE NULLIF(trim(i.source_payload->>'_current_step'), '')
+      END,
+      NULLIF(trim(i.source_payload->>'_activity_name'), ''),
+      NULLIF(trim(i.current_step), '')
+    ) AS current_step
   FROM engagement_reporting.item i
   JOIN latest l
     ON i.snapshot_run_id = l.snapshot_run_id
@@ -2473,8 +2497,6 @@ SELECT
   // Build source / category breakdowns from same filtered item set as KPIs
   const breakdownRaw = Array.isArray(row.breakdown_items) ? row.breakdown_items : [];
   const sourceCounts = new Map();
-  const categoryCounts = new Map();
-  const categoryStatus = new Map(); // name -> {open,closed,rejected}
   for (const item of breakdownRaw) {
     const bucket = String(item.status_bucket || 'open');
     if (itsm) {
@@ -2482,15 +2504,6 @@ SELECT
         ? classifyTicketSource(String(item.source_text))
         : classifyTicketSource(item.source_payload || {});
       sourceCounts.set(ch, (sourceCounts.get(ch) || 0) + 1);
-    }
-    if (solar) {
-      const cat = classifySolarCategory(item.source_payload || {}, item.current_step);
-      categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
-      const st = categoryStatus.get(cat) || { open: 0, closed: 0, rejected: 0 };
-      if (bucket === 'closed') st.closed += 1;
-      else if (bucket === 'rejected') st.rejected += 1;
-      else st.open += 1;
-      categoryStatus.set(cat, st);
     }
   }
   const SOURCE_ORDER = ['Email', 'WhatsApp', 'Mobile', 'Web', 'Other'];
@@ -2552,29 +2565,13 @@ SELECT
     }
     if (liveTodaySource.length) by_source = liveTodaySource;
   }
-  const CAT_ORDER = ['Operation', 'Finance'];
   const by_category = solar
-    ? CAT_ORDER.filter((k) => categoryCounts.has(k)).map((name) => ({
-        name,
-        count: categoryCounts.get(name) || 0,
-      }))
+    ? solarCategoryBreakdownFromRecords(breakdownRaw.map((item) => ({
+      ...item,
+      status: item.status_bucket || item.status,
+      status_raw: item.process_status || item.status_raw,
+    })))
     : [];
-
-  // Solar: Entity matrix = Operation / Finance (not site codes / process names).
-  if (solar && categoryStatus.size) {
-    byEntity = CAT_ORDER.filter((k) => categoryStatus.has(k)).map((name) => {
-      const st = categoryStatus.get(name);
-      return {
-        entity_id: name.toLowerCase(),
-        entity_label: name,
-        open: st.open,
-        closed: st.closed,
-        rejected: st.rejected,
-        total: st.open + st.closed + st.rejected,
-        closure_ratio: closureRatio(st.open, st.closed),
-      };
-    });
-  }
 
   byEntity = sortByClosureRatioDesc(byEntity);
 

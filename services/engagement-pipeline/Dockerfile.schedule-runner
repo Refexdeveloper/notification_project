@@ -13,9 +13,12 @@ RUN curl -sSL -o /usr/local/bin/cloud-sql-proxy \
 
 WORKDIR /app
 
+RUN mkdir -p ./services/backend-api/src/lib
+
 COPY ops/runbooks/ ./ops/runbooks/
 COPY services/engagement-pipeline/ops/runbooks/ ./services/engagement-pipeline/ops/runbooks/
 COPY services/engagement-pipeline/scripts/ ./services/engagement-pipeline/scripts/
+COPY services/backend-api/src/lib/dashboardDisplay.js ./services/backend-api/src/lib/dashboardDisplay.js
 COPY services/engagement-pipeline/entrypoint.py ./entrypoint.py
 COPY archive/prototype-mysql-api/services/leadReportService.js ./archive/prototype-mysql-api/services/leadReportService.js
 COPY templates/ ./templates/

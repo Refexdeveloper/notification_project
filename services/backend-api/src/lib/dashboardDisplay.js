@@ -62,31 +62,150 @@ function classifyTicketSource(rawOrText) {
   return 'Other';
 }
 
-/** Solar / expense category → Operation | Finance (non-Finance → Operation). */
-function classifySolarCategory(payload, currentStep) {
-  const raw = [
-    currentStep,
-    stringifyKfValue(payload?.Service_Category),
-    stringifyKfValue(payload?.Expense_Type),
-    stringifyKfValue(payload?.Category),
-    stringifyKfValue(payload?.Department),
-    stringifyKfValue(payload?.Cost_Center),
-    stringifyKfValue(payload?.Request_Type),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  if (
-    raw.includes('financ')
-    || raw.includes('account')
-    || raw.includes('treasury')
-    || raw.includes('audit')
-    || raw.includes('invoice')
-  ) {
-    return 'Finance';
+function normalizeSolarStep(step) {
+  return String(step || '')
+    .toLowerCase()
+    .replace(/[_/]+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSolarStatusLabel(step) {
+  const s = normalizeSolarStep(step);
+  return (
+    s === 'inprogress'
+    || s === 'in progress'
+    || s === 'completed'
+    || s === 'rejected'
+    || s === 'withdrawn'
+    || s === 'closed'
+    || s === 'open'
+    || s === 'pending'
+    || s === 'draft'
+    || s === 'done'
+  );
+}
+
+function looksLikeKissflowInstanceId(text) {
+  const s = String(text || '').trim();
+  return /^[A-Za-z]{2}[\w-]{6,}$/.test(s) && !/\s/.test(s);
+}
+
+function pickSolarContextStep(payload) {
+  const ctx = payload?._current_context;
+  const list = Array.isArray(ctx)
+    ? ctx
+    : ctx && typeof ctx === 'object'
+      ? [ctx]
+      : [];
+  const usable = (entry) => {
+    if (!entry || typeof entry !== 'object') return '';
+    const step = stringifyKfValue(entry._context_current_step);
+    if (!step || isSolarStatusLabel(step) || looksLikeKissflowInstanceId(step)) return '';
+    return step;
+  };
+  const rejected = list.find((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const status = stringifyKfValue(entry._status).toLowerCase();
+    return (status.includes('reject') || status.includes('withdraw')) && Boolean(usable(entry));
+  });
+  if (rejected) return usable(rejected);
+  for (const entry of list) {
+    const step = usable(entry);
+    if (step) return step;
   }
-  // All other teams (including blank / site / technician) roll into Operations.
+  return '';
+}
+
+function pickSolarStep(payload, currentStep) {
+  const candidates = [
+    payload?._current_step,
+    payload?.Current_Step,
+    payload?._activity_name,
+    pickSolarContextStep(payload),
+    payload?.Step,
+    currentStep,
+    payload?.current_step,
+  ];
+  for (const candidate of candidates) {
+    const text = stringifyKfValue(candidate);
+    if (text && !isSolarStatusLabel(text) && !looksLikeKissflowInstanceId(text)) return text;
+  }
+  return '';
+}
+
+function isSolarOperationStep(step) {
+  const s = normalizeSolarStep(step);
+  if (!s || isSolarStatusLabel(s)) return false;
+  return s === 'start' || s === 'ho review' || s === 'vp approval';
+}
+
+/**
+ * BU Approval onward (Finance Processing → Completed).
+ * Must stay in sync with apps/admin-ui/src/lib/solarCategory.ts
+ * and engagement-pipeline count-solar-pack-kpis.js.
+ */
+function isSolarFinanceStep(step) {
+  const s = normalizeSolarStep(step);
+  if (!s || isSolarStatusLabel(s)) return false;
+  return (
+    s === 'bu approval'
+    || s === 'bu approver'
+    || /finance\s*process/.test(s)
+    || s === 'completed'
+    || s === 'complete'
+    || /\bpayment\b/.test(s)
+    || /disburs/.test(s)
+    || /\bsettlement\b/.test(s)
+    || /\bsettled\b/.test(s)
+  );
+}
+
+function processLooksClosed(payload, statusHint) {
+  const status = normalizeSolarStep(
+    stringifyKfValue(statusHint)
+    || stringifyKfValue(payload?._status)
+    || stringifyKfValue(payload?.Status)
+    || stringifyKfValue(payload?.process_status),
+  );
+  return status === 'completed' || status === 'complete' || status === 'closed' || status === 'done';
+}
+
+/**
+ * Solar Operation vs Finance by workflow step (not department / cost center).
+ * Start → HO Review → VP Approval = Operation.
+ * BU Approval onward (Finance Processing → Completed) = Finance.
+ */
+function classifySolarCategory(payload, currentStep, statusHint) {
+  const step = pickSolarStep(payload, currentStep);
+  if (isSolarFinanceStep(step)) return 'Finance';
+  if (isSolarOperationStep(step)) return 'Operation';
+  if (processLooksClosed(payload, statusHint) && !isSolarOperationStep(step)) return 'Finance';
   return 'Operation';
+}
+
+function solarStatusBucket(row) {
+  const status = String(row?.status || row?.status_bucket || '').toLowerCase();
+  const raw = String(row?.status_raw || '').toLowerCase();
+  if (status === 'rejected' || raw.includes('reject') || raw.includes('withdraw')) return 'rejected';
+  if (status === 'closed' || status === 'completed' || raw === 'completed' || raw === 'closed') return 'closed';
+  return 'open';
+}
+
+/** Operation Closed = reached BU Approval / Finance. Rejected uses last real step. */
+function solarPackCountsFromRecords(records) {
+  const operation = { open: 0, closed: 0, rejected: 0 };
+  const finance = { open: 0, closed: 0, rejected: 0 };
+  for (const row of records || []) {
+    const cat = classifySolarCategory(row.source_payload || {}, row.current_step, row.status_raw || row.status || row.status_bucket);
+    const bucket = solarStatusBucket(row);
+    if (cat === 'Finance') finance[bucket] += 1;
+    else if (bucket === 'rejected') operation.rejected += 1;
+    else operation.open += 1;
+  }
+  operation.closed = finance.open + finance.closed + finance.rejected;
+  return { operation, finance };
 }
 
 const NON_HUMAN_NAME_RE =
@@ -257,6 +376,11 @@ module.exports = {
   pickSourceRaw,
   classifyTicketSource,
   classifySolarCategory,
+  isSolarFinanceStep,
+  isSolarOperationStep,
+  isSolarStatusLabel,
+  pickSolarStep,
+  solarPackCountsFromRecords,
   looksLikeKissflowUserId,
   isDisplayablePersonName,
   resolvePersonDisplayName,

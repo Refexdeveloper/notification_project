@@ -14,7 +14,7 @@ export type PreviewContext = {
 export type TemplateAppKind = 'itsm' | 'pm' | 'solar' | 'lead' | 'expense' | 'travel' | 'generic';
 
 function sampleEngagementUserTableHtml(): string {
-  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>2</b></td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`;
+  return `<tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Bhukkay Naik</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-27 08:22</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">48</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>2</b></td></tr><tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">fazulahemed</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">2026-07-29 10:15</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>1</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">45</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr><tr style="background-color:#faf9f7;" bgcolor="#faf9f7"><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">Kishore Yepuri</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">-</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center"><b>0</b></td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" align="center">0</td><td style="padding:12px 14px; border-bottom:1px solid #ececea; color:#c8102e !important;" align="center"><b>0</b></td></tr>`;
 }
 
 function samplePmUserTableHtml(): string {
@@ -62,25 +62,21 @@ function sampleTravelProcessSectionsHtml(): string {
 }
 
 function sampleSolarCategorySectionsHtml(): string {
-  const section = (title: string, subtitle: string, accent: string, total: string, open: string, closed: string) => {
+  const section = (title: string, subtitle: string, accent: string, open: string, closed: string, rejected: string) => {
     const header = accent === 'finance' ? '#92400e' : '#075985';
-    const totalTone =
-      accent === 'finance'
-        ? 'background:linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%); border:1px solid #fde68a;'
-        : 'background:linear-gradient(180deg,#f0f9ff 0%,#e0f2fe 100%); border:1px solid #bae6fd;';
     return (
       `<tr><td style="padding:18px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:${header} !important; text-transform:uppercase; letter-spacing:0.5px;">${title}</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:2px;">${subtitle}</div></td></tr>` +
       `<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
-      `<td width="32%" align="center" style="${totalTone} border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${total}</div><div style="font-size:10px; margin-top:5px;">TOTAL</div></td><td width="2%"></td>` +
       `<td width="32%" align="center" style="background:linear-gradient(180deg,#fffaf2 0%,#fef3e2 100%); border:1px solid #f2e2c4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${open}</div><div style="font-size:10px; color:#9a7a3a; margin-top:5px;">OPEN</div></td><td width="2%"></td>` +
-      `<td width="32%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${closed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">CLOSED</div></td>` +
+      `<td width="32%" align="center" style="background:linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%); border:1px solid #c7ead4; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${closed}</div><div style="font-size:10px; color:#3f8f63; margin-top:5px;">CLOSED</div></td><td width="2%"></td>` +
+      `<td width="32%" align="center" style="background:linear-gradient(180deg,#fcecec 0%,#f9d7d7 100%); border:1px solid #f0c0c0; border-radius:8px; padding:16px 6px;"><div style="font-size:22px; font-weight:bold;">${rejected}</div><div style="font-size:10px; color:#b24e66; margin-top:5px;">REJECTED</div></td>` +
       `</tr></table></td></tr>`
     );
   };
   return (
-    '<tr><td style="padding:22px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Operation vs Finance</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Same split as Solar Expense Hub dashboard</div></td></tr>' +
-    section('Operation', 'Field / site / technician and all non-finance requests', 'operation', '48', '14', '34') +
-    section('Finance', 'Finance · accounts · treasury · audit · invoice', 'finance', '12', '3', '9')
+    '<tr><td style="padding:22px 32px 4px 32px;" bgcolor="#ffffff"><div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Operation vs Finance</div><div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Same split as Solar Expense Hub dashboard — Operation Closed = moved to Finance; Rejected uses the last real step</div></td></tr>' +
+    section('Operation', 'Start → HO Review → VP Approval · Closed = moved to Finance', 'operation', '27', '130', '39') +
+    section('Finance', 'BU Approval → Finance Processing → Completed', 'finance', '127', '3', '0')
   );
 }
 
@@ -226,7 +222,7 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     UserTableHtml: sampleEngagementUserTableHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
     ReportBody:
-      "Scoped to Entity = Refex only. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix.",
+      "Scoped to process Live_IT_Service_Request_A00 (all tickets on this process). SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix.",
   };
 
   if (kind === 'pm') {
@@ -243,7 +239,7 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.TotalUsers = '2';
     base.CategorySectionsHtml = sampleSolarCategorySectionsHtml();
     base.ReportBody =
-      'Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation).';
+      'Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Operation Closed = moved to Finance; Rejected uses the last real step). Drafts excluded.';
   } else if (kind === 'lead') {
     const company =
       resolveLeadCompany(`${context.templateName || ''} ${context.subject || ''}`)?.groupName

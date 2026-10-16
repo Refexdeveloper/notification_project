@@ -30,6 +30,9 @@ export type AppDashboardEntityRow = {
 export type AppDashboardBreakdown = {
   name: string;
   count: number;
+  open?: number;
+  closed?: number;
+  rejected?: number;
 };
 
 export type AppDashboardUser = {

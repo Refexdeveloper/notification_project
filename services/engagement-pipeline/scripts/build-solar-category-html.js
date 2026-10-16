@@ -3,8 +3,8 @@
 
 /**
  * Builds email-safe Operation vs Finance KPI sections for Solar reports.
- * Reads JSON from stdin: { operation: {total,open,closed}, finance: {total,open,closed} }
- * Or flat keys: operation_total, operation_open, ...
+ * Reads JSON from stdin: { operation: {open,closed,rejected}, finance: {open,closed,rejected} }
+ * Or flat keys: operation_open, operation_closed, operation_rejected, ...
  */
 
 function n(v, fallback = 0) {
@@ -27,6 +27,7 @@ function kpiCard(value, label, tone) {
     green: { bg: 'linear-gradient(180deg,#f4fbf5 0%,#e0f5e8 100%)', border: '#c7ead4', label: '#3f8f63' },
     sky: { bg: 'linear-gradient(180deg,#f0f9ff 0%,#e0f2fe 100%)', border: '#bae6fd', label: '#0284c7', value: '#075985' },
     gold: { bg: 'linear-gradient(180deg,#fffbeb 0%,#fef3c7 100%)', border: '#fde68a', label: '#b45309', value: '#92400e' },
+    red: { bg: 'linear-gradient(180deg,#fcecec 0%,#f9d7d7 100%)', border: '#f0c0c0', label: '#b24e66', value: '#9f1239' },
   };
   const t = tones[tone] || tones.blue;
   const valueColor = t.value || '#1a1a1a';
@@ -47,11 +48,11 @@ function section(title, subtitle, accent, counts) {
     `</td></tr>` +
     `<tr><td style="padding:8px 32px 4px 32px;" bgcolor="#ffffff">` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>` +
-    kpiCard(counts.total, 'Total', accent === 'finance' ? 'gold' : 'sky') +
-    '<td width="2%"></td>' +
     kpiCard(counts.open, 'Open', 'amber') +
     '<td width="2%"></td>' +
     kpiCard(counts.closed, 'Closed', 'green') +
+    '<td width="2%"></td>' +
+    kpiCard(counts.rejected, 'Rejected', 'red') +
     `</tr></table></td></tr>`
   );
 }
@@ -70,31 +71,31 @@ function main() {
       data = {};
     }
     const operation = data.operation || {
-      total: n(data.operation_total),
       open: n(data.operation_open),
       closed: n(data.operation_closed),
+      rejected: n(data.operation_rejected),
     };
     const finance = data.finance || {
-      total: n(data.finance_total),
       open: n(data.finance_open),
       closed: n(data.finance_closed),
+      rejected: n(data.finance_rejected),
     };
     const html =
       '<tr><td style="padding:22px 32px 4px 32px;" bgcolor="#ffffff">' +
       '<div style="font-size:12px; font-weight:bold; color:#8a8a8a !important; text-transform:uppercase; letter-spacing:0.5px;">Operation vs Finance</div>' +
-      '<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Same split as Solar Expense Hub dashboard — Finance = finance/account/treasury/audit/invoice; everything else = Operation</div>' +
+      '<div style="font-size:11px; color:#8a8a8a !important; margin-top:3px;">Same split as Solar Expense Hub dashboard — Operation Closed = moved to Finance; Rejected uses the last real step. Drafts excluded.</div>' +
       '</td></tr>' +
       section(
         'Operation',
-        'Field / site / technician and all non-finance requests',
+        'Start → HO Review → VP Approval · Closed = moved to Finance',
         'operation',
-        { total: n(operation.total), open: n(operation.open), closed: n(operation.closed) },
+        { open: n(operation.open), closed: n(operation.closed), rejected: n(operation.rejected) },
       ) +
       section(
         'Finance',
-        'Finance · accounts · treasury · audit · invoice related requests',
+        'BU Approval → Finance Processing → Completed',
         'finance',
-        { total: n(finance.total), open: n(finance.open), closed: n(finance.closed) },
+        { open: n(finance.open), closed: n(finance.closed), rejected: n(finance.rejected) },
       );
     process.stdout.write(html);
   });

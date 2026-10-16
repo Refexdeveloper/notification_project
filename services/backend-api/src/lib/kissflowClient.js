@@ -374,11 +374,34 @@ function normalizeProcessStatus(raw) {
   return value || 'other';
 }
 
-/** Current workflow step name from a Kissflow process item. */
+function isProcessStatusLabel(value) {
+  const s = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  return (
+    s === 'inprogress'
+    || s === 'in progress'
+    || s === 'completed'
+    || s === 'rejected'
+    || s === 'withdrawn'
+    || s === 'closed'
+    || s === 'open'
+    || s === 'pending'
+    || s === 'draft'
+    || s === 'done'
+  );
+}
+
+/** Current workflow step name from a Kissflow process item. Never use process status as the step. */
 function pickCurrentStep(raw) {
   if (!raw || typeof raw !== 'object') return '';
-  if (typeof raw.current_step === 'string' && raw.current_step.trim()) return raw.current_step.trim();
-  return pickString(raw, ['_current_step', 'Current_Step', 'current_step', 'Step', 'Step_Name']);
+  const fromKf = pickString(raw, ['_current_step', 'Current_Step', 'Step', 'Step_Name', '_activity_name']);
+  if (fromKf && !isProcessStatusLabel(fromKf)) return fromKf;
+  const mapped = typeof raw.current_step === 'string' ? raw.current_step.trim() : '';
+  if (mapped && !isProcessStatusLabel(mapped)) return mapped;
+  return fromKf || '';
 }
 
 /**
@@ -420,6 +443,7 @@ module.exports = {
   coerceKissflowDate,
   normalizeProcessStatus,
   pickCurrentStep,
+  isProcessStatusLabel,
   isItsmBusinessClosed,
   isItsmBusinessOpen,
 };

@@ -162,7 +162,7 @@ def as_text:
       elif ($st == "Completed") then "Completed"
       else (if $st == "" then "InProgress" else $st end) end
   ),
-  current_step: ((.Service_Category // .Expense_Type // null) | as_text | if . == "" then null else . end),
+  current_step: ((._current_step // .Current_Step // ._activity_name // .Service_Category // .Expense_Type // null) | as_text | if . == "" then null else . end),
   stage: (._stage // null | if . == null then null else tostring end),
   criticality: ((.Expense_Type // null) | as_text | if . == "" then null else . end),
   entity: ((.Unit // .Selected_Site_ID // .Side_ID // .Site_ID // null) | as_text | if . == "" then null else . end),

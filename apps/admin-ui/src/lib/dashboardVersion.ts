@@ -1,5 +1,5 @@
 /** Bump this on each dashboard KPI / MIS / filter change so we can revert by version. */
-export const DASHBOARD_VERSION = '2026.10.03-a4';
+export const DASHBOARD_VERSION = '2026.10.16-solar-b';
 
 export const DASHBOARD_VERSION_NOTES = [
   'ITSM always reloads from the server — browser session cache no longer keeps yesterday’s tickets after a fix.',
@@ -15,5 +15,6 @@ export const DASHBOARD_VERSION_NOTES = [
   'Tech Helpdesk Ticket source always recounts from the filtered tickets (Company / User / Period). It never keeps the unfiltered 997 mix.',
   'MIS never shows a person named Inactive — Deepan Duraisamy stays the display name (InActive suffix if the account is off).',
   'Open / Closed / Rejected / Opened today / Closed today KPI clicks filter MIS + records and scroll to that section.',
+  'Solar Operation/Finance: Open / Closed / Rejected (no Total). Operation Closed = moved to Finance. Rejected uses last real step, not a Rejected stage.',
   'Draft rows stay excluded. Closed today uses closed/completed timestamps, not created date.',
 ] as const;

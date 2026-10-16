@@ -9,7 +9,7 @@ import { NE_DASH_CLASS, NE_TYPE } from '@/lib/neDashType';
 import EmbedAppRecordsTable from '@/components/feature/EmbedAppRecordsTable';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
 import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
-import { LayoutDashboard, Plane, Receipt, RefreshCw, Wallet } from 'lucide-react';
+import { Landmark, LayoutDashboard, Plane, Receipt, RefreshCw, Sun, Wallet } from 'lucide-react';
 import {
   AlertCircle,
   ChevronDown,
@@ -54,6 +54,10 @@ import {
 import { ITSM_CEO_RECORD_COLUMNS } from '@/lib/itsmRecordDisplay';
 import { EMS_DASH_COLUMNS } from '@/lib/emsRecordDisplay';
 import { travelColumnsForPack, type TravelPackKind } from '@/lib/travelRecordDisplay';
+import {
+  solarPackCountsFromRecords,
+  solarRowMatchesPack,
+} from '@/lib/solarCategory';
 import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
 import { itsmSourceFromFilteredRecords, recordsHaveSource } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
@@ -374,21 +378,9 @@ function sumRecordAmount(rows: Array<{ amount?: number | null; status?: string }
   }, 0);
 }
 
-function sumRecordField(rows: Array<Record<string, unknown>>, key: string, fallbackKey?: string) {
-  return rows.reduce((sum, row) => {
-    const n = Number(row[key]);
-    if (Number.isFinite(n) && n > 0) return sum + n;
-    if (!fallbackKey) return sum;
-    const fallback = Number(row[fallbackKey]);
-    return sum + (Number.isFinite(fallback) ? fallback : 0);
-  }, 0);
-}
-
-const EMS_CLAIM_TYPES = [
-  { key: 'conveyance', label: 'Local Conveyance', hint: 'Local travel within city', match: /convey|local travel|transport/i },
-] as const;
-
 type TravelPackMetric = 'total' | 'open' | 'closed' | 'amount';
+type SolarPackKind = 'operation' | 'finance';
+type SolarPackMetric = 'open' | 'closed' | 'rejected';
 
 const TRAVEL_PROCESS_SECTIONS = [
   { kind: 'booking' as const, title: 'Travel Booking', match: /travel_management|travel booking|travel request/i, icon: Plane, styleIndex: 0 },
@@ -472,8 +464,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [kpiFocus, setKpiFocus] = useState<RecordKpiFocus | null>(null);
-  const [claimTypeFocus, setClaimTypeFocus] = useState<string | null>(null);
   const [travelPackFocus, setTravelPackFocus] = useState<{ key: TravelPackKind; metric: TravelPackMetric } | null>(null);
+  const [solarPackFocus, setSolarPackFocus] = useState<{ key: SolarPackKind; metric: SolarPackMetric } | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
   const [misScopedRecords, setMisScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [sourceScopedRecords, setSourceScopedRecords] = useState<AppRecordRow[] | null>(null);
@@ -727,6 +719,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const isP2pLayout = data?.report_layout?.kind === 'p2p'
     || /procurement|p2p/i.test(appId || '');
   const isEmsLayout = appKind === 'expense' && !travelMode;
+  const isSolarLayout = Boolean(
+    data?.report_layout?.kind === 'solar'
+    || appKind === 'solar'
+    || isSolarApplicationId(appId),
+  );
 
   const appRoster = useMemo(() => {
     const fromPayload = mergeDashboardUsers(data?.app_users || []);
@@ -755,14 +752,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         base = base.filter((row) => section.match.test(String(row.process_id || row.subject || '')));
       }
     }
-    if (isEmsLayout && claimTypeFocus) {
-      const type = EMS_CLAIM_TYPES.find((row) => row.key === claimTypeFocus);
-      if (type) {
-        base = base.filter((row) => type.match.test(String(row.expense_type || '')));
-      }
+    if (isSolarLayout && solarPackFocus) {
+      base = base.filter((row) => solarRowMatchesPack(row, solarPackFocus.key, solarPackFocus.metric));
     }
     return base;
-  }, [claimTypeFocus, isEmsLayout, recordInventory, stampedInventory, travelMode, travelPackFocus]);
+  }, [isSolarLayout, recordInventory, solarPackFocus, stampedInventory, travelMode, travelPackFocus]);
 
   const assignedFilterName = useMemo(() => {
     if (userFilter === 'all') return undefined;
@@ -863,8 +857,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   useEffect(() => {
     setMisScopedRecords(null);
     setSourceScopedRecords(null);
-    setClaimTypeFocus(null);
     setTravelPackFocus(null);
+    setSolarPackFocus(null);
   }, [entity, company, userFilter, period, dateFrom, dateTo]);
 
   const todayKind = kpiFocus === 'opened_today' ? 'opened' : kpiFocus === 'closed_today' ? 'closed' : undefined;
@@ -877,11 +871,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         status: recordsStatus,
         todayKind,
       });
-    if (!claimTypeFocus) return byStatus;
-    const type = EMS_CLAIM_TYPES.find((row) => row.key === claimTypeFocus);
-    if (!type) return byStatus;
-    return byStatus.filter((row) => type.match.test(String(row.expense_type || '')));
-  }, [claimTypeFocus, kpiRecords, recordsStatus, todayKind, useClientInventory]);
+    return byStatus;
+  }, [kpiRecords, recordsStatus, todayKind, useClientInventory]);
 
   const misOwnerMode = isP2pLayout ? 'assignee_or_requester' as const : 'assignee' as const;
 
@@ -1090,6 +1081,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   const handleKpiClick = useCallback((focus: RecordKpiFocus) => {
     setTravelPackFocus(null);
+    setSolarPackFocus(null);
     setKpiFocus((prev) => {
       const next = prev === focus ? null : focus;
       if (!next || next === 'total' || next === 'opened_today' || next === 'closed_today') {
@@ -1106,12 +1098,30 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   const handleTravelPackClick = useCallback((key: TravelPackKind, metric: TravelPackMetric) => {
     setKpiFocus(null);
+    setSolarPackFocus(null);
     setTravelPackFocus((prev) => {
       if (prev?.key === key && prev?.metric === metric) {
         setRecordsStatus('all');
         return null;
       }
       setRecordsStatus(metric === 'open' ? 'open' : metric === 'closed' ? 'closed' : 'all');
+      return { key, metric };
+    });
+    window.requestAnimationFrame(() => {
+      misSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
+  const handleSolarPackClick = useCallback((key: SolarPackKind, metric: SolarPackMetric) => {
+    setKpiFocus(null);
+    setTravelPackFocus(null);
+    setSolarPackFocus((prev) => {
+      if (prev?.key === key && prev?.metric === metric) {
+        setRecordsStatus('all');
+        return null;
+      }
+      if (key === 'operation' && metric === 'closed') setRecordsStatus('all');
+      else setRecordsStatus(metric);
       return { key, metric };
     });
     window.requestAnimationFrame(() => {
@@ -1158,6 +1168,20 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     if (countedSpan > 0) return counted;
     return api;
   }, [data?.portfolio, isPmLayout, kpiRecords, useClientKpis]);
+
+  const solarPackCounts = useMemo(() => {
+    if (useClientInventory) return solarPackCountsFromRecords(kpiRecords);
+    const cats = data?.by_category || [];
+    const pick = (name: 'Operation' | 'Finance') => {
+      const hit = cats.find((row) => String(row.name || '').toLowerCase() === name.toLowerCase());
+      return {
+        open: Number(hit?.open || 0),
+        closed: Number(hit?.closed || 0),
+        rejected: Number(hit?.rejected || 0),
+      };
+    };
+    return { operation: pick('Operation'), finance: pick('Finance') };
+  }, [data?.by_category, kpiRecords, useClientInventory]);
 
   if (!isBackendApiMode()) {
     return (
@@ -1225,7 +1249,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const showDashboardLoader = Boolean((loading && !data) || inventoryLoading);
 
   return (
-    <div className={`relative rounded-3xl p-1 ${NE_DASH_CLASS}${travelMode || isEmsLayout ? ' ne-dash-finance' : ''}`}>
+    <div className={`relative rounded-3xl p-1 ${NE_DASH_CLASS}${travelMode || isEmsLayout || isSolarLayout ? ' ne-dash-finance' : ''}`}>
       <DashboardLoadingOverlay
         show={showDashboardLoader}
         mode="fixed"
@@ -1624,37 +1648,6 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     { label: 'Rejected', value: amountTotals.rejected, format: 'inr', hint: claimsSub(kpiRejected), active: kpiFocus === 'rejected', onClick: () => handleKpiClick('rejected') },
                   ]}
                 />
-                <NeFinanceProcessCard
-                  title="Expense claim types"
-                  hint="Click a type to filter the records table"
-                  icon={Wallet}
-                  styleIndex={1}
-                  metrics={[
-                    ...EMS_CLAIM_TYPES.map((type) => {
-                      const rows = kpiRecords.filter((row) => type.match.test(String(row.expense_type || '')));
-                      return {
-                        label: type.label,
-                        value: sumRecordAmount(rows),
-                        format: 'inr' as const,
-                        hint: `${type.hint} · ${claimsSub(rows.length)}`,
-                        active: claimTypeFocus === type.key,
-                        onClick: () => setClaimTypeFocus((prev) => (prev === type.key ? null : type.key)),
-                      };
-                    }),
-                    {
-                      label: 'Total raised',
-                      value: sumRecordField(kpiRecords, 'raised_amount', 'amount'),
-                      format: 'inr' as const,
-                      hint: 'Sum of Total raised amount from expense fields',
-                    },
-                    {
-                      label: 'Total claimed',
-                      value: sumRecordField(kpiRecords, 'claimed_amount', 'amount'),
-                      format: 'inr' as const,
-                      hint: 'Sum of Claimed amount from expense fields',
-                    },
-                  ]}
-                />
               </div>
             ) : (
               <div className="space-y-5">
@@ -1759,6 +1752,64 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   surface="white"
                 />
               </div>
+              {isSolarLayout ? (
+                <>
+                  <NeFinanceProcessCard
+                    title="Operation"
+                    hint="Start → HO Review → VP Approval. Closed = moved to Finance. Rejected uses the last real step."
+                    icon={Sun}
+                    styleIndex={0}
+                    metrics={[
+                      {
+                        label: 'Open',
+                        value: solarPackCounts.operation.open,
+                        active: solarPackFocus?.key === 'operation' && solarPackFocus?.metric === 'open',
+                        onClick: () => handleSolarPackClick('operation', 'open'),
+                      },
+                      {
+                        label: 'Closed',
+                        value: solarPackCounts.operation.closed,
+                        hint: 'Moved to BU Approval / Finance',
+                        active: solarPackFocus?.key === 'operation' && solarPackFocus?.metric === 'closed',
+                        onClick: () => handleSolarPackClick('operation', 'closed'),
+                      },
+                      {
+                        label: 'Rejected',
+                        value: solarPackCounts.operation.rejected,
+                        active: solarPackFocus?.key === 'operation' && solarPackFocus?.metric === 'rejected',
+                        onClick: () => handleSolarPackClick('operation', 'rejected'),
+                      },
+                    ]}
+                  />
+                  <NeFinanceProcessCard
+                    title="Finance"
+                    hint="BU Approval onward. Rejected uses the last real step — not a Rejected stage."
+                    icon={Landmark}
+                    styleIndex={1}
+                    metrics={[
+                      {
+                        label: 'Open',
+                        value: solarPackCounts.finance.open,
+                        active: solarPackFocus?.key === 'finance' && solarPackFocus?.metric === 'open',
+                        onClick: () => handleSolarPackClick('finance', 'open'),
+                      },
+                      {
+                        label: 'Closed',
+                        value: solarPackCounts.finance.closed,
+                        hint: 'Process completed',
+                        active: solarPackFocus?.key === 'finance' && solarPackFocus?.metric === 'closed',
+                        onClick: () => handleSolarPackClick('finance', 'closed'),
+                      },
+                      {
+                        label: 'Rejected',
+                        value: solarPackCounts.finance.rejected,
+                        active: solarPackFocus?.key === 'finance' && solarPackFocus?.metric === 'rejected',
+                        onClick: () => handleSolarPackClick('finance', 'rejected'),
+                      },
+                    ]}
+                  />
+                </>
+              ) : null}
               </div>
             )}
 
@@ -1821,7 +1872,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
             <div ref={misSectionRef}>
             <EmbedAppRecordsTable
-              key={travelMode ? `tv-${travelPackFocus?.key || 'all'}-${travelPackFocus?.metric || recordsStatus}` : 'records'}
+              key={
+                travelMode
+                  ? `tv-${travelPackFocus?.key || 'all'}-${travelPackFocus?.metric || recordsStatus}`
+                  : isSolarLayout
+                    ? `sl-${solarPackFocus?.key || 'all'}-${solarPackFocus?.metric || recordsStatus}`
+                    : 'records'
+              }
               inventory={tableInventory}
               columns={
                 itsmCompanyMode

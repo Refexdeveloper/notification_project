@@ -169,7 +169,7 @@ const STARTER_CATALOG = [
     id: 'solar-reinvestment',
     name: 'Solar Reinvestment Request report',
     description:
-      'Solar Expense Hub layout with Total / Open / Closed + Operation vs Finance add-on (dashboard parity) + MIS user table.',
+      'Solar Expense Hub layout with Total / Open / Closed + Operation vs Finance (Open / Closed / Rejected; Operation Closed = moved to Finance) + MIS user table. Drafts excluded.',
     seed_path: 'db/seeds/solar-reinvestment-template.html',
     placeholders: [
       'ReportTitle',

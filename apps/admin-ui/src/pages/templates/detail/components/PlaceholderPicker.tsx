@@ -29,6 +29,12 @@ function placeholderTitle(appKind: TemplateAppKind, key: string): string {
     };
     if (travelLabels[key]) return `${travelLabels[key]} — {{${key}}}`;
   }
+  if (appKind === 'solar') {
+    const solarLabels: Record<string, string> = {
+      CategorySectionsHtml: 'Operation vs Finance KPI rows (Open / Closed / Rejected)',
+    };
+    if (solarLabels[key]) return `${solarLabels[key]} — {{${key}}}`;
+  }
   return `Insert {{${key}}}`;
 }
 
@@ -45,6 +51,9 @@ function placeholderChipLabel(appKind: TemplateAppKind, key: string): string {
       CompletedRequests: 'Completed',
     };
     if (travelLabels[key]) return travelLabels[key];
+  }
+  if (appKind === 'solar' && key === 'CategorySectionsHtml') {
+    return 'Operation vs Finance rows';
   }
   return `{{${key}}}`;
 }

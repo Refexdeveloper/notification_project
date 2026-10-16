@@ -84,25 +84,78 @@ tasks AS (
     current_step,
     (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
     (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at,
+    NULLIF(trim(COALESCE(
+      CASE
+        WHEN lower(trim(COALESCE(
+          CASE WHEN jsonb_typeof(source_payload->'_current_step') = 'object'
+            THEN source_payload->'_current_step'->>'Name'
+            ELSE source_payload->>'_current_step'
+          END, '')
+        )) IN ('rejected','inprogress','in progress','completed','withdrawn','closed','open','pending','draft','done')
+          THEN NULL
+        WHEN jsonb_typeof(source_payload->'_current_step') = 'object'
+          THEN NULLIF(trim(source_payload->'_current_step'->>'Name'), '')
+        ELSE NULLIF(trim(source_payload->>'_current_step'), '')
+      END,
+      (
+        SELECT NULLIF(trim(c->>'_context_current_step'), '')
+        FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(source_payload->'_current_context') = 'array'
+            THEN source_payload->'_current_context'
+            ELSE '[]'::jsonb
+          END
+        ) c
+        WHERE NULLIF(trim(c->>'_context_current_step'), '') IS NOT NULL
+          AND lower(trim(c->>'_context_current_step'))
+            NOT IN ('rejected','inprogress','in progress','completed','withdrawn','closed','open','pending','draft','done')
+        ORDER BY CASE WHEN lower(trim(c->>'_status')) IN ('rejected','withdrawn') THEN 0 ELSE 1 END
+        LIMIT 1
+      ),
+      NULLIF(trim(source_payload->>'_activity_name'), '')
+    )), '') AS workflow_step,
     CASE
-      WHEN lower(trim(concat_ws(' ',
-        coalesce(current_step, ''),
-        coalesce(source_payload->>'Service_Category', ''),
-        coalesce(source_payload->'Service_Category'->>'Name', ''),
-        coalesce(source_payload->>'Expense_Type', ''),
-        coalesce(source_payload->'Expense_Type'->>'Name', ''),
-        coalesce(source_payload->>'Category', ''),
-        coalesce(source_payload->'Category'->>'Name', ''),
-        coalesce(source_payload->>'Department', ''),
-        coalesce(source_payload->'Department'->>'Name', ''),
-        coalesce(source_payload->>'Cost_Center', ''),
-        coalesce(source_payload->>'Request_Type', '')
-      ))) ~ '(financ|account|treasury|audit|invoice)' THEN 'finance'
+      WHEN lower(trim(coalesce(
+        NULLIF(trim(source_payload->>'_current_step'), ''),
+        NULLIF(trim(source_payload->'_current_step'->>'Name'), ''),
+        (
+          SELECT NULLIF(trim(c->>'_context_current_step'), '')
+          FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(source_payload->'_current_context') = 'array'
+              THEN source_payload->'_current_context'
+              ELSE '[]'::jsonb
+            END
+          ) c
+          WHERE NULLIF(trim(c->>'_context_current_step'), '') IS NOT NULL
+            AND lower(trim(c->>'_context_current_step'))
+              NOT IN ('rejected','inprogress','in progress','completed','withdrawn','closed')
+          ORDER BY CASE WHEN lower(trim(c->>'_status')) IN ('rejected','withdrawn') THEN 0 ELSE 1 END
+          LIMIT 1
+        ),
+        NULLIF(trim(source_payload->>'_activity_name'), ''),
+        NULLIF(trim(source_payload->>'Current_Step'), ''),
+        ''
+      ))) ~ '(bu[[:space:]_]*approv|finance[[:space:]_]*process|[[:<:]]payment[[:>:]]|^completed$|^complete$)'
+        OR (
+          lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done')
+          AND lower(trim(coalesce(
+            NULLIF(trim(source_payload->>'_current_step'), ''),
+            NULLIF(trim(source_payload->'_current_step'->>'Name'), ''),
+            ''
+          ))) !~ '^(start|ho review|vp approval)$'
+        )
+      THEN 'finance'
       ELSE 'operation'
     END AS cat
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${SOLAR_PROCESS_ID}'
+    AND NOT (
+      lower(coalesce(i.process_status, '')) LIKE '%draft%'
+      OR lower(coalesce(i.current_step, '')) LIKE '%draft%'
+      OR lower(coalesce(i.source_payload->>'_status', '')) LIKE '%draft%'
+      OR lower(coalesce(i.source_payload->>'Status', '')) LIKE '%draft%'
+      OR lower(coalesce(i.source_payload->>'_current_step', '')) LIKE '%draft%'
+    )
 ),
 latest_users AS (
   SELECT snapshot_run_id
@@ -163,9 +216,10 @@ SELECT json_build_object(
   'operation_open', (SELECT count(*) FROM tasks WHERE cat = 'operation'
       AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
       AND lower(coalesce(process_status, '')) !~ '(reject|cancel|withdraw)'),
-  'operation_closed', (SELECT count(*) FROM tasks WHERE cat = 'operation'
-      AND (process_status IN ('Completed', 'Closed')
-        OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
+  'operation_closed', (SELECT count(*) FROM tasks WHERE cat = 'finance'),
+  'operation_rejected', (SELECT count(*) FROM tasks WHERE cat = 'operation'
+      AND (process_status IN ('Withdrawn')
+        OR lower(coalesce(process_status, '')) ~ '(reject|cancel|withdraw)')),
   'finance_total', (SELECT count(*) FROM tasks WHERE cat = 'finance'),
   'finance_open', (SELECT count(*) FROM tasks WHERE cat = 'finance'
       AND process_status NOT IN ('Completed', 'Closed', 'Withdrawn')
@@ -173,6 +227,9 @@ SELECT json_build_object(
   'finance_closed', (SELECT count(*) FROM tasks WHERE cat = 'finance'
       AND (process_status IN ('Completed', 'Closed')
         OR lower(coalesce(process_status, '')) IN ('completed', 'closed', 'done', 'approved', 'paid', 'settled'))),
+  'finance_rejected', (SELECT count(*) FROM tasks WHERE cat = 'finance'
+      AND (process_status IN ('Withdrawn')
+        OR lower(coalesce(process_status, '')) ~ '(reject|cancel|withdraw)')),
   'total_app_users', (SELECT count(*) FROM solar_app_users),
   'signed_in_users', (
     SELECT count(*)
@@ -332,19 +389,31 @@ SOLAR_SIGNIN_RATE_TODAY="$(jq -r '
 
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
-log "Building Operation vs Finance category sections (dashboard parity)"
-CATEGORY_JSON="$(jq -c '{
-  operation: {
-    total: (.operation_total // 0),
-    open: (.operation_open // 0),
-    closed: (.operation_closed // 0)
-  },
-  finance: {
-    total: (.finance_total // 0),
-    open: (.finance_open // 0),
-    closed: (.finance_closed // 0)
-  }
-}' <<< "${SOLAR_SUMMARY_JSON}")"
+log "Building Operation vs Finance category sections (same classifier as Solar dashboard)"
+SOLAR_ITEMS_JSON="$(echo "
+\pset tuples_only on
+\pset format unaligned
+WITH $(report_latest_snapshot_cte "'${SOLAR_APP_ID}'" "'${SOLAR_PROCESS_ID}'")
+SELECT COALESCE(json_agg(json_build_object(
+  'process_status', i.process_status,
+  'current_step', i.current_step,
+  'source_payload', COALESCE(i.source_payload, '{}'::jsonb)
+) ORDER BY i.instance_id), '[]'::json)
+FROM engagement_reporting.item i, latest l
+WHERE i.snapshot_run_id = l.snapshot_run_id
+  AND i.process_id = '${SOLAR_PROCESS_ID}';
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+[[ -n "${SOLAR_ITEMS_JSON}" ]] || SOLAR_ITEMS_JSON='[]'
+CATEGORY_JSON="$(printf '%s' "${SOLAR_ITEMS_JSON}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/count-solar-pack-kpis.js")"
+[[ -n "${CATEGORY_JSON}" ]] || CATEGORY_JSON='{"operation":{"open":0,"closed":0,"rejected":0},"finance":{"open":0,"closed":0,"rejected":0}}'
+SOLAR_SUMMARY_JSON="$(jq -c --argjson packs "${CATEGORY_JSON}" '
+  .operation_open = ($packs.operation.open // 0)
+  | .operation_closed = ($packs.operation.closed // 0)
+  | .operation_rejected = ($packs.operation.rejected // 0)
+  | .finance_open = ($packs.finance.open // 0)
+  | .finance_closed = ($packs.finance.closed // 0)
+  | .finance_rejected = ($packs.finance.rejected // 0)
+' <<< "${SOLAR_SUMMARY_JSON}")"
 SOLAR_CATEGORY_HTML="$(printf '%s' "${CATEGORY_JSON}" | node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-solar-category-html.js")"
 [[ -n "${SOLAR_CATEGORY_HTML}" ]] || SOLAR_CATEGORY_HTML=""
 
@@ -383,7 +452,7 @@ jq -n \
   --arg SignedInToday "${SOLAR_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${SOLAR_ROWS_HTML}" \
   --arg CategorySectionsHtml "${SOLAR_CATEGORY_HTML}" \
-  --arg ReportBody "Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Finance = finance/account/treasury/audit/invoice; all other = Operation)." \
+  --arg ReportBody "Solar Expense Hub · Reinvestment Request. Operation vs Finance matches the Solar Expense Hub dashboard (Operation = Start → HO Review → VP Approval, Closed = moved to Finance; Finance = BU Approval onward). Rejected uses the last real step. Drafts excluded." \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,

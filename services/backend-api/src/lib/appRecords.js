@@ -22,6 +22,7 @@ const { latestApplicationSnapshotAt } = require('./snapshotRuns');
 const {
   normalizeProcessStatus,
   pickCurrentStep,
+  isProcessStatusLabel,
   pickString,
   pickDateTime,
   coerceKissflowDate,
@@ -31,7 +32,7 @@ const {
   kissflowGetUrl,
   extractArray,
 } = require('./kissflowClient');
-const { classifyTicketSource, normalizeItsmPersonLabel } = require('./dashboardDisplay');
+const { classifyTicketSource, normalizeItsmPersonLabel, pickSolarStep } = require('./dashboardDisplay');
 const { projectKeyFromRaw, buildPmPortfolioFromRecords, projectKeySql } = require('./pmPortfolio');
 
 const ITSM_APP_ID = 'IT_Service_Management_A00';
@@ -328,6 +329,61 @@ function isTravelApp(applicationId) {
 function isSolarApp(applicationId) {
   const hay = String(applicationId || '').toLowerCase();
   return hay.includes('solar') || hay.includes('reinvestment') || hay.includes('site_expense');
+}
+
+/** Kissflow site lookup: Side_ID.site_name_fqiW (not lookup Name "Budget Master…"). */
+function solarSiteNameFromRaw(raw) {
+  if (!raw || typeof raw !== 'object') return '';
+  const side = raw.Side_ID;
+  if (side && typeof side === 'object') {
+    const name = String(side.site_name_fqiW || side.site_name || side.Site_Name || '').trim();
+    if (name) return name;
+  }
+  return pickString(raw, ['Selected_Site_ID', 'Site_Name', 'Site', 'Location', 'Site_Location']);
+}
+
+function solarWorkflowStepSql(alias = 'i') {
+  const payload = `${alias}.source_payload`;
+  return `NULLIF(trim(COALESCE(
+    CASE
+      WHEN lower(trim(COALESCE(
+        CASE WHEN jsonb_typeof(${payload}->'_current_step') = 'object'
+          THEN ${payload}->'_current_step'->>'Name'
+          ELSE ${payload}->>'_current_step'
+        END, '')
+      )) IN ('rejected','inprogress','in progress','completed','withdrawn','closed','open','pending','draft','done')
+        THEN NULL
+      WHEN jsonb_typeof(${payload}->'_current_step') = 'object'
+        THEN NULLIF(trim(${payload}->'_current_step'->>'Name'), '')
+      ELSE NULLIF(trim(${payload}->>'_current_step'), '')
+    END,
+    (
+      SELECT NULLIF(trim(c->>'_context_current_step'), '')
+      FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(${payload}->'_current_context') = 'array'
+          THEN ${payload}->'_current_context'
+          ELSE '[]'::jsonb
+        END
+      ) c
+      WHERE NULLIF(trim(c->>'_context_current_step'), '') IS NOT NULL
+        AND lower(trim(c->>'_context_current_step'))
+          NOT IN ('rejected','inprogress','in progress','completed','withdrawn','closed','open','pending','draft','done')
+      ORDER BY CASE WHEN lower(trim(c->>'_status')) IN ('rejected','withdrawn') THEN 0 ELSE 1 END
+      LIMIT 1
+    ),
+    NULLIF(trim(${payload}->>'_activity_name'), ''),
+    NULLIF(trim(${payload}->>'Current_Step'), '')
+  )), '')`;
+}
+
+function solarSiteNameSql(alias = 'i') {
+  const payload = `${alias}.source_payload`;
+  return `NULLIF(trim(COALESCE(
+    NULLIF(trim(${payload}->'Side_ID'->>'site_name_fqiW'), ''),
+    NULLIF(trim(${payload}->>'Selected_Site_ID'), ''),
+    NULLIF(trim(${payload}->>'Site_Name'), ''),
+    NULLIF(trim(${payload}->>'Site'), '')
+  )), '')`;
 }
 
 function isPmApp(applicationId) {
@@ -862,6 +918,58 @@ function overlayTravelPlacesFromItems(records, items, applicationId) {
   });
 }
 
+/** Overlay workflow step + site name from snapshot details onto lean live-cache rows. */
+async function overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, records) {
+  if (!isSolarApp(applicationId) || !records?.length) return records || [];
+  const ids = [...new Set(records.map((row) => String(row.id || row.instance_id || row.request_id || '')).filter(Boolean))];
+  if (!ids.length) return records;
+  try {
+    const latest = latestRunsCte({ environmentParam: '$1', applicationIdParam: '$2', alias: 'latest' });
+    const { rows } = await pool.query(
+      `WITH ${latest}
+       SELECT
+         i.instance_id,
+         ${solarWorkflowStepSql('i')} AS workflow_step,
+         ${solarSiteNameSql('i')} AS site_name
+       FROM engagement_reporting.item i
+       JOIN latest l
+         ON i.snapshot_run_id = l.snapshot_run_id
+        AND i.process_id = l.process_id
+       WHERE i.instance_id = ANY($3::text[])`,
+      [environment, applicationId, ids],
+    );
+    const byId = new Map();
+    for (const row of rows || []) {
+      const id = String(row.instance_id || '').trim();
+      if (!id) continue;
+      const step = String(row.workflow_step || '').trim();
+      const site = String(row.site_name || '').trim();
+      byId.set(id, {
+        step: step && !isProcessStatusLabel(step) ? step : '',
+        site,
+      });
+    }
+    if (!byId.size) return records;
+    return records.map((rec) => {
+      const id = String(rec.id || rec.instance_id || rec.request_id || '');
+      const hit = byId.get(id);
+      if (!hit) {
+        if (isProcessStatusLabel(rec.current_step)) return { ...rec, current_step: '' };
+        return rec;
+      }
+      const next = { ...rec };
+      if (hit.step) next.current_step = hit.step;
+      else if (isProcessStatusLabel(next.current_step)) next.current_step = '';
+      if (hit.site && (!next.subject || next.subject === '—' || next.subject === '-' || next.subject === next.current_step)) {
+        next.subject = hit.site;
+      }
+      return next;
+    });
+  } catch {
+    return records;
+  }
+}
+
 async function overlayTravelDetailsFromDb(pool, environment, applicationId, records) {
   if ((!isTravelApp(applicationId) && !isEmsApp(applicationId)) || !records?.length) return records || [];
   const ids = [...new Set(records.map((row) => String(row.id || row.instance_id || '')).filter(Boolean))];
@@ -1038,6 +1146,7 @@ function columnsForApp(applicationId) {
       { id: 'expense_type', label: 'Expense type' },
       { id: 'subject', label: 'Site name' },
       { id: 'requested_by', label: 'Requester' },
+      { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
       { id: 'company_name', label: 'Company name' },
@@ -1798,7 +1907,7 @@ function buildLiveRecordRows(allItems, applicationId) {
     const toCity = travelDetails.to_city || emsDetails.to_city;
     const departureDate = travelDetails.departure_date || null;
     const subject = solar
-      ? (pickString(raw, ['Site_Name', 'Site', 'Location', 'Site_Location', 'Subject', 'Title']) || pickCurrentStep(raw) || '—')
+      ? (solarSiteNameFromRaw(raw) || pickString(raw, ['Selected_Site_ID', 'Site_Name', 'Site', 'Location', 'Site_Location']) || '—')
       : travel
         ? (pickString(raw, ['Purpose_of_Travel', 'Purpose', 'Title', 'Travel_Title', 'Request_Title', 'Subject', 'Summary', 'Name']) || travelProcessTitle(processId))
         : pm
@@ -1861,7 +1970,8 @@ function buildLiveRecordRows(allItems, applicationId) {
       company_name: itsm ? companyText : (companyText || entityDisplay || undefined),
       website: website || undefined,
       website_name: website || undefined,
-      current_step: pickCurrentStep(raw) || String(raw?._status || ''),
+      current_step: (solar ? pickSolarStep(raw, pickCurrentStep(raw)) : pickCurrentStep(raw))
+        || (solar ? '' : String(raw?._status || '')),
       created_at: created,
       amount: (travel || ems) ? pickAmountFromRaw(raw) : undefined,
       trip_type: tripType,
@@ -2101,6 +2211,7 @@ async function loadKissflowRecords(pool, {
         { skipAssigneeStamp: itsm },
       );
       all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
+      all = await overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, all);
       if (inventory && itsm) {
         try {
           const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
@@ -2203,6 +2314,7 @@ async function loadKissflowRecords(pool, {
   const lead = isLeadApp(applicationId);
   const travel = isTravelApp(applicationId);
   const ems = isEmsApp(applicationId);
+  const solar = isSolarApp(applicationId);
   const payloadColSql = (travel || ems) ? 'i.source_payload AS source_payload,' : '';
   const payloadSelectSql = (travel || ems) ? 'c.source_payload,' : '';
   const statusSql = statusBucketSql(itsm, lead);
@@ -2338,6 +2450,8 @@ classified AS (
       NULLIF(trim(i.current_step), ''),
       i.process_id
     )`
+    : solar
+      ? `COALESCE(${solarSiteNameSql('i')}, NULLIF(trim(i.source_payload->>'Selected_Site_ID'), ''))`
     : `COALESCE(
       NULLIF(trim(i.source_payload->>'Subject'), ''),
       NULLIF(trim(i.source_payload->>'Title'), ''),
@@ -2346,11 +2460,18 @@ classified AS (
       NULLIF(trim(i.current_step), ''),
       i.process_id
     )`} AS subject,
-    COALESCE(
+    ${solar
+      ? solarWorkflowStepSql('i')
+      : `COALESCE(
+      CASE
+        WHEN jsonb_typeof(i.source_payload->'_current_step') = 'object'
+          THEN NULLIF(trim(i.source_payload->'_current_step'->>'Name'), '')
+        ELSE NULLIF(trim(i.source_payload->>'_current_step'), '')
+      END,
+      NULLIF(trim(i.source_payload->>'_activity_name'), ''),
       NULLIF(trim(i.current_step), ''),
-      NULLIF(trim(i.source_payload->>'_current_step'), ''),
       i.process_status
-    ) AS current_step,
+    )`} AS current_step,
     COALESCE(
       CASE
         WHEN jsonb_typeof(i.source_payload->'_created_at') = 'object'
