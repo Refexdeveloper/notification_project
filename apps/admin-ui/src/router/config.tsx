@@ -16,11 +16,14 @@ import SettingsPage from "@/pages/settings/page";
 import EmailSettingsPage from "@/pages/email-settings/page";
 import UsersPage from "@/pages/users/page";
 import PlatformUsersPage from "@/pages/platform-users/page";
+import DatabasePage from "@/pages/database/page";
 import LoginPage from "@/pages/login/page";
+import ResetPasswordPage from "@/pages/reset-password/page";
 import NotFound from "@/pages/NotFound";
 
 const routes: RouteObject[] = [
   { path: "/login", element: <LoginPage /> },
+  { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "/", element: <Navigate to="/dashboard" replace /> },
   { path: "/dashboard", element: <DashboardPage /> },
   { path: "/applications", element: <ApplicationsPage /> },
@@ -35,6 +38,8 @@ const routes: RouteObject[] = [
   { path: "/applications/:id", element: <ApplicationDetail /> },
   { path: "/users", element: <UsersPage /> },
   { path: "/platform-users", element: <PlatformUsersPage /> },
+  { path: "/database", element: <DatabasePage /> },
+  { path: "/database/:applicationId", element: <DatabasePage /> },
   { path: "/templates/:id", element: <TemplateDetailPage /> },
   { path: "/templates", element: <TemplatesPage /> },
   {

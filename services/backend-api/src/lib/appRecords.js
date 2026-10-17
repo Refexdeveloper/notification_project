@@ -2219,11 +2219,15 @@ async function loadKissflowRecords(pool, {
         } catch {
           /* keep cache rows — extras overlay is display-only */
         }
-        try {
-          const reportExtras = await loadItsmReportCloserById(environment);
-          all = applyItsmMisExtras(all, reportExtras);
-        } catch {
-          /* report overlay is display-only — keep snapshot/cache rows */
+        // Kissflow process-report closer is dozens of HTTP pages. Never block landing /
+        // filter inventory on it — only Refresh (force_live) may overlay it.
+        if (forceLive) {
+          try {
+            const reportExtras = await loadItsmReportCloserById(environment);
+            all = applyItsmMisExtras(all, reportExtras);
+          } catch {
+            /* report overlay is display-only — keep snapshot/cache rows */
+          }
         }
       }
       const filtered = dedupeRecords(filterRecordRows(all, {

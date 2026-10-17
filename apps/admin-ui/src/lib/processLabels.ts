@@ -130,7 +130,7 @@ export function formatEntityFilterLabel(filter: string | undefined | null): stri
 /** Default entity filter for a schedule based on process. */
 export function defaultEntityFilterForProcess(processId: string): string {
   if (isExtrovisProcess(processId)) return 'all';
-  if (processId === 'Live_IT_Service_Request_A00') return 'Refex';
+  if (processId === 'Live_IT_Service_Request_A00') return 'all';
   if (isTravelProcess(processId)) return 'Venwind';
   return '';
 }

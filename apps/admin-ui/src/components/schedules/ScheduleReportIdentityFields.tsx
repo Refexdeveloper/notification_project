@@ -156,17 +156,17 @@ export default function ScheduleReportIdentityFields({
             Ticket entity scope
           </label>
           <select
-            value={value.entityFilter || (extrovis ? 'all' : 'Refex')}
+            value={value.entityFilter || 'all'}
             onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
             disabled={disabled}
             className="field-input w-full disabled:opacity-60"
           >
-            <option value="all">All entities on this process (Extrovis)</option>
+            <option value="all">All tickets on this process</option>
             <option value="Extrovis">Entity = Extrovis</option>
             <option value="Refex">Entity = Refex</option>
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
-            Use <strong>All entities on this process</strong> for Extrovis so Refex-only tickets are not mixed in.
+            Refex ITSM (<code>Live_IT_Service_Request_A00</code>) always counts every ticket on the process, even if Entity is blank.
           </p>
         </div>
       )}

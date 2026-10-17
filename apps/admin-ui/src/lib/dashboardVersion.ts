@@ -1,5 +1,5 @@
 /** Bump this on each dashboard KPI / MIS / filter change so we can revert by version. */
-export const DASHBOARD_VERSION = '2026.10.16-solar-b';
+export const DASHBOARD_VERSION = '2026.10.17-fast-a';
 
 export const DASHBOARD_VERSION_NOTES = [
   'ITSM always reloads from the server — browser session cache no longer keeps yesterday’s tickets after a fix.',
@@ -16,5 +16,6 @@ export const DASHBOARD_VERSION_NOTES = [
   'MIS never shows a person named Inactive — Deepan Duraisamy stays the display name (InActive suffix if the account is off).',
   'Open / Closed / Rejected / Opened today / Closed today KPI clicks filter MIS + records and scroll to that section.',
   'Solar Operation/Finance: Open / Closed / Rejected (no Total). Operation Closed = moved to Finance. Rejected uses last real step, not a Rejected stage.',
+  'Per-app dashboards paint KPIs immediately. ITSM landing inventory no longer waits on Kissflow process-report closer (Refresh still can).',
   'Draft rows stay excluded. Closed today uses closed/completed timestamps, not created date.',
 ] as const;

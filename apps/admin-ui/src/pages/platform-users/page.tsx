@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pencil, Plus, Shield, Users } from 'lucide-react';
+import { Pencil, Plus, Shield, Trash2, Users } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -11,6 +11,7 @@ import { isBackendApiMode } from '@/services/backendApi';
 import {
   createPlatformUser,
   deactivatePlatformUser,
+  deletePlatformUser,
   loadPlatformUsers,
   PLATFORM_ROLES,
   updatePlatformUser,
@@ -36,6 +37,7 @@ export default function PlatformUsersPage() {
   const [editing, setEditing] = useState<PlatformUser | null>(null);
   const [editForm, setEditForm] = useState({
     display_name: '',
+    email: '',
     password: '',
     role: 'VIEWER' as (typeof PLATFORM_ROLES)[number],
     is_active: true,
@@ -100,6 +102,7 @@ export default function PlatformUsersPage() {
     setEditing(user);
     setEditForm({
       display_name: user.display_name,
+      email: user.email,
       password: '',
       role: (user.roles[0] as (typeof PLATFORM_ROLES)[number]) || 'VIEWER',
       is_active: user.is_active,
@@ -115,8 +118,14 @@ export default function PlatformUsersPage() {
       setError('Password must be at least 8 characters');
       return;
     }
+    const email = editForm.email.trim().toLowerCase();
+    if (!email.includes('@')) {
+      setError('Enter a valid email address');
+      return;
+    }
     const res = await updatePlatformUser(editing.id, {
       display_name: editForm.display_name.trim(),
+      email,
       role: editForm.role,
       is_active: editForm.is_active,
       ...(editForm.password ? { password: editForm.password } : {}),
@@ -146,12 +155,30 @@ export default function PlatformUsersPage() {
     await load();
   };
 
+  const removeUser = async (user: PlatformUser) => {
+    if (!canManage) return;
+    if (currentUser?.email && user.email.toLowerCase() === currentUser.email.toLowerCase()) {
+      setError('You cannot delete your own account while signed in.');
+      return;
+    }
+    if (!window.confirm(`Delete ${user.display_name} (${user.email}) permanently? This cannot be undone.`)) {
+      return;
+    }
+    const res = await deletePlatformUser(user.id);
+    if (!res.ok) {
+      setError(res.error || 'Could not delete user');
+      return;
+    }
+    setMessage(`${user.display_name} was deleted`);
+    await load();
+  };
+
   if (!backendMode) {
     return (
-      <Layout breadcrumbs={[{ label: 'Home', path: '/applications' }, { label: 'Admin users' }]}>
+      <Layout breadcrumbs={[{ label: 'Home', path: '/applications' }, { label: 'Platform users' }]}>
         <EmptyState
           variant="users"
-          title="Admin users require backend mode"
+          title="Platform users require backend mode"
           description="Set VITE_USE_BACKEND_API=true to manage portal users in PostgreSQL."
         />
       </Layout>
@@ -159,13 +186,13 @@ export default function PlatformUsersPage() {
   }
 
   return (
-    <Layout breadcrumbs={[{ label: 'Home', path: '/dashboard' }, { label: 'Admin users' }]}>
+    <Layout breadcrumbs={[{ label: 'Home', path: '/dashboard' }, { label: 'Platform users' }]}>
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Shield className="w-5 h-5 text-primary-600" />
-              <h1 className="text-2xl font-heading font-semibold text-foreground-950">Admin users</h1>
+              <h1 className="text-2xl font-heading font-semibold text-foreground-950">Platform users</h1>
             </div>
             <p className="text-sm text-foreground-500">
               Portal login accounts (Admin / Viewer). To change an existing password, click Edit — do not
@@ -281,7 +308,7 @@ export default function PlatformUsersPage() {
                   return (
                     <div
                       key={user.id}
-                      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border px-3 py-2.5 ${
                         isYou ? 'border-primary-200 bg-primary-50/40' : 'border-background-200/80'
                       }`}
                     >
@@ -308,7 +335,7 @@ export default function PlatformUsersPage() {
                             type="button"
                             onClick={() => openEdit(user)}
                             className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-background-100 text-foreground-500"
-                            title="Edit password or role"
+                            title="Edit email, password or role"
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
@@ -316,9 +343,20 @@ export default function PlatformUsersPage() {
                             <button
                               type="button"
                               onClick={() => void deactivate(user)}
-                              className="h-8 px-2 rounded-lg text-xs font-medium text-red-700 hover:bg-red-50"
+                              className="h-8 px-2 rounded-lg text-xs font-medium text-amber-700 hover:bg-amber-50"
                             >
                               Deactivate
+                            </button>
+                          )}
+                          {!isYou && (
+                            <button
+                              type="button"
+                              onClick={() => void removeUser(user)}
+                              className="h-8 px-2 rounded-lg text-xs font-medium text-red-700 hover:bg-red-50 inline-flex items-center gap-1"
+                              title="Delete user"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete
                             </button>
                           )}
                         </div>
@@ -335,13 +373,21 @@ export default function PlatformUsersPage() {
       <Modal open={Boolean(editing)} onClose={() => setEditing(null)}>
         <form onSubmit={saveEdit} className="p-6 space-y-4" autoComplete="off">
           <h3 className="text-lg font-semibold text-foreground-900">Edit admin user</h3>
-          <p className="text-xs text-foreground-500">{editing?.email}</p>
           <Input
             label="Display name"
             name="ne_edit_display_name"
             autoComplete="off"
             value={editForm.display_name}
             onChange={(e) => setEditForm((f) => ({ ...f, display_name: e.target.value }))}
+            required
+          />
+          <Input
+            label="Email address"
+            type="email"
+            name="ne_edit_email"
+            autoComplete="off"
+            value={editForm.email}
+            onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
             required
           />
           <Input

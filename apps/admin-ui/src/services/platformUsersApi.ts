@@ -71,7 +71,7 @@ export async function createPlatformUser(payload: {
 
 export async function updatePlatformUser(
   userId: string,
-  payload: { display_name?: string; role?: string; is_active?: boolean; password?: string },
+  payload: { display_name?: string; email?: string; role?: string; is_active?: boolean; password?: string },
 ): Promise<{ ok: boolean; user?: PlatformUser; error?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
@@ -90,6 +90,13 @@ export async function updatePlatformUser(
 }
 
 export async function deactivatePlatformUser(userId: string): Promise<{ ok: boolean; error?: string }> {
+  return updatePlatformUser(userId, { is_active: false }).then((res) => ({
+    ok: res.ok,
+    error: res.error,
+  }));
+}
+
+export async function deletePlatformUser(userId: string): Promise<{ ok: boolean; error?: string }> {
   if (!isBackendApiMode()) {
     return { ok: false, error: 'Backend API mode is not enabled' };
   }
@@ -99,7 +106,7 @@ export async function deactivatePlatformUser(userId: string): Promise<{ ok: bool
   });
 
   if (!res.ok) {
-    return { ok: false, error: res.error || 'Failed to deactivate platform user' };
+    return { ok: false, error: res.error || 'Failed to delete platform user' };
   }
 
   return { ok: true };

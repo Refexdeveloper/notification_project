@@ -175,6 +175,16 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
 
   const selected = list.find((sch) => sch.id === selectedId);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    const el = document.getElementById(`schedule-editor-${selectedId}`);
+    if (!el) return;
+    const timer = window.setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [selectedId]);
+
   const runExtrovisQuickSetup = async () => {
     if (!backendMode || !extrovisProcessId) return;
     setQuickSetupBusy(true);
@@ -456,82 +466,85 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
         />
       ) : (
         <div className="space-y-2">
-          {list.map((sch) => (
-            <button
-              key={sch.id}
-              type="button"
-              onClick={() => {
-                if (backendMode) {
-                  setSelectedId((current) => (current === sch.id ? null : sch.id));
-                  return;
-                }
-                navigate(`/schedulers/${sch.id}`);
-              }}
-              className={`surface w-full p-4 text-left flex items-center gap-3 hover:border-primary-300/70 cursor-pointer ${
-                backendMode && selectedId === sch.id ? 'border-primary-400 ring-1 ring-primary-200' : ''
-              }`}
-            >
-              <span className="icon-well">
-                <CalendarClock className="w-4 h-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="text-sm font-semibold text-foreground-900 truncate">{sch.name}</h4>
-                  <span className="chip-muted text-[10px] truncate max-w-[12rem]" title={sch.templateName}>
-                    Template: {sch.templateName}
-                  </span>
-                  {sch.processId && (
-                    <span
-                      className={`chip-muted text-[10px] truncate max-w-[14rem] ${
-                        isExtrovisProcess(sch.processId) ? 'text-emerald-800' : 'font-mono'
-                      }`}
-                      title={sch.processId}
-                    >
-                      {processLabel(sch.processId)}
-                    </span>
-                  )}
-                  {backendMode && sch.entityFilter && (
-                    <span className="chip-muted text-[10px]" title="Entity scope">
-                      Entity: {formatEntityFilterLabel(sch.entityFilter)}
-                    </span>
-                  )}
-                  <span
-                    className={
-                      sch.status === 'active'
-                        ? 'chip-success'
-                        : sch.status === 'paused'
-                          ? 'chip-warn'
-                          : 'chip-muted'
+          {list.map((sch) => {
+            const isOpen = Boolean(backendMode && selectedId === sch.id && selected);
+            return (
+              <div key={sch.id} className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (backendMode) {
+                      setSelectedId((current) => (current === sch.id ? null : sch.id));
+                      return;
                     }
-                  >
-                    {sch.status}
+                    navigate(`/schedulers/${sch.id}`);
+                  }}
+                  className={`surface w-full p-4 text-left flex items-center gap-3 hover:border-primary-300/70 cursor-pointer ${
+                    isOpen ? 'border-primary-400 ring-1 ring-primary-200' : ''
+                  }`}
+                >
+                  <span className="icon-well">
+                    <CalendarClock className="w-4 h-4" />
                   </span>
-                </div>
-                <p className="text-xs text-foreground-500 mt-0.5">
-                  {cadenceLabel(sch)} · {sch.recipients.length} recipients
-                  {sch.subject ? ` · Subject: ${sch.subject}` : ''}
-                  {backendMode && sch.fromEmail ? ` · from ${sch.fromEmail}` : ''}
-                  {backendMode && sch.userGroupFilter ? ` · Group: ${sch.userGroupFilter}` : ''}
-                  {backendMode && sch.websiteFilter ? ` · Website: ${sch.websiteFilter}` : ''}
-                </p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-semibold text-foreground-900 truncate">{sch.name}</h4>
+                      <span className="chip-muted text-[10px] truncate max-w-[12rem]" title={sch.templateName}>
+                        Template: {sch.templateName}
+                      </span>
+                      {sch.processId && (
+                        <span
+                          className={`chip-muted text-[10px] truncate max-w-[14rem] ${
+                            isExtrovisProcess(sch.processId) ? 'text-emerald-800' : 'font-mono'
+                          }`}
+                          title={sch.processId}
+                        >
+                          {processLabel(sch.processId)}
+                        </span>
+                      )}
+                      {backendMode && sch.entityFilter && (
+                        <span className="chip-muted text-[10px]" title="Entity scope">
+                          Entity: {formatEntityFilterLabel(sch.entityFilter)}
+                        </span>
+                      )}
+                      <span
+                        className={
+                          sch.status === 'active'
+                            ? 'chip-success'
+                            : sch.status === 'paused'
+                              ? 'chip-warn'
+                              : 'chip-muted'
+                        }
+                      >
+                        {sch.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-foreground-500 mt-0.5">
+                      {cadenceLabel(sch)} · {sch.recipients.length} recipients
+                      {sch.subject ? ` · Subject: ${sch.subject}` : ''}
+                      {backendMode && sch.fromEmail ? ` · from ${sch.fromEmail}` : ''}
+                      {backendMode && sch.userGroupFilter ? ` · Group: ${sch.userGroupFilter}` : ''}
+                      {backendMode && sch.websiteFilter ? ` · Website: ${sch.websiteFilter}` : ''}
+                    </p>
+                  </div>
+                </button>
+                {isOpen && selected ? (
+                  <div id={`schedule-editor-${sch.id}`} className="scroll-mt-3">
+                    <BackendScheduleEditor
+                      app={app}
+                      schedule={selected}
+                      onUpdated={() => setTick((n) => n + 1)}
+                      onDeleted={() => {
+                        setSelectedId(null);
+                        setTick((n) => n + 1);
+                      }}
+                      onClose={() => setSelectedId(null)}
+                    />
+                  </div>
+                ) : null}
               </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {backendMode && selected && (
-        <div className="mt-4">
-          <BackendScheduleEditor
-            app={app}
-            schedule={selected}
-            onUpdated={() => setTick((n) => n + 1)}
-            onDeleted={() => {
-              setSelectedId(null);
-              setTick((n) => n + 1);
-            }}
-            onClose={() => setSelectedId(null)}
-          />
+            );
+          })}
         </div>
       )}
 

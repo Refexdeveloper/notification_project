@@ -12,6 +12,10 @@ const {
   ensureBootstrapAdmin,
   normalizeRole,
   isAdminRole,
+  normalizeEmailAddress,
+  isValidEmailAddress,
+  countActiveAdmins,
+  loadPlatformUserById,
 } = require('../lib/platformUsers');
 
 const router = express.Router();
@@ -178,16 +182,37 @@ router.patch('/:userId', async (req, res) => {
   try {
     await client.query('BEGIN');
     await ensurePasswordColumn(client);
-    const { rows } = await client.query(
-      `SELECT admin_user_id FROM engagement_reporting.admin_user WHERE admin_user_id = $1::uuid`,
-      [userId],
-    );
-    if (!rows.length) {
+    const existing = await loadPlatformUserById(userId, client);
+    if (!existing) {
       await client.query('ROLLBACK');
       return fail(res, req.correlationId, 'USER_NOT_FOUND', 'Platform user not found', 404);
     }
 
-    if (body.display_name != null || body.is_active != null || body.password) {
+    const nextEmail = body.email != null ? normalizeEmailAddress(body.email) : '';
+    if (body.email != null) {
+      if (!isValidEmailAddress(nextEmail)) {
+        await client.query('ROLLBACK');
+        return fail(res, req.correlationId, 'VALIDATION_FAILED', 'A valid email address is required', 400);
+      }
+      const clash = await client.query(
+        `SELECT admin_user_id::text AS id
+         FROM engagement_reporting.admin_user
+         WHERE lower(email::text) = lower($1) AND admin_user_id <> $2::uuid
+         LIMIT 1`,
+        [nextEmail, userId],
+      );
+      if (clash.rows.length) {
+        await client.query('ROLLBACK');
+        return fail(res, req.correlationId, 'USER_EXISTS', 'Another user already uses this email', 409);
+      }
+    }
+
+    if (body.is_active === false && isAdminRole(existing.role) && (await countActiveAdmins(client)) <= 1) {
+      await client.query('ROLLBACK');
+      return fail(res, req.correlationId, 'LAST_ADMIN', 'Cannot deactivate the last Admin account', 400);
+    }
+
+    if (body.display_name != null || body.is_active != null || body.password || body.email != null) {
       const passwordHash =
         body.password != null && String(body.password).length > 0
           ? hashPassword(String(body.password))
@@ -196,17 +221,23 @@ router.patch('/:userId', async (req, res) => {
         await client.query('ROLLBACK');
         return fail(res, req.correlationId, 'VALIDATION_FAILED', 'password must be at least 8 characters', 400);
       }
+      const nextIdentity =
+        body.email != null && existing.identity_subject === existing.email ? nextEmail : existing.identity_subject;
       await client.query(
         `UPDATE engagement_reporting.admin_user
          SET display_name = COALESCE($2, display_name),
              is_active = COALESCE($3, is_active),
-             password_hash = COALESCE($4, password_hash)
+             password_hash = COALESCE($4, password_hash),
+             email = COALESCE($5, email),
+             identity_subject = COALESCE($6, identity_subject)
          WHERE admin_user_id = $1::uuid`,
         [
           userId,
           body.display_name != null ? String(body.display_name).trim() : null,
           body.is_active != null ? Boolean(body.is_active) : null,
           passwordHash,
+          body.email != null ? nextEmail : null,
+          body.email != null ? nextIdentity : null,
         ],
       );
     }
@@ -266,17 +297,50 @@ router.delete('/:userId', async (req, res) => {
     return fail(res, req.correlationId, 'DATABASE_NOT_CONFIGURED', 'PostgreSQL required', 503);
   }
 
+  const client = await getPool().connect();
   try {
-    const { rowCount } = await getPool().query(
-      `UPDATE engagement_reporting.admin_user SET is_active = false WHERE admin_user_id = $1::uuid`,
+    await client.query('BEGIN');
+    const existing = await loadPlatformUserById(req.params.userId, client);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return fail(res, req.correlationId, 'USER_NOT_FOUND', 'Platform user not found', 404);
+    }
+    if (session.admin_user_id && session.admin_user_id === existing.id) {
+      await client.query('ROLLBACK');
+      return fail(res, req.correlationId, 'SELF_DELETE', 'You cannot delete your own signed-in account', 400);
+    }
+    if (session.email && String(session.email).toLowerCase() === String(existing.email).toLowerCase()) {
+      await client.query('ROLLBACK');
+      return fail(res, req.correlationId, 'SELF_DELETE', 'You cannot delete your own signed-in account', 400);
+    }
+    if (isAdminRole(existing.role) && (await countActiveAdmins(client)) <= 1) {
+      await client.query('ROLLBACK');
+      return fail(res, req.correlationId, 'LAST_ADMIN', 'Cannot delete the last Admin account', 400);
+    }
+    await client.query(`DELETE FROM engagement_reporting.admin_user_role WHERE admin_user_id = $1::uuid`, [
+      req.params.userId,
+    ]);
+    const { rowCount } = await client.query(
+      `DELETE FROM engagement_reporting.admin_user WHERE admin_user_id = $1::uuid`,
       [req.params.userId],
     );
     if (!rowCount) {
+      await client.query('ROLLBACK');
       return fail(res, req.correlationId, 'USER_NOT_FOUND', 'Platform user not found', 404);
     }
+    await client.query(
+      `INSERT INTO engagement_reporting.audit_event
+         (actor_subject, action, resource_type, resource_id, correlation_id, evidence)
+       VALUES ($1, 'DELETE_PLATFORM_USER', 'admin_user', $2, $3, $4::jsonb)`,
+      [session.subject, req.params.userId, req.correlationId, JSON.stringify({ email: existing.email })],
+    );
+    await client.query('COMMIT');
     return ok(res, req.correlationId, { deleted: true, id: req.params.userId });
   } catch (err) {
+    await client.query('ROLLBACK');
     return fail(res, req.correlationId, 'PLATFORM_USER_DELETE_FAILED', err.message, 500, true);
+  } finally {
+    client.release();
   }
 });
 

@@ -1,0 +1,19 @@
+{
+  "name": "@refex/comment-mail-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Send Help Desk comment emails via existing supportone SMTP",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "nodemailer": "^6.10.1"
+  }
+}

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { apiFetch, clearAuthSession, setAuthSession } from '@/services/api';
+import { apiFetch, clearAuthSession, getAccessToken, setAuthSession } from '@/services/api';
 import { apiV1Fetch, isBackendApiMode, type SessionContext } from '@/services/backendApi';
+import { readEmbedFromSearch } from '@/lib/embedMode';
 
 interface AuthUser {
   id?: number | string;
@@ -16,6 +17,7 @@ interface AuthContextType {
   sessionLoading: boolean;
   isAdmin: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithToken: (accessToken: string) => Promise<{ success: boolean; error?: string }>;
   loginWithSession: () => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
 }
@@ -46,13 +48,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authMode = isBackendApiMode() ? 'backend' : 'legacy';
 
   const loginWithSession = useCallback(async () => {
+    const token = getAccessToken();
+    if (!token || token === 'backend-session') {
+      return { success: false, error: 'Sign in required' };
+    }
     const res = await apiV1Fetch<SessionContext>('/auth/session');
     if (!res.ok || !res.data) {
       return { success: false, error: res.error || 'Session unavailable' };
     }
     const authUser = applySessionUser(res.data);
     setAuthSession({
-      accessToken: 'backend-session',
+      accessToken: token,
       user: authUser,
     });
     setUser(authUser);
@@ -60,15 +66,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (readEmbedFromSearch(window.location.search)) {
+      setSessionLoading(false);
+      return;
+    }
     if (!isBackendApiMode()) {
       setSessionLoading(false);
       return;
     }
     let cancelled = false;
     (async () => {
-      // Auto-restore session (IAP / stub) — no password gate for Admin UI.
+      const token = getAccessToken();
+      if (!token || token === 'backend-session') {
+        if (token === 'backend-session') clearAuthSession();
+        if (!cancelled) {
+          setUser(null);
+          setSessionLoading(false);
+        }
+        return;
+      }
       const result = await loginWithSession();
-      if (!cancelled && !result.success && !getStoredUser()) {
+      if (!cancelled && !result.success) {
+        clearAuthSession();
         setUser(null);
       }
       if (!cancelled) setSessionLoading(false);
@@ -81,7 +100,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       if (isBackendApiMode()) {
-        return loginWithSession();
+        const res = await apiV1Fetch<{
+          access_token: string;
+          user: { id: string; email: string; display_name: string; role: string };
+        }>('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok || !res.data?.access_token || !res.data.user) {
+          return { success: false, error: res.error || 'Invalid username or password' };
+        }
+        const authUser: AuthUser = {
+          id: res.data.user.id,
+          name: res.data.user.display_name,
+          email: res.data.user.email,
+          role: res.data.user.role,
+        };
+        setAuthSession({
+          accessToken: res.data.access_token,
+          user: authUser,
+        });
+        setUser(authUser);
+        return { success: true };
       }
 
       const res = await apiFetch<{
@@ -114,8 +154,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(authUser);
       return { success: true };
     },
-    [loginWithSession],
+    [],
   );
+
+  const loginWithToken = useCallback(async (accessToken: string) => {
+    if (!accessToken || accessToken === 'backend-session') {
+      return { success: false, error: 'Sign in required' };
+    }
+    setAuthSession({
+      accessToken,
+      user: { name: '', email: '', role: '' },
+    });
+    return loginWithSession();
+  }, [loginWithSession]);
 
   const logout = useCallback(async () => {
     if (isBackendApiMode()) {
@@ -138,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionLoading,
         isAdmin: String(user?.role || '').toUpperCase() === 'ADMIN',
         login,
+        loginWithToken,
         loginWithSession,
         logout,
       }}

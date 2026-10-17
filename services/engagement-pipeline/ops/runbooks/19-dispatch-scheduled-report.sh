@@ -355,16 +355,13 @@ export SOLAR_APP_ID="${SOLAR_APP_ID:-Solar_Site_Expense_Governance_Syst_A00}"
 export SOLAR_PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
 export ITSM_APP_ID="${ITSM_APP_ID:-IT_Service_Management_A00}"
 
-# Entity scope comes from the schedule. ITSM still defaults classic process → Refex.
+# Entity scope comes from the schedule.
+# Live_IT_Service_Request_A00 always counts the whole process (no Entity=Refex).
 # Travel defaults to Venwind (one email per entity; all three app processes are combined).
 ENTITY_FILTER="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.entity_filter // empty')"
 if [[ "${APPLICATION_ID}" == "IT_Service_Management_A00" ]]; then
-  if [[ -z "${ENTITY_FILTER}" ]]; then
-    if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
-      ENTITY_FILTER=""
-    else
-      ENTITY_FILTER="Refex"
-    fi
+  if [[ "${ITSM_PROCESS_ID}" == "Live_IT_Service_Request_A00" ]]; then
+    ENTITY_FILTER=""
   fi
   if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
     ENTITY_FILTER=""

@@ -15,7 +15,7 @@ describe('processLabels travel usage', () => {
     expect(defaultEntityFilterForProcess('Travel_Management_A02')).toBe('Venwind');
     expect(defaultEntityFilterForProcess('Advance_Payment_Request_Process_A01')).toBe('Venwind');
     expect(defaultEntityFilterForProcess('Expense_Management_A03')).toBe('Venwind');
-    expect(defaultEntityFilterForProcess('Live_IT_Service_Request_A00')).toBe('Refex');
+    expect(defaultEntityFilterForProcess('Live_IT_Service_Request_A00')).toBe('all');
   });
 
   it('detects the Travel Management app without matching Expense EMS', () => {

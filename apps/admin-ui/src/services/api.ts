@@ -9,7 +9,7 @@ export function getAccessToken(): string | null {
 export function setAuthSession(tokens: {
   accessToken: string;
   refreshToken?: string;
-  user: { name: string; email: string; role: string; id?: number };
+  user: { name: string; email: string; role: string; id?: number | string };
 }) {
   localStorage.setItem(TOKEN_KEY, tokens.accessToken);
   if (tokens.refreshToken) localStorage.setItem(REFRESH_KEY, tokens.refreshToken);

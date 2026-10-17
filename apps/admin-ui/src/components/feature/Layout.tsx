@@ -7,6 +7,7 @@ import PageMotion from '@/components/ui/PageMotion';
 import { useAuth } from '@/hooks/AuthContext';
 import { duration, easeOutExpo } from '@/lib/motion';
 import { readEmbedFromSearch, resolveEmbedReturnUrl } from '@/lib/embedMode';
+import { isPublicPath } from '@/lib/publicPaths';
 
 interface BreadcrumbItem {
   label: string;
@@ -97,15 +98,16 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
   }, [isMobile]);
 
   useEffect(() => {
-    if (!isAuthenticated && location.pathname !== '/login') {
+    if (embed) return;
+    if (!isAuthenticated && !isPublicPath(location.pathname)) {
       navigate('/login', { replace: true });
     }
-  }, [isAuthenticated, navigate, location.pathname]);
+  }, [embed, isAuthenticated, navigate, location.pathname]);
 
   // Incremental sync runs on Cloud Scheduler (runbook 36) — do not trigger from the browser;
   // it competes with dashboard queries for DB pool connections and Kissflow API quota.
 
-  if (!isAuthenticated) return null;
+  if (!embed && !isAuthenticated) return null;
 
   const desktopMargin = embed ? 0 : sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
 

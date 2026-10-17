@@ -52,8 +52,8 @@ export const APP_DETAIL_TABS: AppDetailTab[] = [
 ];
 
 /** Sidebar routes hidden in backend-api mode (prototype / localStorage only, or Kissflow-owned). */
-/** Keep Users (User management) visible in backend mode for CEO/CTO workload view. */
-const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings', 'platform-users']);
+/** Keep Users + Platform users visible in backend mode. Login will use these portal accounts. */
+const PROTOTYPE_NAV_IDS = new Set(['templates', 'schedulers', 'settings']);
 
 export function applicationDetailTabs(): AppDetailTab[] {
   if (!isBackendApiMode()) return APP_DETAIL_TABS;

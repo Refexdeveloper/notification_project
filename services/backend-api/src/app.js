@@ -23,6 +23,7 @@ const fieldsRoutes = require('./routes/fields');
 const platformUsersRoutes = require('./routes/platformUsers');
 const opsRoutes = require('./routes/ops');
 const settingsSmtpRoutes = require('./routes/settingsSmtp');
+const databaseRoutes = require('./routes/database');
 
 function createApp() {
   const app = express();
@@ -46,6 +47,7 @@ function createApp() {
   api.use('/applications/:applicationId/history', historyRoutes);
   api.use('/history', deliveryHistoryRoutes);
   api.use('/dashboard', dashboardRoutes);
+  api.use('/database', databaseRoutes);
 
   app.use('/api/v1', api);
 

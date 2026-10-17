@@ -59,7 +59,7 @@ import {
   solarRowMatchesPack,
 } from '@/lib/solarCategory';
 import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
-import { itsmSourceFromFilteredRecords, recordsHaveSource } from '@/lib/itsmSourceBreakdown';
+import { itsmSourceFromFilteredRecords } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
 import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel, personDedupeKey } from '@/lib/personName';
 import {
@@ -478,7 +478,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AppDashboardData | null>(null);
   const [recordInventory, setRecordInventory] = useState<AppRecordRow[]>([]);
-  const [inventoryLoading, setInventoryLoading] = useState(true);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
   const [recordsColumns, setRecordsColumns] = useState<AppRecordColumn[]>([]);
   const [recordsDataSource, setRecordsDataSource] = useState<string | undefined>();
   const inventoryReadyRef = useRef(false);
@@ -634,10 +634,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     [app, appId],
   );
 
-  const sourceInventoryRefreshRef = useRef(false);
-
   useEffect(() => {
-    sourceInventoryRefreshRef.current = false;
     inventoryReadyRef.current = false;
     inventoryGenRef.current += 1;
     setRecordInventory([]);
@@ -695,12 +692,6 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     || /itsm|service_management/i.test(appId || ''),
   );
 
-  useEffect(() => {
-    if (!itsmCompanyMode || !recordInventory.length || recordsHaveSource(recordInventory)) return;
-    if (sourceInventoryRefreshRef.current) return;
-    sourceInventoryRefreshRef.current = true;
-    void loadInventory(true, { silent: true });
-  }, [itsmCompanyMode, recordInventory, loadInventory]);
   const travelMode = Boolean(
     data?.report_layout?.kind === 'travel'
     || /travel|expense_and_travel/i.test(appId || ''),
@@ -1246,7 +1237,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     </>
   );
 
-  const showDashboardLoader = Boolean((loading && !data) || inventoryLoading);
+  const showDashboardLoader = Boolean(loading && !data);
 
   return (
     <div className={`relative rounded-3xl p-1 ${NE_DASH_CLASS}${travelMode || isEmsLayout || isSolarLayout ? ' ne-dash-finance' : ''}`}>

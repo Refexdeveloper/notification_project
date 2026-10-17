@@ -12,8 +12,9 @@ export interface LoginFormProps {
   onPasswordChange: (value: string) => void;
   onTogglePassword: () => void;
   onSubmit: (e: FormEvent) => void;
-  /** Optional Google SSO UI — does not change auth backend */
+  onForgotPassword: () => void;
   onGoogleClick?: () => void;
+  googleLoading?: boolean;
 }
 
 export default function LoginForm({
@@ -26,7 +27,9 @@ export default function LoginForm({
   onPasswordChange,
   onTogglePassword,
   onSubmit,
+  onForgotPassword,
   onGoogleClick,
+  googleLoading = false,
 }: LoginFormProps) {
   const reduce = useReducedMotion();
   const [emailFocused, setEmailFocused] = useState(false);
@@ -97,18 +100,18 @@ export default function LoginForm({
                       : 'top-1/2 -translate-y-1/2 text-[15px] text-[#94A3B8]'
                   }`}
                 >
-                  Email address
+                  Username or email
                 </label>
                 <input
                   ref={emailRef}
                   id="login-email"
-                  type="email"
-                  name="email"
+                  type="text"
+                  name="username"
                   value={email}
                   onChange={(e) => onEmailChange(e.target.value)}
                   onFocus={() => setEmailFocused(true)}
                   onBlur={() => setEmailFocused(false)}
-                  autoComplete="email"
+                  autoComplete="username"
                   aria-invalid={!!error && !email.trim()}
                   aria-describedby={error ? 'login-error' : undefined}
                   className="w-full bg-transparent border-none outline-none text-[15px] text-[#1E293B] pt-2"
@@ -185,9 +188,7 @@ export default function LoginForm({
             <button
               type="button"
               className="text-sm font-semibold text-[#0F6CBD] hover:text-[#0A5A9E] cursor-pointer"
-              onClick={() =>
-                window.alert('Password reset is managed by your workspace admin.')
-              }
+              onClick={onForgotPassword}
             >
               Forgot password?
             </button>
@@ -240,10 +241,11 @@ export default function LoginForm({
           whileHover={reduce ? undefined : { backgroundColor: '#F8FBFF' }}
           whileTap={reduce ? undefined : { scale: 0.98 }}
           onClick={onGoogleClick}
-          className="w-full h-11 rounded-2xl border border-[#E2E8F0] bg-white text-[15px] font-semibold text-[#334155] inline-flex items-center justify-center gap-2.5 cursor-pointer hover:bg-[#F8FBFF] transition-colors"
+          disabled={googleLoading}
+          className="w-full h-11 rounded-2xl border border-[#E2E8F0] bg-white text-[15px] font-semibold text-[#334155] inline-flex items-center justify-center gap-2.5 cursor-pointer hover:bg-[#F8FBFF] transition-colors disabled:opacity-60"
         >
           <GoogleIcon />
-          Continue with Google
+          {googleLoading ? 'Opening Google…' : 'Continue with Google'}
         </motion.button>
 
         <p className="mt-5 text-center text-xs text-[#64748B]">

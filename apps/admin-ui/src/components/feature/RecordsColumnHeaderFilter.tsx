@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Filter } from 'lucide-react';
 
@@ -116,7 +116,7 @@ function FilterDropdownPanel({
     <div
       ref={panelRef}
       style={style}
-      className="flex max-h-64 flex-col overflow-y-auto overflow-x-hidden whitespace-normal rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
+      className="flex max-h-72 flex-col overflow-hidden whitespace-normal rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -128,58 +128,90 @@ function FilterDropdownPanel({
 
 export function RecordsColumnHeaderFilter({ label, value = '', options, onChange }: ValueFilterProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   const active = Boolean(value && value !== 'all');
   const { rootRef, panelRef } = useDismiss(open, () => setOpen(false));
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = options || [];
+    if (!q) return list.slice(0, 120);
+    return list.filter((opt) => String(opt).toLowerCase().includes(q)).slice(0, 120);
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      return;
+    }
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 30);
+    return () => window.clearTimeout(timer);
+  }, [open]);
 
   return (
     <div ref={rootRef} className="relative z-20 inline-flex max-w-full items-center gap-1">
       <span className="cursor-pointer" onClick={() => setOpen((v) => !v)}>{label}</span>
       <FilterButton label={label} active={active} open={open} onToggle={() => setOpen((v) => !v)} />
       <FilterDropdownPanel open={open} rootRef={rootRef} panelRef={panelRef}>
-        <button
-          type="button"
-          className={`mb-0.5 block w-full rounded-md px-2 py-1.5 text-left text-[11px] font-semibold ${
-            !active ? 'bg-slate-50 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
-          }`}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            onChange('');
-            setOpen(false);
+        <input
+          ref={searchRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Type a name…"
+          autoComplete="off"
+          className="mb-1.5 w-full shrink-0 rounded-md border border-slate-200 px-2 py-1.5 text-[11px] text-slate-800 outline-none focus:border-[#2B5AED]"
+          onMouseDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') e.stopPropagation();
           }}
-        >
-          All
-        </button>
-        {options.length ? options.slice(0, 120).map((opt) => (
+        />
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
           <button
-            key={opt}
             type="button"
-            className={`block w-full rounded-md px-2 py-1.5 text-left text-[11px] ${
-              value === opt ? 'bg-[#EEF5FF] font-semibold text-[#2B5AED]' : 'text-slate-700 hover:bg-slate-50'
+            className={`mb-0.5 block w-full rounded-md px-2 py-1.5 text-left text-[11px] font-semibold ${
+              !active ? 'bg-slate-50 text-slate-800' : 'text-slate-600 hover:bg-slate-50'
             }`}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onChange(opt);
-              setOpen(false);
-            }}
-          >
-            {opt}
-          </button>
-        )) : (
-          <p className="px-2 py-1 text-[11px] text-slate-400">No values</p>
-        )}
-        {active ? (
-          <button
-            type="button"
-            className="mt-1 block w-full rounded-md px-2 py-1.5 text-left text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
             onMouseDown={(e) => {
               e.preventDefault();
               onChange('');
               setOpen(false);
             }}
           >
-            Clear filter
+            All
           </button>
-        ) : null}
+          {filteredOptions.length ? filteredOptions.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              className={`block w-full rounded-md px-2 py-1.5 text-left text-[11px] ${
+                value === opt ? 'bg-[#EEF5FF] font-semibold text-[#2B5AED]' : 'text-slate-700 hover:bg-slate-50'
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(opt);
+                setOpen(false);
+              }}
+            >
+              {opt}
+            </button>
+          )) : (
+            <p className="px-2 py-1 text-[11px] text-slate-400">{options.length ? 'No matching names' : 'No values'}</p>
+          )}
+          {active ? (
+            <button
+              type="button"
+              className="mt-1 block w-full rounded-md px-2 py-1.5 text-left text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange('');
+                setOpen(false);
+              }}
+            >
+              Clear filter
+            </button>
+          ) : null}
+        </div>
       </FilterDropdownPanel>
     </div>
   );

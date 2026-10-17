@@ -61,14 +61,12 @@ ITSM_PROCESS_ID="${ITSM_PROCESS_ID:-${PROCESS_ID:-Live_IT_Service_Request_A00}}"
 APPLICATION_ID="${APPLICATION_ID:-${ITSM_APP_ID}}"
 
 # Entity scope for ticket metrics.
-# Empty / "all" / "*" = every ticket on this process (used for Extrovis).
-# Default for the classic Refex process remains Entity=Refex.
-if [[ -z "${ENTITY_FILTER+x}" ]]; then
-  if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
-    ENTITY_FILTER=""
-  else
-    ENTITY_FILTER="Refex"
-  fi
+# Empty / "all" / "*" = every ticket on this process.
+# Live_IT_Service_Request_A00 always counts the whole process (no Entity=Refex).
+if [[ "${ITSM_PROCESS_ID}" == "Live_IT_Service_Request_A00" ]]; then
+  ENTITY_FILTER=""
+elif [[ -z "${ENTITY_FILTER+x}" ]]; then
+  ENTITY_FILTER=""
 fi
 if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
   ENTITY_FILTER=""
@@ -388,6 +386,68 @@ fi
 # Build user rows from ticket activity first, then attach Kissflow user profile when present.
 # Extrovis (and sparse snapshots) can have assignees/creators that are not in \"user\" yet —
 # still show them so the table is not empty when tickets exist.
+# Extrovis MIS table = full app-role roster ∪ ticket people (zeros allowed).
+if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+  USER_TABLE_ROSTER_CTE=",
+process_roles AS (
+  SELECT DISTINCT ia.principal_id AS role_id
+  FROM engagement_reporting.item_assignment ia
+  JOIN engagement_reporting.item i
+    ON i.instance_id = ia.instance_id
+   AND i.snapshot_at = ia.snapshot_at
+   AND i.snapshot_run_id = ia.snapshot_run_id
+  WHERE ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+    AND ia.principal_type = 'APP_ROLE'
+    AND ${ENTITY_SCOPE_SQL}
+),
+named_role_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN engagement_reporting.principal p
+    ON p.environment = pu.environment
+   AND p.application_id = pu.application_id
+   AND p.principal_id = pu.principal_id
+   AND p.principal_type = pu.principal_type
+   AND p.is_current = true
+  WHERE pu.application_id = '${ITSM_APP_ID}'
+    AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+    AND ${ROLE_NAME_SCOPE_SQL}
+),
+process_role_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN process_roles pr ON pr.role_id = pu.principal_id
+  WHERE pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+),
+app_members AS (
+  SELECT user_id FROM named_role_members
+  UNION
+  SELECT user_id FROM process_role_members
+),
+user_roster AS (
+  SELECT user_id FROM app_members
+  UNION
+  SELECT user_id FROM activity
+)"
+  USER_TABLE_FROM_SQL="user_roster r
+  LEFT JOIN activity a ON a.user_id = r.user_id
+  LEFT JOIN sla_by_user s ON s.user_id = r.user_id"
+  USER_TABLE_ID_SQL="r.user_id"
+  USER_TABLE_ACTIVITY_FILTER_SQL=""
+else
+  USER_TABLE_ROSTER_CTE=""
+  USER_TABLE_FROM_SQL="activity a
+  LEFT JOIN sla_by_user s ON s.user_id = a.user_id"
+  USER_TABLE_ID_SQL="a.user_id"
+  USER_TABLE_ACTIVITY_FILTER_SQL="AND (a.open_count > 0 OR a.closed_count > 0)"
+fi
+
 USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
@@ -525,21 +585,20 @@ sla_by_user AS (
     GROUP BY 1
   ) breached
   GROUP BY user_id
-)
+)${USER_TABLE_ROSTER_CTE}
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
     resolved.user_name,
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(u.ever_logged_in, false) AS ever_logged_in,
-    a.open_count,
-    a.closed_count,
+    COALESCE(a.open_count, 0) AS open_count,
+    COALESCE(a.closed_count, 0) AS closed_count,
     COALESCE(s.sla_breached_count, 0) AS sla_breached_count
-  FROM activity a
-  LEFT JOIN sla_by_user s ON s.user_id = a.user_id
+  FROM ${USER_TABLE_FROM_SQL}
   LEFT JOIN LATERAL (
     SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
     FROM engagement_reporting.\"user\" u0
-    WHERE u0.user_id = a.user_id
+    WHERE u0.user_id = ${USER_TABLE_ID_SQL}
       AND u0.environment = 'production'
     ORDER BY
       ${REPORT_BEST_USER_ORDER_SQL}
@@ -548,12 +607,11 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   CROSS JOIN LATERAL (
     SELECT NULLIF(trim(COALESCE(u.user_name, a.display_name)), '') AS user_name
   ) resolved
-  WHERE (a.open_count > 0 OR a.closed_count > 0)
-    -- Drop Kissflow id leftovers (e.g. UsDOsv9zuEDL) and blank names
-    AND resolved.user_name IS NOT NULL
-    AND resolved.user_name <> a.user_id
+  WHERE resolved.user_name IS NOT NULL
+    AND resolved.user_name <> ${USER_TABLE_ID_SQL}
     AND resolved.user_name !~ '^[Uu][Ss][A-Za-z0-9_-]{6,}$'
-  ORDER BY a.open_count DESC, a.closed_count DESC
+    ${USER_TABLE_ACTIVITY_FILTER_SQL}
+  ORDER BY COALESCE(a.open_count, 0) DESC, COALESCE(a.closed_count, 0) DESC, resolved.user_name
 ) t;
 " | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
 
@@ -607,6 +665,11 @@ MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
 ' <<< "${USERS_JSON}")"
 TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
 SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
+if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+  # Card = full Extrovis app-role roster (same as MIS user details), not ticket-only rows.
+  TOTAL_USERS="$(jq -r '.total_users // 0' <<< "${SUMMARY_JSON}")"
+  SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${SUMMARY_JSON}")"
+fi
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${SUMMARY_JSON}")"
 SIGNIN_PCT="$(jq '
   if (.total // 0) <= 0 then 0 else ((.signed_in_today // 0) * 100 / .total) | floor end
@@ -827,7 +890,7 @@ jq -n \
     if [[ -n "${ENTITY_FILTER}" ]]; then
       printf 'Scoped to process %s · Entity = %s. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}" "${ENTITY_FILTER}"
     else
-      printf 'Scoped to process %s (all entities on this process — Extrovis/non-Refex). SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}"
+      printf 'Scoped to process %s (all tickets on this process). SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}"
     fi
   )" \
   '{
