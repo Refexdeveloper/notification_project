@@ -712,6 +712,7 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load ITSM report template HTML."
+PENDING_DETAIL_HTML=""
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 # Extrovis reports omit User Sign-in Overview (even if an older published template still has it).
@@ -823,6 +824,7 @@ jq -n \
   --arg SourceBreakdownHtml "${SOURCE_BREAKDOWN_HTML}" \
   --arg OpenedTodaySourceHtml "${OPENED_TODAY_SOURCE_HTML}" \
   --arg UserTableHtml "${ROWS_HTML}" \
+  --arg PendingDetailHtml "${PENDING_DETAIL_HTML}" \
   --arg ReportBody "$(
     if [[ -n "${ENTITY_FILTER}" ]]; then
       printf 'Scoped to process %s · Entity = %s. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}" "${ENTITY_FILTER}"
@@ -858,6 +860,7 @@ jq -n \
     SourceBreakdownHtml: $SourceBreakdownHtml,
     OpenedTodaySourceHtml: $OpenedTodaySourceHtml,
     UserTableHtml: $UserTableHtml,
+    PendingDetailHtml: $PendingDetailHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 

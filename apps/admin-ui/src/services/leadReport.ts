@@ -48,6 +48,12 @@ export const LEAD_TRACKER_SALES_GROUPS = [
     slug: 'venwind',
     starterId: 'lead-venwind',
   },
+  {
+    groupName: 'RMC',
+    websiteFilter: 'RMC',
+    slug: 'rmc',
+    starterId: 'lead-rmc',
+  },
 ] as const;
 
 export function resolveLeadCompany(

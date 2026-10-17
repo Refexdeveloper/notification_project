@@ -44,13 +44,17 @@ const outputFile = path.join(templatesDir, `lead-tracker-${groupSlug}-${timestam
 const latestFile = path.join(templatesDir, `lead-tracker-${groupSlug}-latest.html`);
 
 const leadServicePath = path.join(repoRoot, 'archive/prototype-mysql-api/services/leadReportService.js');
-const { buildLeadTrackerReport } = require(leadServicePath);
+const { buildLeadTrackerReport, buildRmcLeadReport } = require(leadServicePath);
+const { isRmcLeadSchedule } = require('./rmc-lead-scope');
 
 async function main() {
   fs.mkdirSync(templatesDir, { recursive: true });
   fs.mkdirSync(auditDir, { recursive: true });
 
-  const built = await buildLeadTrackerReport({ groupName, websiteFilter });
+  const rmcLead = isRmcLeadSchedule(websiteFilter, process.env.ENTITY_FILTER || '');
+  const built = rmcLead
+    ? await buildRmcLeadReport()
+    : await buildLeadTrackerReport({ groupName, websiteFilter });
   fs.writeFileSync(outputFile, built.html, 'utf8');
   fs.copyFileSync(outputFile, latestFile);
 

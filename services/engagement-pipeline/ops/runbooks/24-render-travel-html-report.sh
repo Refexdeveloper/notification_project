@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Travel Management usage report — one entity per email.
 # Unions Advance Payment + Expense Management + Travel Management from the
-# Travel app, then filters Refex or Venwind. Does not change ITSM / PM / Solar.
+# Travel app, then filters Refex, Venwind, or entity code RIL_RMC.
+# RIL_RMC records are excluded from the Refex and Venwind emails.
 set -Eeuo pipefail
 
 REPO_ROOT="${REPO_ROOT_OVERRIDE:-/app}"
@@ -43,6 +44,7 @@ if [[ "${ENTITY_FILTER_NORM}" == "all" || "${ENTITY_FILTER_NORM}" == "*" || "${E
 fi
 case "${ENTITY_FILTER_NORM}" in
   refex) ENTITY_FILTER="Refex"; ENTITY_FILTER_NORM="refex" ;;
+  ril_rmc) ENTITY_FILTER="RIL_RMC"; ENTITY_FILTER_NORM="ril_rmc" ;;
   *) ENTITY_FILTER="Venwind"; ENTITY_FILTER_NORM="venwind" ;;
 esac
 
@@ -144,6 +146,10 @@ travel_entity_filter_sql() {
     venwind)
       printf "(%s LIKE '%%venwind%%')" "${key}"
       ;;
+    ril_rmc)
+      # Name bucket is open; the entity-code predicate keeps this email exclusive.
+      printf 'true'
+      ;;
     *)
       printf "(%s LIKE '%%venwind%%')" "${key}"
       ;;
@@ -204,9 +210,18 @@ travel_user_sql() {
 }
 
 # Latest completed snapshot per process, then union items (entity filter matches dashboard entity_key rules).
+travel_entity_code_sql() {
+  local mode="exclude"
+  case "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" in
+    ril_rmc) mode="ril_rmc" ;;
+  esac
+  report_entity_code_predicate i "${mode}"
+}
+
 travel_classified_cte() {
-  local entity_filter_sql
+  local entity_filter_sql entity_code_sql
   entity_filter_sql="$(travel_entity_filter_sql "${ENTITY_FILTER}")"
+  entity_code_sql="$(travel_entity_code_sql)"
   cat <<SQL
 latest AS (
   SELECT DISTINCT ON (sr.process_id)
@@ -300,6 +315,7 @@ classified AS (
     ON i.snapshot_run_id = l.snapshot_run_id
    AND i.process_id = l.process_id
   WHERE NOT ($(travel_is_draft_sql))
+    AND (${entity_code_sql})
 ),
 filtered AS (
   SELECT * FROM classified
@@ -651,6 +667,12 @@ SLA_BREACHED_CLOSED="$(jq -r '.sla_breached_closed' <<< "${USAGE_PAYLOAD}")"
 
 ENTITY_SCOPE="${ENTITY_FILTER} travel requests only"
 ENTITY_NAME="${ENTITY_FILTER}"
+ENTITY_CODE_LABEL=""
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+  ENTITY_SCOPE=""
+  ENTITY_NAME="Travel"
+  ENTITY_CODE_LABEL=""
+fi
 GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
 
 log "Rendering HTML from published template (PostgreSQL or seed fallback)"
@@ -664,6 +686,7 @@ report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-engagement-template.html"
 case "${ENTITY_FILTER:-}" in
+  RIL_RMC|ril_rmc) SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-ril-rmc-template.html" ;;
   [Rr]efex*) SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-refex-template.html" ;;
   [Vv]enwind*) SEED_TEMPLATE="${REPO_ROOT}/db/seeds/travel-venwind-template.html" ;;
 esac
@@ -680,10 +703,17 @@ if [[ -f "${SEED_TEMPLATE}" ]]; then
     cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
   fi
 fi
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" && -f "${SEED_TEMPLATE}" ]]; then
+  log "RIL_RMC Travel schedule — using entity template ${SEED_TEMPLATE}"
+  cp "${SEED_TEMPLATE}" "${TEMPLATE_SRC}"
+fi
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
   REPORT_TITLE="${SUBJECT:-${ENTITY_NAME} Travel Management Report}"
+fi
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+  REPORT_TITLE="RMC - Travel Management - Report"
 fi
 
 FILTER_NOTES=()
@@ -701,7 +731,11 @@ if [[ ${#FILTER_NOTES[@]} -gt 0 ]]; then
   FILTER_NOTE=" Filters applied: $(IFS=', '; echo "${FILTER_NOTES[*]}")."
 fi
 
-REPORT_BODY="${ENTITY_NAME} only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.${FILTER_NOTE}"
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+  REPORT_BODY="${FILTER_NOTE}"
+else
+  REPORT_BODY="${ENTITY_NAME} only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.${FILTER_NOTE}"
+fi
 
 TRAVEL_VARS_TMP="$(mktemp -d)"
 printf '%s' "${USAGE_PAYLOAD}" > "${TRAVEL_VARS_TMP}/usage.json"
@@ -712,14 +746,62 @@ export TRAVEL_META_REPORT_TITLE="${REPORT_TITLE}"
 export TRAVEL_META_REPORT_DATE="${GENERATED_AT_DISPLAY}"
 export TRAVEL_META_ENTITY_SCOPE="${ENTITY_SCOPE}"
 export TRAVEL_META_ENTITY_NAME="${ENTITY_NAME}"
+export TRAVEL_META_ENTITY_CODE="${ENTITY_CODE_LABEL:-}"
 export TRAVEL_META_REPORT_BODY="${REPORT_BODY}"
+TRAVEL_PENDING_JSON='[]'
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+TRAVEL_PENDING_JSON="$(echo "
+\pset tuples_only on
+\pset format unaligned
+WITH $(travel_classified_cte)
+SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT
+    COALESCE(NULLIF(trim(requester_name), ''), '—') AS raised_by,
+    COALESCE(NULLIF(trim(owner_name), ''), '—') AS pending_with,
+    COALESCE(NULLIF(trim(pending_step), ''), '—') AS pending_step,
+    CASE
+      WHEN created_at IS NULL THEN NULL
+      ELSE GREATEST(
+        0,
+        ((now() AT TIME ZONE 'Asia/Kolkata')::date - (created_at AT TIME ZONE 'Asia/Kolkata')::date)
+      )
+    END AS days_pending
+  FROM filtered
+  WHERE status_bucket = 'pending'
+    AND $(travel_date_sql)
+    AND $(travel_user_sql)
+  ORDER BY days_pending DESC NULLS LAST
+  LIMIT 40
+) t;
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d '\r' | grep -v '^Output format' || true)"
+if [[ -z "${TRAVEL_PENDING_JSON}" || "${TRAVEL_PENDING_JSON}" != \[* ]]; then
+  TRAVEL_PENDING_JSON='[]'
+fi
+fi
+export TRAVEL_META_PENDING_DETAIL=""
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+  TRAVEL_USERS_JSON="$(jq -c '(.sections[0].users // .users // [])' <<< "${USAGE_PAYLOAD}")"
+  RMC_USER_SECTION="$(
+    USERS_JSON="${TRAVEL_USERS_JSON}" \
+    MIS_PENDING_JSON="${TRAVEL_PENDING_JSON}" \
+    TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')" \
+    MIS_TABLE_MODE="section" \
+    node "${REPO_ROOT}/services/engagement-pipeline/scripts/mis-pending-detail.js" || true
+  )"
+  if [[ -n "${RMC_USER_SECTION}" ]]; then
+    jq --arg section "${RMC_USER_SECTION}" '.UserTableSectionHtml = $section' \
+      "${TRAVEL_VARS_TMP}/html_parts.json" > "${TRAVEL_VARS_TMP}/html_parts.rmc.json"
+    mv "${TRAVEL_VARS_TMP}/html_parts.rmc.json" "${TRAVEL_VARS_TMP}/html_parts.json"
+  fi
+fi
 export TEMPLATE_VARS_OUT="${VARS_JSON}"
 node "${REPO_ROOT}/services/engagement-pipeline/scripts/build-travel-template-vars.js" \
   || stop "Failed to build Travel template variables JSON."
 rm -rf "${TRAVEL_VARS_TMP}"
 unset TRAVEL_USAGE_JSON_FILE TRAVEL_HTML_PARTS_FILE TEMPLATE_VARS_OUT \
   TRAVEL_META_REPORT_TITLE TRAVEL_META_REPORT_DATE TRAVEL_META_ENTITY_SCOPE \
-  TRAVEL_META_ENTITY_NAME TRAVEL_META_REPORT_BODY
+  TRAVEL_META_ENTITY_NAME TRAVEL_META_ENTITY_CODE TRAVEL_META_REPORT_BODY TRAVEL_META_PENDING_DETAIL
 
 report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
   || stop "Failed to render Travel report template."

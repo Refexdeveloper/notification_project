@@ -83,12 +83,18 @@ export default function StarterPickerModal({
         if (!onConfirmCreate) return;
         const label = app.displayName || app.name;
         const company = selected?.default_company || '';
+        const entity = selected?.default_entity || '';
+        const rmcLead = selectedId === 'lead-rmc';
         await onConfirmCreate({
           starterId: selectedId,
-          name: name.trim() || (company ? `Lead Tracker · ${company}` : `${label} report`),
-          subject: company
+          name: name.trim() || (rmcLead ? 'RMC - Lead Management - Report' : company ? `Lead Tracker · ${company}` : entity ? `${label} · ${entity}` : `${label} report`),
+          subject: rmcLead
+            ? 'RMC - Lead Management - Report'
+            : company
             ? `Lead Tracker — ${company} website report`
-            : `{{ReportTitle}} — ${label}`,
+            : entity
+              ? `Kissflow - ${entity} ${label} Report`
+              : `{{ReportTitle}} — ${label}`,
           description: selected?.description || `HTML report for ${label}`,
         });
       } else if (onConfirmLoad) {
