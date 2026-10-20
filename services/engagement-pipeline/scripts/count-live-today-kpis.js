@@ -24,6 +24,7 @@ const {
   emptySourceBuckets,
   bumpSource,
 } = require(path.join(__dirname, 'itsm-ticket-source.js'));
+const { recordInEntityCodeScope } = require(path.join(__dirname, 'entity-code'));
 
 const TZ = 'Asia/Kolkata';
 const PAGE_SIZE = 100;
@@ -89,7 +90,16 @@ function pickEntity(raw) {
   return '';
 }
 
+const ENTITY_CODE_SPLIT_APPS = new Set([
+  'EMS_001_A00',
+  'Project_Management_Tracker_A00',
+]);
+
 function entityMatches(raw) {
+  if (ENTITY_CODE_SPLIT_APPS.has(String(applicationId || ''))) {
+    const scope = String(entityFilter || '').trim().toLowerCase() === 'ril_rmc' ? 'ril_rmc' : 'common';
+    return recordInEntityCodeScope(raw, scope);
+  }
   if (!entityFilter || entityFilter === 'all' || entityFilter === '*') return true;
   const entity = pickEntity(raw);
   // Classic Refex report: include blank Entity (many live tickets omit the field).

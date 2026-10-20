@@ -19,6 +19,7 @@ const LEAD_WEBSITES = [
   { groupName: 'Adonis', websiteFilter: 'Adonis', slug: 'adonis' },
   { groupName: 'Modepro', websiteFilter: 'Modepro', slug: 'modepro' },
   { groupName: 'Venwind', websiteFilter: 'Venwind', slug: 'venwind' },
+  { groupName: 'RMC', websiteFilter: 'RMC', slug: 'rmc' },
 ];
 
 function canonicalizeWebsiteFilter(value) {
@@ -856,6 +857,81 @@ async function buildLeadTrackerReport({ groupName, websiteFilter }) {
   };
 }
 
+function loadRmcLeadTemplate() {
+  const seedPath = path.join(REPO_ROOT, 'db/seeds/lead-rmc-ril-rmc-template.html');
+  if (fs.existsSync(seedPath)) return fs.readFileSync(seedPath, 'utf8');
+  const fromPg = loadLeadTrackerTemplateFromPg();
+  if (fromPg && fromPg.includes('{{RequestTableHtml}}') && fromPg.includes('{{TotalRequests}}')) {
+    return fromPg;
+  }
+  return null;
+}
+
+async function buildRmcLeadReport() {
+  const {
+    RMC_LEAD_REPORT_NAME,
+    isRmcRilLead,
+    leadRequestFromRecord,
+    summarizeRequests,
+    renderRequestTableHtml,
+    rmcLeadSubject,
+  } = require('../../../services/engagement-pipeline/scripts/rmc-lead-scope');
+  const { host, accountId, keyId, keySecret } = getKissflowConfig();
+  const [mainLeads, venwindLeads] = await Promise.all([
+    fetchAllLeads(host, accountId, keyId, keySecret, PROCESS_ID),
+    fetchAllLeads(host, accountId, keyId, keySecret, VENWIND_PROCESS_ID).catch(() => []),
+  ]);
+  const listLeads = [
+    ...mainLeads,
+    ...venwindLeads.map((lead) => ({
+      ...lead,
+      _process_id: VENWIND_PROCESS_ID,
+      Website_and_form: lead.Website_and_form || lead.Website || 'Venwind',
+    })),
+  ];
+  const leads = await enrichLeadsWithDetails(host, accountId, keyId, keySecret, listLeads);
+  const matched = filterLeadsForReport(leads, 'RMC').filter((lead) => isRmcRilLead(lead));
+  const requestRows = matched.map((lead) => leadRequestFromRecord(lead));
+  const counts = summarizeRequests(requestRows);
+  if (!counts.total) {
+    throw new Error('Lead Management RMC report is 0 for Form/Website RMC and entity code RIL_RMC — refusing to send');
+  }
+  const date = new Date().toLocaleString('en-IN', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }) + ' IST';
+  const template = loadRmcLeadTemplate();
+  const variables = {
+    ReportTitle: RMC_LEAD_REPORT_NAME,
+    ReportDate: date,
+    WebsiteName: 'RMC',
+    EntityCode: 'RIL_RMC',
+    TotalRequests: String(counts.total),
+    PendingRequests: String(counts.pending),
+    CompletedRequests: String(counts.completed),
+    RequestTableHtml: renderRequestTableHtml(requestRows),
+    ReportBody: '',
+  };
+  const html = template
+    ? replaceTemplateVariables(template, variables)
+    : `<p>${variables.ReportBody}</p>${variables.RequestTableHtml}`;
+  return {
+    html,
+    subject: rmcLeadSubject(),
+    rowCount: requestRows.length,
+    totalLeads: counts.total,
+    totalRequests: counts.total,
+    pendingRequests: counts.pending,
+    completedRequests: counts.completed,
+    source: 'live',
+    rows: requestRows,
+  };
+}
+
 function isLeadTrackerScheduler(meta) {
   if (!meta || typeof meta !== 'object') return false;
   if (meta.websiteFilter) return true;
@@ -865,6 +941,7 @@ function isLeadTrackerScheduler(meta) {
 
 module.exports = {
   buildLeadTrackerReport,
+  buildRmcLeadReport,
   isLeadTrackerScheduler,
   isLeadDraftItem,
   isCountableLeadForReport,

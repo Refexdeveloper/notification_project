@@ -116,18 +116,30 @@ fi
 
 report_cache_key() {
   case "${APPLICATION_ID}" in
-    Lead_Trcaker_A00) echo "lead-tracker:${GROUP_SLUG:-modepro}" ;;
+    Lead_Trcaker_A00)
+      website_key="$(printf '%s' "${WEBSITE_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+      entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+      if [[ "${website_key}" == "rmc" && "${entity_key}" == "rilrmc" ]]; then
+        echo "lead-tracker:rmc:ril_rmc"
+      else
+        echo "lead-tracker:${GROUP_SLUG:-modepro}"
+      fi
+      ;;
     IT_Service_Management_A00)
       # v6: Source panels built via Node (raw HTML styles) for Refex + Extrovis
       echo "itsm:v6:${ITSM_PROCESS_ID:-Live_IT_Service_Request_A00}:${ENTITY_FILTER:-all}:${ENVIRONMENT:-production}"
       ;;
-    Project_Management_Tracker_A00) echo "pm:${ENVIRONMENT:-production}" ;;
+    Project_Management_Tracker_A00)
+      echo "pm:v2:$(printf '%s' "${ENTITY_FILTER:-common}" | tr '[:upper:]' '[:lower:]'):${ENVIRONMENT:-production}"
+      ;;
     Solar_Site_Expense_Governance_Syst_A00)
       echo "solar:v1:${SOLAR_PROCESS_ID:-${PROCESS_ID:-Technician_Reimbursement__YTLM}}:${ENVIRONMENT:-production}"
       ;;
-    EMS_001_A00) echo "expense:${ENVIRONMENT:-production}" ;;
+    EMS_001_A00)
+      echo "expense:v2:$(printf '%s' "${ENTITY_FILTER:-common}" | tr '[:upper:]' '[:lower:]'):${ENVIRONMENT:-production}"
+      ;;
     Expense_and_Travel_Management_A00)
-      echo "travel:v4:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
+      echo "travel:v5:${ENTITY_FILTER:-Venwind}:${ENVIRONMENT:-production}"
       ;;
     *) echo "${APPLICATION_ID}:${ENVIRONMENT:-production}" ;;
   esac
@@ -243,7 +255,14 @@ dispatch_travel_usage_report() {
   export APPLICATION_NAME="Travel Management"
   export PROCESS_NAME="Travel Management (combined)"
   export SUBJECT="${SUBJECT:-Kissflow - ${ENTITY_FILTER:-Venwind} Travel Management Daily Usage Report}"
-  export REPORT_BODY="${ENTITY_FILTER:-Venwind} only. Combines Travel Request, Travel Expense, and Travel Advance."
+  if [[ "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" == "ril_rmc" ]]; then
+    export SUBJECT="RMC - Travel Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))"
+  fi
+  if [[ "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" == "ril_rmc" ]]; then
+    export REPORT_BODY="RIL_RMC only. Travel Request, Travel Expense, and Travel Advance whose entity code is RIL_RMC. Venwind and Refex reports exclude this entity code."
+  else
+    export REPORT_BODY="${ENTITY_FILTER:-Venwind} only. Combines Travel Request, Travel Expense, and Travel Advance."
+  fi
   export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-Advance_Payment_Request_Process_A01 Expense_Management_A03 Travel_Management_A02}"
   local latest="${REPO_ROOT}/templates/generated/travel-report-latest.html"
   local render_script="${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/24-render-travel-html-report.sh"
@@ -380,6 +399,13 @@ export TRAVEL_PROCESS_IDS="${TRAVEL_PROCESS_IDS:-}"
 if [[ "${TEST_SEND}" != "true" ]]; then
   [[ -n "${TO_LIST}" ]] || stop "No To recipients on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
 fi
+if [[ "${APPLICATION_ID}" == "Lead_Trcaker_A00" ]]; then
+  rmc_website="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.website_filter // .company_filter // empty' | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+  rmc_entity="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+  if [[ "${rmc_website}" == "rmc" && "${rmc_entity}" == "rilrmc" ]]; then
+    export SUBJECT="RMC - Lead Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))"
+  fi
+fi
 [[ -n "${FROM_EMAIL}" ]] || stop "No from_email on schedule ${SCHEDULE_ID}. Configure in Admin UI first."
 
 if [[ "${APPLICATION_ID}" == "Expense_and_Travel_Management_A00" ]]; then
@@ -401,6 +427,16 @@ case "${APPLICATION_ID}" in
     export PROCESS_ID="${PROCESS_ID:-Lead_tracker_1_A00}"
     [[ -n "${WEBSITE_FILTER}" ]] || stop "Lead Tracker schedule ${SCHEDULE_ID} has no website filter — will not send the full report."
     [[ -n "${GROUP_SLUG}" ]] || export GROUP_SLUG="$(printf '%s' "${WEBSITE_FILTER}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+    website_key="$(printf '%s' "${WEBSITE_FILTER}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    if [[ "${website_key}" == "rmc" && "${entity_key}" == "rilrmc" ]]; then
+      export WEBSITE_FILTER="RMC"
+      export ENTITY_FILTER="RIL_RMC"
+      export GROUP_NAME="RMC"
+      export GROUP_SLUG="rmc"
+      export SUBJECT="RMC - Lead Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))"
+      log "Lead Management RMC report: Form/Website RMC and entity code RIL_RMC"
+    fi
     log "Lead Tracker: live Kissflow counts (same Website + FY + no-draft rules as the dashboard)"
     if [[ "${TEST_SEND}" == "true" ]]; then
       send_test_report \
@@ -479,7 +515,11 @@ case "${APPLICATION_ID}" in
     fi
     ;;
   Project_Management_Tracker_A00)
-    export SUBJECT="${SUBJECT:-Kissflow - Project Management Portfolio Report}"
+    if [[ "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" == "ril_rmc" ]]; then
+      export SUBJECT="RMC - Project Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))"
+    else
+      export SUBJECT="${SUBJECT:-Kissflow - Project Management Portfolio Report}"
+    fi
     export PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}"
     export PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}"
     if [[ "${TEST_SEND}" == "true" ]]; then
@@ -547,13 +587,24 @@ case "${APPLICATION_ID}" in
     fi
     ;;
   EMS_001_A00)
-    dispatch_pm_style_process \
-      "expense" \
-      "Travel_Expense_A00" \
-      "Expense Management System" \
-      "Expense Request" \
-      "Kissflow - Expense Management Report" \
-      "Expense Management covers pending and closed claims from Kissflow."
+    if [[ "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" == "ril_rmc" ]]; then
+      export SUBJECT="RMC - Expense Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))"
+      dispatch_pm_style_process \
+        "expense" \
+        "Travel_Expense_A00" \
+        "Expense Management System" \
+        "Expense Request" \
+        "RMC - Expense Management - Report ($(LC_TIME=C TZ=Asia/Kolkata date +'%d-%b-%Y'))" \
+        "RIL_RMC only. Pending and closed claims whose entity code is RIL_RMC. Other entities stay on the common Expense report."
+    else
+      dispatch_pm_style_process \
+        "expense" \
+        "Travel_Expense_A00" \
+        "Expense Management System" \
+        "Expense Request" \
+        "Kissflow - Expense Management Report" \
+        "Expense Management covers pending and closed claims from Kissflow."
+    fi
     ;;
   Expense_and_Travel_Management_A00)
     dispatch_travel_usage_report

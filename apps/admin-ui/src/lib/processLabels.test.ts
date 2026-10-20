@@ -5,6 +5,8 @@ import {
   friendlyApplicationName,
   isHiddenNeApplication,
   isItsmApp,
+  entityFilterForTemplate,
+  isExpenseApp,
   isTravelApp,
   isTravelProcess,
   preferredTravelProcessId,
@@ -39,6 +41,16 @@ describe('processLabels travel usage', () => {
 
   it('labels leftover both-entity schedules as Venwind default', () => {
     expect(formatEntityFilterLabel('both')).toContain('Venwind');
+  });
+
+  it('keeps Expense separate from Travel and routes RIL_RMC templates', () => {
+    expect(isExpenseApp('EMS_001_A00', 'Expense Management System')).toBe(true);
+    expect(isExpenseApp('Expense_and_Travel_Management_A00', 'Travel Management')).toBe(false);
+    expect(entityFilterForTemplate({ name: 'Expense Management · RIL_RMC' }, 'Travel_Expense_A00')).toBe('RIL_RMC');
+    expect(entityFilterForTemplate({ name: 'Expense Management report' }, 'Travel_Expense_A00')).toBe('');
+    expect(entityFilterForTemplate({ name: 'Travel · RIL_RMC entity report' }, 'Travel_Management_A02')).toBe('RIL_RMC');
+    expect(entityFilterForTemplate({ name: 'RMC - Lead Management - Report' }, 'Lead_tracker_1_A00')).toBe('RIL_RMC');
+    expect(entityFilterForTemplate({ name: 'Lead Tracker · Modepro website report' }, 'Lead_tracker_1_A00')).toBe('');
   });
 });
 

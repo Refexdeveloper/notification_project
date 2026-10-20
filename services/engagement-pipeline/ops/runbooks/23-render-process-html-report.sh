@@ -62,6 +62,17 @@ PROCESS_ID="${PROCESS_ID:?PROCESS_ID is required}"
 PM_APP_ID="${APPLICATION_ID}"
 PM_PROCESS_ID="${PROCESS_ID}"
 
+# Expense splits RIL_RMC onto its own template. Other generic process renders
+# keep every record. Common Expense excludes entity code RIL_RMC.
+ENTITY_CODE_MODE="off"
+if [[ "${APPLICATION_ID}" == "EMS_001_A00" ]]; then
+  ENTITY_CODE_MODE="exclude"
+  case "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" in
+    ril_rmc) ENTITY_CODE_MODE="ril_rmc" ;;
+  esac
+fi
+ENTITY_CODE_SQL="$(report_entity_code_predicate i "${ENTITY_CODE_MODE}")"
+
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
@@ -89,6 +100,7 @@ tasks AS (
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${PM_PROCESS_ID}'
+    AND (${ENTITY_CODE_SQL})
 ),
 latest_users AS (
   SELECT snapshot_run_id
@@ -196,6 +208,7 @@ activity AS (
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND (${ENTITY_CODE_SQL})
       AND ia.principal_id IS NOT NULL
       AND trim(ia.principal_id) <> ''
     GROUP BY ia.principal_id
@@ -219,6 +232,7 @@ activity AS (
       WHERE i.process_id = '${PM_PROCESS_ID}'
         AND i.process_status = 'Completed'
         AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+        AND (${ENTITY_CODE_SQL})
       ORDER BY i.instance_id, ia.principal_id NULLS LAST
     ) completed_items
     WHERE assignee_id IS NOT NULL
@@ -277,6 +291,17 @@ PM_ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
   end
 ' <<< "${PM_USERS_JSON}")"
 
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  MIS_PENDING_JSON="$(report_mis_pending_detail_json "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'" "${ENTITY_CODE_SQL}")"
+  PM_ROWS_HTML="$(
+    USERS_JSON="${PM_USERS_JSON}" \
+    MIS_PENDING_JSON="${MIS_PENDING_JSON}" \
+    TODAY_IST="${TODAY_IST}" \
+    MIS_MATCH="pending_with" \
+    node "$(report_template_repo_root)/services/engagement-pipeline/scripts/mis-pending-detail.js"
+  )"
+fi
+
 PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {
@@ -291,7 +316,7 @@ PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${PM_SUMMARY_JSON}")"
 PM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${PM_SUMMARY_JSON}")"
-if report_live_today_kpis "${PROCESS_ID:-${PM_PROCESS_ID}}" "${APPLICATION_ID:-${PM_APP_ID}}" ""; then
+if report_live_today_kpis "${PROCESS_ID:-${PM_PROCESS_ID}}" "${APPLICATION_ID:-${PM_APP_ID}}" "${ENTITY_FILTER:-}"; then
   log "Live Kissflow ticket KPIs: total=${REPORT_LIVE_TOTAL_TICKETS:-?} open=${REPORT_LIVE_OPEN_TICKETS:-?} closed=${REPORT_LIVE_CLOSED_TICKETS:-?} opened_today=${REPORT_LIVE_OPENED_TODAY:-?}"
   PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
   PM_TOTAL="$(report_prefer_live_today "${PM_TOTAL}" "${REPORT_LIVE_TOTAL_TICKETS}")"
@@ -313,6 +338,14 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load report template HTML."
+PENDING_DETAIL_HTML=""
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  RIL_SEED="$(report_template_repo_root)/db/seeds/expense-ril-rmc-template.html"
+  if [[ -f "${RIL_SEED}" ]]; then
+    log "RIL_RMC Expense schedule — using entity template ${RIL_SEED}"
+    cp "${RIL_SEED}" "${TEMPLATE_SRC}"
+  fi
+fi
 report_template_emphasize_users_kpi "${TEMPLATE_SRC}"
 
 REPORT_TITLE="${TEMPLATE_NAME:-}"
@@ -320,10 +353,23 @@ if [[ -z "${REPORT_TITLE}" ]]; then
   REPORT_TITLE="${SUBJECT:-Scheduled Report}"
 fi
 REPORT_BODY="${REPORT_BODY:-Live Kissflow process data for this application.}"
+ENTITY_CODE_LABEL=""
+ENTITY_NAME_LABEL=""
+ENTITY_SCOPE_LABEL=""
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  REPORT_TITLE="RMC - Expense Management - Report"
+  ENTITY_CODE_LABEL=""
+  ENTITY_NAME_LABEL=""
+  ENTITY_SCOPE_LABEL=""
+  REPORT_BODY=""
+fi
 
 jq -n \
   --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg EntityCode "${ENTITY_CODE_LABEL}" \
+  --arg EntityName "${ENTITY_NAME_LABEL}" \
+  --arg EntityScope "${ENTITY_SCOPE_LABEL}" \
   --arg TotalTasks "${PM_TOTAL}" \
   --arg PendingTasks "${PM_PENDING}" \
   --arg CompletedTasks "${PM_COMPLETED}" \
@@ -332,10 +378,14 @@ jq -n \
   --arg TotalUsers "${PM_TOTAL_USERS}" \
   --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${PM_ROWS_HTML}" \
+  --arg PendingDetailHtml "${PENDING_DETAIL_HTML}" \
   --arg ReportBody "${REPORT_BODY}" \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
+    EntityCode: $EntityCode,
+    EntityName: $EntityName,
+    EntityScope: $EntityScope,
     TotalTasks: $TotalTasks,
     PendingTasks: $PendingTasks,
     CompletedTasks: $CompletedTasks,
@@ -356,6 +406,7 @@ jq -n \
     SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
     LeadTableHtml: $UserTableHtml,
+    PendingDetailHtml: $PendingDetailHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 

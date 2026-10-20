@@ -90,6 +90,28 @@ export function isPmApp(appId: string | undefined | null, appName?: string): boo
   );
 }
 
+export const RIL_RMC_ENTITY_CODE = 'RIL_RMC';
+
+export function isRilRmcLabel(value: string | undefined | null): boolean {
+  return /ril[_\s-]*rmc/i.test(String(value || ''));
+}
+
+export function isExpenseApp(appId: string | undefined | null, appName?: string): boolean {
+  const id = String(appId || '').toLowerCase();
+  const name = String(appName || '').toLowerCase();
+  if (id.includes('expense_and_travel') || name.includes('travel')) return false;
+  return id.includes('ems_001') || (name.includes('expense') && !name.includes('travel') && !name.includes('solar'));
+}
+
+export function entityFilterForTemplate(
+  template: { name?: string; subject?: string; description?: string } | null | undefined,
+  processId: string,
+): string {
+  const hay = `${template?.name || ''} ${template?.subject || ''} ${template?.description || ''}`;
+  if (isRilRmcLabel(hay) || (/\brmc\b/i.test(hay) && /lead/i.test(hay))) return RIL_RMC_ENTITY_CODE;
+  return defaultEntityFilterForProcess(processId);
+}
+
 export function isTravelApp(appId: string | undefined | null, appName?: string): boolean {
   const id = String(appId || '').toLowerCase();
   const name = String(appName || '').toLowerCase();

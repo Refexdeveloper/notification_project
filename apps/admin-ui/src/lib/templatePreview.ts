@@ -102,6 +102,64 @@ function sampleItsmSourceBreakdownHtml(): string {
   );
 }
 
+function sampleRmcMisUserTableHtml(): string {
+  return (
+    '<tr style="background-color:#dcfce7;" bgcolor="#dcfce7"><td style="padding:10px 8px; border-bottom:1px solid #ececea;">Anil S Kulkarni<div style="font-size:11px; color:#6b6b6b; margin-top:2px;">Raised by Rakesh Kumar Gupta</div></td><td style="padding:10px 8px; border-bottom:1px solid #bbf7d0; color:#166534; font-weight:bold;">2026-10-17 09:58</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;">L1 Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;">Anil S Kulkarni</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;" align="center">12</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;" align="center"><b>0</b></td></tr>' +
+    '<tr style="background-color:#ffffff;" bgcolor="#ffffff"><td style="padding:10px 8px; border-bottom:1px solid #ececea;">Tapas Das<div style="font-size:11px; color:#6b6b6b; margin-top:2px;">Raised by Rakesh Kumar Gupta</div></td><td style="padding:10px 8px; border-bottom:1px solid #ececea;">2026-10-12 11:05</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;">L1 Manager Approval</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;">Tapas Das</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;" align="center">12</td><td style="padding:10px 8px; border-bottom:1px solid #ececea;" align="center"><b>0</b></td></tr>'
+  );
+}
+
+function sampleRmcMisSectionHtml(rows: string): string {
+  return (
+    '<tr><td style="padding:26px 32px 6px 32px; font-size:13.5px; font-weight:bold;">Users with pending or recent activity</td></tr>' +
+    '<tr><td style="padding:8px 32px 28px 32px;"><table role="presentation" width="100%"><tr style="background:#14503a;">' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;">User</td>' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;">Last Signed In</td>' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;">Pending step</td>' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;">Pending with</td>' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;" align="center">Days</td>' +
+    '<td style="padding:10px 8px; color:#ffffff; font-weight:bold;" align="center">Completed</td>' +
+    '</tr>' +
+    rows +
+    '</table></td></tr>'
+  );
+}
+
+function sampleRmcLeadRequestTableHtml(): string {
+  const rows = [
+    ['Meera Iyer', 'Sales Manager Review', 'Rahul Menon', '4', '0', '#fffaf2'],
+    ['Arun Kumar', 'Finance Approval', 'Priya Sharma', '2', '0', '#ffffff'],
+    ['Kavya Nair', 'Completed', '—', '7', '1', '#f4fbf5'],
+  ];
+  return rows
+    .map(
+      ([user, step, pendingWith, days, completed, bg]) =>
+        `<tr style="background-color:${bg};" bgcolor="${bg}"><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${user}<div style="font-size:11px; color:#6b6b6b; margin-top:2px;">Raised by ${user}</div></td><td style="padding:12px 10px; border-bottom:1px solid #ececea;">—</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${step}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${pendingWith}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;" align="center">${days}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;" align="center">${completed}</td></tr>`,
+    )
+    .join('');
+}
+
+function sampleMisPendingSectionHtml(): string {
+  const rows = [
+    ['Meera Iyer', 'Rahul Menon', 'Manager Review', '4'],
+    ['Arun Kumar', 'Priya Sharma', 'Finance Approval', '2'],
+    ['Suresh Babu', 'Ananya Rao', 'Site Visit', '6'],
+  ];
+  const body = rows
+    .map(
+      ([raised, pendingWith, step, days], idx) =>
+        `<tr style="background-color:${idx % 2 ? '#ffffff' : '#fffaf2'};"><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${raised}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${pendingWith}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;">${step}</td><td style="padding:12px 10px; border-bottom:1px solid #ececea;" align="center">${days}</td></tr>`,
+    )
+    .join('');
+  return (
+    '<tr><td style="padding:8px 32px 6px 32px; font-size:13.5px; font-weight:bold; color:#1a1a1a;">Pending requests</td></tr>' +
+    '<tr><td style="padding:8px 32px 20px 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:12.5px;">' +
+    '<tr style="background:#14503a;"><td style="padding:12px 10px; color:#ffffff; font-weight:bold;">Raised by</td><td style="padding:12px 10px; color:#ffffff; font-weight:bold;">Pending with</td><td style="padding:12px 10px; color:#ffffff; font-weight:bold;">Pending at</td><td style="padding:12px 10px; color:#ffffff; font-weight:bold;" align="center">Days pending</td></tr>' +
+    body +
+    '</table></td></tr>'
+  );
+}
+
 export function formatPreviewReportDate(now = new Date()): string {
   return (
     now.toLocaleString('en-IN', {
@@ -147,6 +205,10 @@ export function defaultReportTitleForApp(kind: TemplateAppKind): string {
     default:
       return 'Scheduled Report';
   }
+}
+
+function rilRmcRequested(context: PreviewContext): boolean {
+  return /ril[_\s-]*rmc/i.test(`${context.templateName || ''} ${context.subject || ''}`);
 }
 
 export function buildPreviewSampleData(context: PreviewContext = {}): Record<string, string> {
@@ -220,6 +282,7 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     EntitySectionsHtml: '',
     SalesPersons: '3',
     UserTableHtml: sampleEngagementUserTableHtml(),
+    PendingDetailHtml: sampleMisPendingSectionHtml(),
     LeadTableHtml: sampleLeadReportTableHtml(),
     ReportBody:
       "Scoped to process Live_IT_Service_Request_A00 (all tickets on this process). SLA Breached compares actual ticket duration against the configured SLA target from Kissflow's Approval Matrix.",
@@ -244,14 +307,26 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     const company =
       resolveLeadCompany(`${context.templateName || ''} ${context.subject || ''}`)?.groupName
       || 'Modepro';
-    base.UserTableHtml = sampleLeadReportTableHtml();
-    base.SignedInToday = '1';
-    base.TotalUsers = '3';
-    base.CompanyName = company;
-    base.GroupName = company;
-    base.WebsiteName = company;
-    base.ReportTitle = context.templateName?.trim() || `${company} — Lead Tracker`;
-    base.ReportBody = `${company} leads only. Users with leads assigned for this website (Open / Closed). Never the full Lead Tracker report.`;
+    if (company === 'RMC') {
+      base.ReportTitle = 'RMC - Lead Management - Report';
+      base.WebsiteName = 'RMC';
+      base.EntityCode = 'RIL_RMC';
+      base.TotalRequests = '6';
+      base.PendingRequests = '4';
+      base.CompletedRequests = '2';
+      base.RequestTableHtml = sampleRmcLeadRequestTableHtml();
+      base.EntityCode = '';
+      base.ReportBody = '';
+    } else {
+      base.UserTableHtml = sampleLeadReportTableHtml();
+      base.SignedInToday = '1';
+      base.TotalUsers = '3';
+      base.CompanyName = company;
+      base.GroupName = company;
+      base.WebsiteName = company;
+      base.ReportTitle = context.templateName?.trim() || `${company} — Lead Tracker`;
+      base.ReportBody = `${company} leads only. Users with leads assigned for this website (Open / Closed). Never the full Lead Tracker report.`;
+    }
   } else if (kind === 'expense') {
     base.UserTableHtml = samplePmUserTableHtml();
     base.SignedInToday = '1';
@@ -277,6 +352,18 @@ export function buildPreviewSampleData(context: PreviewContext = {}): Record<str
     base.ProcessSectionsHtml = sampleTravelProcessSectionsHtml();
     base.ReportBody =
       'Venwind only. Combines Travel Request, Travel Expense, and Travel Advance from live Kissflow data. Refex and Venwind are never mixed.';
+  }
+
+  if (rilRmcRequested(context)) {
+    base.EntityCode = '';
+    base.EntityName = '';
+    base.EntityScope = '';
+    base.ReportBody = '';
+    base.PendingDetailHtml = '';
+    base.UserTableHtml = sampleRmcMisUserTableHtml();
+    if (kind === 'travel') {
+      base.UserTableSectionHtml = sampleRmcMisSectionHtml(base.UserTableHtml);
+    }
   }
 
   return base;
@@ -360,6 +447,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'SourceMobileOpen',
     'SourceWebOpen',
     'UserTableHtml',
+    'PendingDetailHtml',
     'ReportBody',
   ],
   pm: [
@@ -380,9 +468,13 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalSubTasks',
     'PendingSubTasks',
     'CompletedSubTasks',
+    'EntityCode',
+    'EntityName',
+    'EntityScope',
     'TotalUsers',
     'SignedInToday',
     'UserTableHtml',
+    'PendingDetailHtml',
     'ReportBody',
   ],
   solar: [
@@ -397,6 +489,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ClosedToday',
     'CategorySectionsHtml',
     'UserTableHtml',
+    'PendingDetailHtml',
     'ReportBody',
   ],
   lead: [
@@ -414,6 +507,11 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ClosedToday',
     'UserTableHtml',
     'LeadTableHtml',
+    'EntityCode',
+    'TotalRequests',
+    'PendingRequests',
+    'CompletedRequests',
+    'RequestTableHtml',
     'ReportBody',
   ],
   expense: [
@@ -422,11 +520,15 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'TotalClaims',
     'PendingClaims',
     'ClosedClaims',
+    'EntityCode',
+    'EntityName',
+    'EntityScope',
     'TotalUsers',
     'SignedInToday',
     'OpenedToday',
     'ClosedToday',
     'UserTableHtml',
+    'PendingDetailHtml',
     'ReportBody',
   ],
   travel: [
@@ -434,6 +536,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'ReportDate',
     'EntityScope',
     'EntityName',
+    'EntityCode',
     'TotalRequests',
     'PendingRequests',
     'CompletedRequests',
@@ -449,6 +552,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'UserTableHtml',
     'UserTableSectionHtml',
     'PendingDetailsHtml',
+    'PendingDetailHtml',
     'SlaAnalysisHtml',
     'ReportBody',
   ],
@@ -459,6 +563,7 @@ export const PLACEHOLDER_HINTS_BY_APP: Record<TemplateAppKind, string[]> = {
     'OpenTickets',
     'ClosedTickets',
     'UserTableHtml',
+    'PendingDetailHtml',
     'ReportBody',
     'RecipientName',
     'CompanyName',

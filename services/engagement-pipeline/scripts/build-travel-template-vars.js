@@ -30,6 +30,7 @@ function readMeta() {
     reportDate: process.env.TRAVEL_META_REPORT_DATE || '',
     entityScope: process.env.TRAVEL_META_ENTITY_SCOPE || '',
     entityName: process.env.TRAVEL_META_ENTITY_NAME || '',
+    entityCode: process.env.TRAVEL_META_ENTITY_CODE || '',
     reportBody: process.env.TRAVEL_META_REPORT_BODY || '',
   };
 }
@@ -55,6 +56,7 @@ function main() {
     ReportDate: str(meta.reportDate),
     EntityScope: str(meta.entityScope),
     EntityName: str(meta.entityName),
+    EntityCode: str(meta.entityCode),
     TotalRequests: str(usage.total ?? 0),
     PendingRequests: str(usage.pending ?? 0),
     CompletedRequests: str(usage.completed ?? 0),
@@ -71,6 +73,7 @@ function main() {
     UserTableSectionHtml: str(htmlParts.UserTableSectionHtml),
     ProcessSectionsHtml: str(htmlParts.ProcessSectionsHtml),
     PendingDetailsHtml: str(htmlParts.PendingDetailsHtml),
+    PendingDetailHtml: str(process.env.TRAVEL_META_PENDING_DETAIL || ''),
     SlaAnalysisHtml: str(htmlParts.SlaAnalysisHtml),
     OverallSummaryHtml: '',
     EntitySectionsHtml: '',

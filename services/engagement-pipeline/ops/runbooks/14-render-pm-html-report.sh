@@ -60,6 +60,14 @@ PM_APP_ID="${PM_APP_ID:-Project_Management_Tracker_A00}"
 PM_PROCESS_ID="${PM_PROCESS_ID:-${PROCESS_ID:-Project_Sub_Task_A01}}"
 APPLICATION_ID="${APPLICATION_ID:-${PM_APP_ID}}"
 
+# Project Management splits RIL_RMC onto its own template. The common report
+# keeps every other entity code.
+ENTITY_CODE_MODE="exclude"
+case "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" in
+  ril_rmc) ENTITY_CODE_MODE="ril_rmc" ;;
+esac
+ENTITY_CODE_SQL="$(report_entity_code_predicate i "${ENTITY_CODE_MODE}")"
+
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
 
@@ -87,6 +95,7 @@ tasks AS (
   FROM engagement_reporting.item i, latest l
   WHERE i.snapshot_run_id = l.snapshot_run_id
     AND i.process_id = '${PM_PROCESS_ID}'
+    AND (${ENTITY_CODE_SQL})
 ),
 latest_users AS (
   SELECT snapshot_run_id
@@ -193,6 +202,7 @@ activity AS (
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND (${ENTITY_CODE_SQL})
       AND ia.principal_id IS NOT NULL
       AND trim(ia.principal_id) <> ''
     GROUP BY ia.principal_id
@@ -215,6 +225,7 @@ activity AS (
       WHERE i.process_id = '${PM_PROCESS_ID}'
         AND i.process_status = 'Completed'
         AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+        AND (${ENTITY_CODE_SQL})
       ORDER BY i.instance_id, ia.principal_id NULLS LAST
     ) completed_items
     WHERE assignee_id IS NOT NULL
@@ -262,6 +273,16 @@ PM_ROWS_HTML="$(jq -r --arg today "${TODAY_IST}" '
     "</tr>"
   ) | join("")
 ' <<< "${PM_USERS_JSON}")"
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  MIS_PENDING_JSON="$(report_mis_pending_detail_json "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'" "${ENTITY_CODE_SQL}")"
+  PM_ROWS_HTML="$(
+    USERS_JSON="${PM_USERS_JSON}" \
+    MIS_PENDING_JSON="${MIS_PENDING_JSON}" \
+    TODAY_IST="${TODAY_IST}" \
+    MIS_MATCH="pending_with" \
+    node "$(report_template_repo_root)/services/engagement-pipeline/scripts/mis-pending-detail.js"
+  )"
+fi
 PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
   [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
   | {
@@ -295,6 +316,7 @@ if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
     PM_TASK_PROCESS_ID="${PM_PROCESS_ID}" \
     PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}" \
     PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}" \
+    ENTITY_FILTER="${ENTITY_FILTER:-}" \
     node "${PM_PORTFOLIO_SCRIPT}" 2>/dev/null
   )"; then
     log "Live PM portfolio: projects=$(jq -r '.total_projects' <<< "${PM_PORTFOLIO_JSON}") tasks=$(jq -r '.total_tasks' <<< "${PM_PORTFOLIO_JSON}") individual=$(jq -r '.individual_tasks' <<< "${PM_PORTFOLIO_JSON}") subtasks=$(jq -r '.total_subtasks' <<< "${PM_PORTFOLIO_JSON}")"
@@ -315,7 +337,7 @@ if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
     log "Live PM portfolio overlay unavailable — using snapshot task totals only"
   fi
 fi
-if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" ""; then
+if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" "${ENTITY_FILTER:-}"; then
   log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?}"
   PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then
@@ -334,9 +356,21 @@ VARS_JSON="$(mktemp)"
 trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
 
 report_template_load_html "${TEMPLATE_SRC}" || stop "Failed to load PM report template HTML."
+PENDING_DETAIL_HTML=""
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  RIL_SEED="$(report_template_repo_root)/db/seeds/pm-ril-rmc-template.html"
+  if [[ -f "${RIL_SEED}" ]]; then
+    log "RIL_RMC Project Management schedule — using entity template ${RIL_SEED}"
+    cp "${RIL_SEED}" "${TEMPLATE_SRC}"
+  fi
+fi
 # Prefer portfolio seed when published Admin HTML is still the old tasks-only layout.
 if ! grep -q '{{TotalProjects}}' "${TEMPLATE_SRC}" 2>/dev/null; then
-  PM_SEED="$(report_template_repo_root)/db/seeds/pm-engagement-template.html"
+  if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+    PM_SEED="$(report_template_repo_root)/db/seeds/pm-ril-rmc-template.html"
+  else
+    PM_SEED="$(report_template_repo_root)/db/seeds/pm-engagement-template.html"
+  fi
   if [[ -f "${PM_SEED}" ]]; then
     log "Published PM template lacks portfolio placeholders — using seed ${PM_SEED}"
     cp "${PM_SEED}" "${TEMPLATE_SRC}"
@@ -348,10 +382,24 @@ REPORT_TITLE="${TEMPLATE_NAME:-}"
 if [[ -z "${REPORT_TITLE}" ]]; then
   REPORT_TITLE="${SUBJECT:-Project Management Portfolio Report}"
 fi
+REPORT_BODY_TEXT="${REPORT_BODY:-Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks.}"
+ENTITY_CODE_LABEL=""
+ENTITY_NAME_LABEL=""
+ENTITY_SCOPE_LABEL=""
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  REPORT_TITLE="RMC - Project Management - Report"
+  ENTITY_CODE_LABEL=""
+  ENTITY_NAME_LABEL=""
+  ENTITY_SCOPE_LABEL=""
+  REPORT_BODY_TEXT=""
+fi
 
 jq -n \
   --arg ReportTitle "${REPORT_TITLE}" \
   --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+  --arg EntityCode "${ENTITY_CODE_LABEL}" \
+  --arg EntityName "${ENTITY_NAME_LABEL}" \
+  --arg EntityScope "${ENTITY_SCOPE_LABEL}" \
   --arg TotalProjects "${PM_TOTAL_PROJECTS}" \
   --arg OpenProjects "${PM_OPEN_PROJECTS}" \
   --arg CompletedProjects "${PM_COMPLETED_PROJECTS}" \
@@ -370,10 +418,14 @@ jq -n \
   --arg TotalUsers "${PM_TOTAL_USERS}" \
   --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
   --arg UserTableHtml "${PM_ROWS_HTML}" \
-  --arg ReportBody "Today’s activity first, then Total / In Progress / Completed for projects, all tasks, individual tasks, and sub-tasks." \
+  --arg PendingDetailHtml "${PENDING_DETAIL_HTML}" \
+  --arg ReportBody "${REPORT_BODY_TEXT}" \
   '{
     ReportTitle: $ReportTitle,
     ReportDate: $ReportDate,
+    EntityCode: $EntityCode,
+    EntityName: $EntityName,
+    EntityScope: $EntityScope,
     TotalProjects: $TotalProjects,
     OpenProjects: $OpenProjects,
     CompletedProjects: $CompletedProjects,
@@ -392,6 +444,7 @@ jq -n \
     TotalUsers: $TotalUsers,
     SignedInToday: $SignedInToday,
     UserTableHtml: $UserTableHtml,
+    PendingDetailHtml: $PendingDetailHtml,
     ReportBody: $ReportBody
   }' > "${VARS_JSON}"
 

@@ -3,11 +3,14 @@ import type { ReportTemplate } from '@/stores/reportTemplates';
 import { LEAD_TRACKER_SALES_GROUPS, resolveLeadCompany } from '@/services/leadReport';
 import {
   defaultEntityFilterForProcess,
+  isExpenseApp,
   isExtrovisProcess,
   isItsmApp,
   isPmApp,
+  isRilRmcLabel,
   isTravelApp,
   processLabel,
+  RIL_RMC_ENTITY_CODE,
 } from '@/lib/processLabels';
 
 export type ScheduleReportIdentityValue = {
@@ -46,15 +49,23 @@ export default function ScheduleReportIdentityFields({
   const showItsmEntityFilter = isItsmApp(app.appId, app.displayName || app.name);
   const showTravelEntityFilter = isTravelApp(app.appId, app.displayName || app.name);
   const showPmPortfolioHint = isPmApp(app.appId, app.displayName || app.name);
+  const showExpenseEntityFilter = isExpenseApp(app.appId, app.displayName || app.name);
   const extrovis = isExtrovisProcess(value.processId);
 
   const selectTemplate = (templateId: string) => {
     const tpl = templates.find((t) => t.id === templateId);
+    const templateHay = `${tpl?.name || ''} ${tpl?.subject || ''} ${tpl?.description || ''}`;
+    const entityFilter = isRilRmcLabel(templateHay)
+      ? RIL_RMC_ENTITY_CODE
+      : value.entityFilter === RIL_RMC_ENTITY_CODE
+        ? defaultEntityFilterForProcess(value.processId) || ''
+        : value.entityFilter;
     onChange({
       ...value,
       templateId,
       templateName: tpl?.name || value.templateName,
       subject: tpl?.subject || tpl?.name || value.subject,
+      entityFilter,
     });
   };
 
@@ -75,8 +86,8 @@ export default function ScheduleReportIdentityFields({
         <h4 className="text-xs font-semibold text-foreground-900 uppercase tracking-wide">Report to send</h4>
         <p className="text-[11px] text-foreground-500 mt-0.5">
           Choose the HTML template and Kissflow process. For Extrovis, pick the Extrovis process so Refex users are
-          excluded. For Travel Management, all three app processes are combined into one report — pick Venwind or Refex
-          as the entity, not both.
+          excluded. For Travel Management, all three app processes are combined into one report — pick Venwind, Refex,
+          or entity code RIL_RMC. RIL_RMC records are not included in the common report.
           {showPmPortfolioHint
             ? ' For Project Management, register Project Tasks (Project_Sub_Task_A01) and Sub-tasks (Sub_Task_Process_A00); the schedule email also counts the Projects board.'
             : ''}
@@ -178,9 +189,11 @@ export default function ScheduleReportIdentityFields({
           </label>
           <select
             value={
-              !value.entityFilter || value.entityFilter === 'both' || value.entityFilter === 'all'
-                ? 'Venwind'
-                : value.entityFilter
+              value.entityFilter === RIL_RMC_ENTITY_CODE
+                ? RIL_RMC_ENTITY_CODE
+                : !value.entityFilter || value.entityFilter === 'both' || value.entityFilter === 'all'
+                  ? 'Venwind'
+                  : value.entityFilter
             }
             onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
             disabled={disabled}
@@ -188,10 +201,31 @@ export default function ScheduleReportIdentityFields({
           >
             <option value="Venwind">Entity = Venwind only</option>
             <option value="Refex">Entity = Refex only</option>
+            <option value={RIL_RMC_ENTITY_CODE}>Entity code = RIL_RMC only</option>
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
             One email per entity. Advance Payment, Expense Management, and Travel Management are combined, then filtered
-            to this entity. Create a second schedule for the other entity.
+            to this entity. RIL_RMC matches the record entity code and is left out of Venwind and Refex.
+          </p>
+        </div>
+      )}
+
+      {(showExpenseEntityFilter || showPmPortfolioHint) && (
+        <div>
+          <label className="block text-xs font-semibold text-foreground-700 mb-1.5">
+            Entity code scope
+          </label>
+          <select
+            value={value.entityFilter === RIL_RMC_ENTITY_CODE ? RIL_RMC_ENTITY_CODE : ''}
+            onChange={(e) => onChange({ ...value, entityFilter: e.target.value })}
+            disabled={disabled}
+            className="field-input w-full disabled:opacity-60"
+          >
+            <option value="">All other entities (common report)</option>
+            <option value={RIL_RMC_ENTITY_CODE}>Entity code = RIL_RMC only</option>
+          </select>
+          <p className="text-[11px] text-foreground-400 mt-1">
+            Records whose entity code is RIL_RMC use the RIL_RMC template. Every other entity stays on the common report.
           </p>
         </div>
       )}
@@ -210,13 +244,18 @@ export default function ScheduleReportIdentityFields({
             onChange={(e) => {
               const website = e.target.value;
               const match = resolveLeadCompany(website);
+              const websiteFilter = match?.websiteFilter || website;
+              const rmcLead = websiteFilter === 'RMC';
               onChange({
                 ...value,
                 userGroupFilter: match?.groupName || website,
-                websiteFilter: match?.websiteFilter || website,
-                subject: website
-                  ? `Lead Tracker — ${match?.groupName || website} website report`
-                  : value.subject,
+                websiteFilter,
+                entityFilter: rmcLead ? 'RIL_RMC' : value.entityFilter === 'RIL_RMC' ? '' : value.entityFilter,
+                subject: rmcLead
+                  ? 'RMC - Lead Management - Report'
+                  : website
+                    ? `Lead Tracker — ${match?.groupName || website} website report`
+                    : value.subject,
               });
             }}
             disabled={disabled}

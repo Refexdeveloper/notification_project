@@ -274,10 +274,153 @@ latest AS (
 EOF
 }
 
+# Pending-request JSON for the RMC MIS table.
+# Args: application_id SQL literal, process_id SQL literal, extra WHERE (alias i).
+# Workflow step is Kissflow _current_step. i.current_step is often a category array
+# such as ["Local Conveyance"] and must not be shown as the step.
+report_mis_pending_detail_json() {
+  local app_lit="${1:?application_id literal required}"
+  local proc_lit="${2:?process_id literal required}"
+  local extra_sql="${3:-true}"
+  local json
+  json="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+WITH $(report_latest_snapshot_cte "${app_lit}" "${proc_lit}")
+SELECT COALESCE(json_agg(row_to_json(t)), '[]'::json)
+FROM (
+  SELECT
+    COALESCE(
+      NULLIF(trim(i.source_payload->'Requester'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->'_created_by'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Requester'), ''),
+      '—'
+    ) AS raised_by,
+    COALESCE(
+      NULLIF(trim(i.source_payload #>> '{_current_assigned_to,0,Name}'), ''),
+      NULLIF(trim(i.source_payload->'Assigned_To'->>'Name'), ''),
+      NULLIF(trim(pend.user_name), ''),
+      '—'
+    ) AS pending_with,
+    COALESCE(
+      NULLIF(trim(i.source_payload->>'_current_step'), ''),
+      NULLIF(trim(i.source_payload->'_current_step'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Current_Step'), ''),
+      NULLIF(trim(i.source_payload->>'Step'), ''),
+      CASE
+        WHEN coalesce(i.current_step, '') ~ '^\\s*\\[' THEN NULL
+        ELSE NULLIF(trim(i.current_step), '')
+      END,
+      '—'
+    ) AS pending_step,
+    CASE
+      WHEN (${REPORT_ITEM_CREATED_AT_SQL}) IS NULL THEN NULL
+      ELSE GREATEST(
+        0,
+        ((now() AT TIME ZONE 'Asia/Kolkata')::date
+          - ((${REPORT_ITEM_CREATED_AT_SQL}) AT TIME ZONE 'Asia/Kolkata')::date)
+      )
+    END AS days_pending
+  FROM engagement_reporting.item i
+  JOIN latest l ON i.snapshot_run_id = l.snapshot_run_id
+  LEFT JOIN LATERAL (
+    SELECT u.user_name
+    FROM engagement_reporting.item_assignment ia
+    JOIN engagement_reporting.\"user\" u
+      ON u.user_id = ia.principal_id
+     AND u.environment = 'production'
+    WHERE ia.instance_id = i.instance_id
+      AND ia.snapshot_run_id = i.snapshot_run_id
+      AND ia.principal_type = 'USER'
+    ORDER BY u.user_name
+    LIMIT 1
+  ) pend ON true
+  WHERE i.process_id = ${proc_lit}
+    AND i.process_status = 'InProgress'
+    AND (${extra_sql})
+  ORDER BY days_pending DESC NULLS LAST
+  LIMIT 200
+) t;
+" 2>/dev/null | tr -d '\r' || true)"
+  if [[ -z "${json}" || "${json}" != \[* ]]; then
+    json='[]'
+  fi
+  printf '%s' "${json}"
+}
+
+# Kept for callers that still want the standalone pending-request section.
+report_mis_pending_detail_html() {
+  local repo json
+  repo="$(report_template_repo_root)"
+  json="$(report_mis_pending_detail_json "$@")"
+  MIS_PENDING_JSON="${json}" node "${repo}/services/engagement-pipeline/scripts/mis-pending-detail.js" || true
+}
+
+# Insert {{PendingDetailHtml}} into a published template that predates this section.
+report_template_ensure_pending_detail() {
+  local html_file="$1"
+  [[ -f "${html_file}" ]] || return 0
+  python3 - "${html_file}" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+html = path.read_text(encoding='utf-8')
+if '{{PendingDetailHtml}}' in html:
+    sys.exit(0)
+marker = '{{ReportBody}}'
+idx = html.find(marker)
+if idx < 0:
+    sys.exit(0)
+tr = html.rfind('<tr', 0, idx)
+if tr < 0:
+    sys.exit(0)
+path.write_text(html[:tr] + '{{PendingDetailHtml}}' + html[tr:], encoding='utf-8')
+PY
+}
+
 # MIS table row background: green when last_sign_in (YYYY-MM-DD …) is today IST.
 # Usage inside jq with --arg today "${TODAY_IST}".
 REPORT_MIS_ROW_BG_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "#dcfce7" elif (.key % 2 == 0) then "#faf9f7" else "#ffffff" end)'
 REPORT_MIS_SIGNIN_CELL_JQ='(if ((.value.last_sign_in // "") | tostring | startswith($today)) then "padding:12px 14px; border-bottom:1px solid #bbf7d0; color:#166534 !important; font-weight:bold;" else "padding:12px 14px; border-bottom:1px solid #ececea; color:#1a1a1a !important;" end)'
+
+# Exact entity-code match for RIL_RMC. OR across fields so a display name
+# (Refex / Venwind) does not hide Entity_Code. Keep aligned with
+# services/engagement-pipeline/scripts/entity-code.js.
+# Args: $1 item alias (default i). $2 mode: ril_rmc | exclude | off.
+report_entity_code_predicate() {
+  local alias="${1:-i}"
+  local mode
+  mode="$(printf '%s' "${2:-off}" | tr '[:upper:]' '[:lower:]')"
+  local p="${alias}.source_payload"
+  local match
+  match="(lower(trim(coalesce(${alias}.entity, ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Entity_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'EntityCode', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'entity_code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity_Code'->>'Name', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity_Code'->>'Value', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity_Code'->>'v', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity_Code'->>'Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Company_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Legal_Entity_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Org_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Organisation_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Organization_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Employee_Entity_Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'Id', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Entity', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'Name', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'Value', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Entity'->>'v', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Company'->>'Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Employee_entity'->>'Code', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'Employee_entity', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->'Employee_entity'->>'Name', ''))) = 'ril_rmc')"
+  case "${mode}" in
+    ril_rmc) printf '%s' "${match}" ;;
+    exclude|common) printf 'NOT %s' "${match}" ;;
+    *) printf 'true' ;;
+  esac
+}
 
 report_template_seed_for_app() {
   case "${1:-}" in
@@ -289,13 +432,32 @@ report_template_seed_for_app() {
         printf '%s' 'db/seeds/itsm-engagement-template.html'
       fi
       ;;
-    Project_Management_Tracker_A00) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
-    Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
-    Lead_Trcaker_A00) printf '%s' 'db/seeds/lead-tracker-report-template.html' ;;
-    EMS_001_A00) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
-    Expense_and_Travel_Management_A00)
-      # Entity-scoped Travel seeds (Refex / Venwind schedulers).
+    Project_Management_Tracker_A00)
       case "${ENTITY_FILTER:-${ENTITY_NAME:-}}" in
+        RIL_RMC|ril_rmc) printf '%s' 'db/seeds/pm-ril-rmc-template.html' ;;
+        *) printf '%s' 'db/seeds/pm-engagement-template.html' ;;
+      esac
+      ;;
+    Solar_Site_Expense_Governance_Syst_A00) printf '%s' 'db/seeds/solar-reinvestment-template.html' ;;
+    Lead_Trcaker_A00)
+      website_key="$(printf '%s' "${WEBSITE_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+      entity_key="$(printf '%s' "${ENTITY_FILTER:-${ENTITY_NAME:-}}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+      if [[ "${website_key}" == "rmc" && "${entity_key}" == "rilrmc" ]]; then
+        printf '%s' 'db/seeds/lead-rmc-ril-rmc-template.html'
+      else
+        printf '%s' 'db/seeds/lead-tracker-report-template.html'
+      fi
+      ;;
+    EMS_001_A00)
+      case "${ENTITY_FILTER:-${ENTITY_NAME:-}}" in
+        RIL_RMC|ril_rmc) printf '%s' 'db/seeds/expense-ril-rmc-template.html' ;;
+        *) printf '%s' 'db/seeds/expense-engagement-template.html' ;;
+      esac
+      ;;
+    Expense_and_Travel_Management_A00)
+      # Entity-scoped Travel seeds. RIL_RMC is an entity code, not a name bucket.
+      case "${ENTITY_FILTER:-${ENTITY_NAME:-}}" in
+        RIL_RMC|ril_rmc) printf '%s' 'db/seeds/travel-ril-rmc-template.html' ;;
         [Rr]efex*) printf '%s' 'db/seeds/travel-refex-template.html' ;;
         [Vv]enwind*) printf '%s' 'db/seeds/travel-venwind-template.html' ;;
         *) printf '%s' 'db/seeds/travel-engagement-template.html' ;;

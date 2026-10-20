@@ -12,6 +12,7 @@
  * Optional: PM_TASK_PROCESS_ID, PM_SUBTASK_PROCESS_ID, PM_PROJECT_BOARD_ID
  */
 const https = require('https');
+const { recordInEntityCodeScope } = require('./entity-code');
 
 const host = (process.env.KISSFLOW_HOST || 'refexgroup.kissflow.com').replace(/^https?:\/\//, '');
 const accountId = process.env.KISSFLOW_ACCOUNT_ID || '';
@@ -20,6 +21,9 @@ const keySecret = process.env.KISSFLOW_SECRET || '';
 const TASK_PROCESS = process.env.PM_TASK_PROCESS_ID || process.env.PROCESS_ID || 'Project_Sub_Task_A01';
 const SUBTASK_PROCESS = process.env.PM_SUBTASK_PROCESS_ID || 'Sub_Task_Process_A00';
 const PROJECT_BOARD = process.env.PM_PROJECT_BOARD_ID || 'Project_Management_A01';
+const ENTITY_SCOPE = String(process.env.ENTITY_FILTER || '').trim().toLowerCase() === 'ril_rmc'
+  ? 'ril_rmc'
+  : 'common';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
 
@@ -154,11 +158,13 @@ async function main() {
     process.exit(2);
   }
 
-  const [tasks, subtasks, boardCount] = await Promise.all([
+  const [taskRows, subtaskRows, boardCount] = await Promise.all([
     fetchProcessItems(TASK_PROCESS),
     fetchProcessItems(SUBTASK_PROCESS).catch(() => []),
     fetchProjectBoardCount(),
   ]);
+  const tasks = taskRows.filter((row) => recordInEntityCodeScope(row, ENTITY_SCOPE));
+  const subtasks = subtaskRows.filter((row) => recordInEntityCodeScope(row, ENTITY_SCOPE));
 
   const linked = [];
   const individual = [];
