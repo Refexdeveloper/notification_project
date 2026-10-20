@@ -16,10 +16,6 @@ import {
 } from '@/lib/itsmRecordDisplay';
 import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
 import {
-  annotateTravelFareRows,
-  fareCheckLabel,
-  fareCheckTone,
-  formatOverMedianPct,
   isTravelCoreColumn,
   travelExpandTiles,
   travelPurposeText,
@@ -127,14 +123,9 @@ export default function EmbedAppRecordsTable({
     setDateFilters({});
   }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
 
-  const fareReadyInventory = useMemo(
-    () => (travelMode ? annotateTravelFareRows(inventory) : inventory),
-    [inventory, travelMode],
-  );
-
   const scoped = useMemo(
     () => {
-      const rows = filterAppRecords(fareReadyInventory, {
+      const rows = filterAppRecords(inventory, {
         entity,
         company,
         status,
@@ -156,7 +147,7 @@ export default function EmbedAppRecordsTable({
         return String(b.request_id || '').localeCompare(String(a.request_id || ''));
       });
     },
-    [fareReadyInventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
+    [inventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
   );
 
   const columns: AppRecordColumn[] = columnsProp?.length
@@ -189,12 +180,6 @@ export default function EmbedAppRecordsTable({
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
     if (col.id === 'purpose') return displayDashText(travelPurposeText(row), '—');
-    if (col.id === 'fare_check') return displayDashText(fareCheckLabel(raw), '—');
-    if (col.id === 'over_median_pct') return displayDashText(formatOverMedianPct(raw), '—');
-    if (col.id === 'advance_days') {
-      if (raw == null || raw === '') return '—';
-      return String(raw);
-    }
     if (col.id === 'amount' || col.id === 'raised_amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
@@ -246,7 +231,7 @@ export default function EmbedAppRecordsTable({
   );
 
   const headerNoStatus = useMemo(
-    () => filterAppRecords(fareReadyInventory, {
+    () => filterAppRecords(inventory, {
       entity,
       company,
       assigned,
@@ -259,7 +244,7 @@ export default function EmbedAppRecordsTable({
       activityDates,
     }),
     [
-      fareReadyInventory,
+      inventory,
       entity,
       company,
       assigned,
@@ -531,18 +516,6 @@ export default function EmbedAppRecordsTable({
                             <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[12px] font-semibold tracking-wide text-slate-900 ring-1 ring-slate-200">
                               {displayDashText(raw, '—')}
                             </span>
-                          </td>
-                        );
-                      }
-                      if (col.id === 'fare_check') {
-                        const label = fareCheckLabel(raw);
-                        return (
-                          <td key={col.id} className="px-5 py-2.5">
-                            {label ? (
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${fareCheckTone(label)}`}>
-                                {label}
-                              </span>
-                            ) : '—'}
                           </td>
                         );
                       }

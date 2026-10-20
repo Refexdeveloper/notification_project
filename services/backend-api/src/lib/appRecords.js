@@ -34,7 +34,6 @@ const {
 } = require('./kissflowClient');
 const { classifyTicketSource, normalizeItsmPersonLabel, pickSolarStep } = require('./dashboardDisplay');
 const { projectKeyFromRaw, buildPmPortfolioFromRecords, projectKeySql } = require('./pmPortfolio');
-const { annotate: annotateTravelFare } = require('./travelFareAnalysis');
 
 const ITSM_APP_ID = 'IT_Service_Management_A00';
 const ITSM_REFEX_PROCESS_ID = 'Live_IT_Service_Request_A00';
@@ -868,22 +867,7 @@ function serializeRecordItem(it, opts = {}) {
     reopen_entered_at: it.reopen_entered_at || null,
     modified_at: it.modified_at || null,
     form_status: it.form_status || undefined,
-    fare_route: it.fare_route,
-    advance_days: it.advance_days,
-    route_median: it.route_median,
-    over_median_pct: it.over_median_pct,
-    advance_check: it.advance_check,
-    cap_check: it.cap_check,
-    lowest_fare_check: it.lowest_fare_check,
-    cabin_check: it.cabin_check,
-    fare_flags: Array.isArray(it.fare_flags) ? it.fare_flags : undefined,
-    fare_check: it.fare_check,
   };
-}
-
-function applyTravelFareAnalysis(applicationId, rows) {
-  if (!isTravelApp(applicationId)) return rows || [];
-  return annotateTravelFare(rows);
 }
 
 function recordHasProcessCompany(rec) {
@@ -1181,10 +1165,6 @@ function columnsForApp(applicationId) {
       { id: 'status', label: 'Status' },
       { id: 'process_id', label: 'Process' },
       { id: 'created_at', label: 'Created by' },
-      { id: 'fare_route', label: 'Route' },
-      { id: 'advance_days', label: 'Days ahead' },
-      { id: 'over_median_pct', label: 'vs route median' },
-      { id: 'fare_check', label: 'Fare check' },
     ];
   }
   return [
@@ -2250,7 +2230,6 @@ async function loadKissflowRecords(pool, {
           }
         }
       }
-      all = applyTravelFareAnalysis(applicationId, all);
       const filtered = dedupeRecords(filterRecordRows(all, {
         status,
         entity,
@@ -2667,7 +2646,7 @@ SELECT
       show_entity: true,
     },
     columns: columnsForApp(applicationId),
-    items: applyTravelFareAnalysis(applicationId, items
+    items: items
       .filter(isMeaningfulRecord)
       .map((it) => {
         const entityKey = String(it.entity_key || '');
@@ -2711,7 +2690,7 @@ SELECT
           project_id: it.project_key || undefined,
           project_key: it.project_key || undefined,
         });
-      })),
+      }),
   };
 }
 
@@ -2922,7 +2901,6 @@ module.exports = {
   serializeRecordItem,
   travelPlaceFieldsFromRaw,
   travelDetailFieldsFromRaw,
-  applyTravelFareAnalysis,
   overlayTravelPlacesFromItems,
   emsDetailFieldsFromRaw,
   emsSplitsFromRaw,

@@ -16,16 +16,6 @@ export type AppRecordRow = {
   process_id?: string;
   created_at?: string | null;
   amount?: number | null;
-  fare_route?: string;
-  advance_days?: number | null;
-  route_median?: number | null;
-  over_median_pct?: number | null;
-  advance_check?: string;
-  cap_check?: string;
-  lowest_fare_check?: string;
-  cabin_check?: string;
-  fare_flags?: string[];
-  fare_check?: string;
   [key: string]: unknown;
 };
 
