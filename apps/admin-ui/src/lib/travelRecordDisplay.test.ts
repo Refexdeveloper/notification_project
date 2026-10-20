@@ -5,9 +5,12 @@ import {
   TRAVEL_DASH_COLUMNS,
   TRAVEL_EXPENSE_COLUMNS,
   TRAVEL_REQUEST_COLUMNS,
+  annotateTravelBookingFareRows,
+  formatOverMedianPct,
   isTravelCoreColumn,
   travelColumnsForPack,
   travelExpandTiles,
+  travelFareRoute,
   travelPurposeText,
   travelRouteSummary,
 } from './travelRecordDisplay';
@@ -45,10 +48,16 @@ describe('travel column packs', () => {
       'to_city',
       'travel_mode',
       'amount',
+      'route_median',
+      'over_median',
+      'over_median_pct',
       'current_step',
       'status',
       'created_at',
     ]);
+    expect(isTravelCoreColumn('route_median', 'booking')).toBe(true);
+    expect(isTravelCoreColumn('over_median', 'advance')).toBe(false);
+    expect(travelColumnsForPack(null).map((c) => c.id)).not.toContain('route_median');
     expect(isTravelCoreColumn('from_city', 'booking')).toBe(true);
     expect(isTravelCoreColumn('trip_type', 'booking')).toBe(true);
     expect(isTravelCoreColumn('travel_mode', 'booking')).toBe(true);
@@ -157,5 +166,37 @@ describe('travelExpandTiles', () => {
     });
     const filled = tiles.filter((t) => t.value);
     expect(filled.map((t) => t.label)).toEqual(['Linked travel request']);
+  });
+});
+
+describe('travel booking fare columns', () => {
+  it('uses UPPER(from)-UPPER(to) and groups Chennai (MAA) with Chennai', () => {
+    expect(travelFareRoute('Chennai', 'Pune')).toBe('CHENNAI-PUNE');
+    expect(travelFareRoute('Chennai (MAA)', 'Pune')).toBe('CHENNAI-PUNE');
+  });
+
+  it('matches the sample median, above-median rupees, and percent', () => {
+    const rows = annotateTravelBookingFareRows([
+      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5605 },
+      { id: '2', travel_mode: 'Flight', from_city: 'Chennai (MAA)', to_city: 'Pune', amount: 5822 },
+      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466 },
+      { id: '4', travel_mode: 'Bus', from_city: 'Chennai', to_city: 'Pune', amount: 2000 },
+    ]);
+    expect(rows[2].route_median).toBe(5822);
+    expect(rows[2].over_median).toBe(2644);
+    expect(rows[2].over_median_pct).toBeCloseTo(2644 / 5822);
+    expect(formatOverMedianPct(rows[2].over_median_pct)).toBe('+45.4%');
+    expect(rows[3].route_median).toBeNull();
+    expect(rows[3].over_median).toBeNull();
+  });
+
+  it('leaves fare columns empty when a route has fewer than 3 flights', () => {
+    const rows = annotateTravelBookingFareRows([
+      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 8000 },
+      { id: '2', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 9000 },
+    ]);
+    expect(rows[0].route_median).toBeNull();
+    expect(rows[0].over_median).toBeNull();
+    expect(rows[0].over_median_pct).toBeNull();
   });
 });

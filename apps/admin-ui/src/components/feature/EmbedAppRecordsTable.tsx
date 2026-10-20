@@ -16,6 +16,8 @@ import {
 } from '@/lib/itsmRecordDisplay';
 import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
 import {
+  annotateTravelBookingFareRows,
+  formatOverMedianPct,
   isTravelCoreColumn,
   travelExpandTiles,
   travelPurposeText,
@@ -123,9 +125,14 @@ export default function EmbedAppRecordsTable({
     setDateFilters({});
   }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
 
+  const fareReadyInventory = useMemo(
+    () => (travelMode && travelPackKind === 'booking' ? annotateTravelBookingFareRows(inventory) : inventory),
+    [inventory, travelMode, travelPackKind],
+  );
+
   const scoped = useMemo(
     () => {
-      const rows = filterAppRecords(inventory, {
+      const rows = filterAppRecords(fareReadyInventory, {
         entity,
         company,
         status,
@@ -147,7 +154,7 @@ export default function EmbedAppRecordsTable({
         return String(b.request_id || '').localeCompare(String(a.request_id || ''));
       });
     },
-    [inventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
+    [fareReadyInventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
   );
 
   const columns: AppRecordColumn[] = columnsProp?.length
@@ -180,6 +187,12 @@ export default function EmbedAppRecordsTable({
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
     if (col.id === 'purpose') return displayDashText(travelPurposeText(row), '—');
+    if (col.id === 'route_median' || col.id === 'over_median') {
+      if (raw == null || raw === '') return '—';
+      const n = typeof raw === 'number' ? raw : Number(raw);
+      return Number.isFinite(n) ? formatInr(n) : '—';
+    }
+    if (col.id === 'over_median_pct') return displayDashText(formatOverMedianPct(raw), '—');
     if (col.id === 'amount' || col.id === 'raised_amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
@@ -231,7 +244,7 @@ export default function EmbedAppRecordsTable({
   );
 
   const headerNoStatus = useMemo(
-    () => filterAppRecords(inventory, {
+    () => filterAppRecords(fareReadyInventory, {
       entity,
       company,
       assigned,
@@ -244,7 +257,7 @@ export default function EmbedAppRecordsTable({
       activityDates,
     }),
     [
-      inventory,
+      fareReadyInventory,
       entity,
       company,
       assigned,
@@ -507,6 +520,13 @@ export default function EmbedAppRecordsTable({
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
                             {formatInr(typeof raw === 'number' ? raw : Number(raw))}
+                          </td>
+                        );
+                      }
+                      if (col.id === 'route_median' || col.id === 'over_median' || col.id === 'over_median_pct') {
+                        return (
+                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
+                            {cellValue(row, col)}
                           </td>
                         );
                       }

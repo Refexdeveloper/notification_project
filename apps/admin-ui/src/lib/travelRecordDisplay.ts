@@ -26,6 +26,13 @@ export const TRAVEL_DASH_COLUMNS: AppRecordColumn[] = [
   ...TRAVEL_TAIL_COLUMNS,
 ];
 
+/** Shown only after Travel Booking KPI click. */
+export const TRAVEL_BOOKING_FARE_COLUMNS: AppRecordColumn[] = [
+  { id: 'route_median', label: 'Route median ₹' },
+  { id: 'over_median', label: 'Above median ₹' },
+  { id: 'over_median_pct', label: 'Above median %' },
+];
+
 export const TRAVEL_REQUEST_COLUMNS: AppRecordColumn[] = [
   ...TRAVEL_SHARED_COLUMNS,
   { id: 'trip_type', label: 'Trip type' },
@@ -33,6 +40,7 @@ export const TRAVEL_REQUEST_COLUMNS: AppRecordColumn[] = [
   { id: 'to_city', label: 'To place' },
   { id: 'travel_mode', label: 'Travel mode' },
   { id: 'amount', label: 'Booking amount' },
+  ...TRAVEL_BOOKING_FARE_COLUMNS,
   ...TRAVEL_TAIL_COLUMNS,
 ];
 
@@ -88,6 +96,87 @@ export function prettyTravelTripType(value: unknown): string {
   if (key.includes('round')) return 'Round trip';
   if (key.includes('oneway') || key === 'one') return 'One way';
   return raw;
+}
+
+const TRAVEL_FARE_MIN_SAMPLES = 3;
+
+function isFlightTravelMode(travelMode: unknown): boolean {
+  const text = String(travelMode || '').trim().toLowerCase();
+  if (!text) return false;
+  if (text.includes('flight')) return true;
+  return /(^|[^a-z])air([^a-z]|$)/.test(text);
+}
+
+function fareRouteCity(value: unknown): string {
+  let text = String(value || '').trim();
+  if (!text || text === '—') return '';
+  text = text.replace(/\s*\([A-Za-z]{3}\)\s*$/g, '').trim();
+  return text.toUpperCase();
+}
+
+export function travelFareRoute(fromCity: unknown, toCity: unknown): string {
+  const from = fareRouteCity(fromCity);
+  const to = fareRouteCity(toCity);
+  if (!from || !to) return '';
+  return `${from}-${to}`;
+}
+
+function medianAmount(values: number[]): number | null {
+  const sorted = values.filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export function formatOverMedianPct(value: unknown): string {
+  if (value == null || value === '') return '';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  const pct = Math.round(n * 1000) / 10;
+  if (pct === 0) return '0%';
+  const shown = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
+  return `${pct > 0 ? '+' : ''}${shown}%`;
+}
+
+/** Route median / fare difference for Travel Booking rows only. Non-flight or <3 samples stay empty. */
+export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRow[] {
+  const list = Array.isArray(rows) ? rows : [];
+  const routeAmounts = new Map<string, number[]>();
+  for (const row of list) {
+    if (!isFlightTravelMode(row.travel_mode)) continue;
+    const route = travelFareRoute(row.from_city, row.to_city);
+    if (!route) continue;
+    const amount = Number(row.amount);
+    if (!Number.isFinite(amount)) continue;
+    const bucket = routeAmounts.get(route) || [];
+    bucket.push(amount);
+    routeAmounts.set(route, bucket);
+  }
+  const routeMedians = new Map<string, number>();
+  for (const [route, amounts] of routeAmounts.entries()) {
+    if (amounts.length < TRAVEL_FARE_MIN_SAMPLES) continue;
+    const mid = medianAmount(amounts);
+    if (mid != null) routeMedians.set(route, mid);
+  }
+
+  return list.map((row) => {
+    if (!isFlightTravelMode(row.travel_mode)) {
+      return { ...row, route_median: null, over_median: null, over_median_pct: null };
+    }
+    const route = travelFareRoute(row.from_city, row.to_city);
+    const routeMedian = route ? routeMedians.get(route) : undefined;
+    const amount = Number(row.amount);
+    if (routeMedian == null || !Number.isFinite(amount)) {
+      return { ...row, route_median: null, over_median: null, over_median_pct: null };
+    }
+    const overMedian = amount - routeMedian;
+    return {
+      ...row,
+      route_median: routeMedian,
+      over_median: overMedian,
+      over_median_pct: routeMedian === 0 ? null : overMedian / routeMedian,
+    };
+  });
 }
 
 export function travelRouteSummary(row: AppRecordRow): TravelRouteSummary | null {
