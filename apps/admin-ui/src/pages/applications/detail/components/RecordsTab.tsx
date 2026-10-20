@@ -16,6 +16,7 @@ import {
 import EmbedKpiCard, { NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
 import type { KissflowApplication } from '@/mocks/applications';
 import { resolveBackendApplicationId } from '@/services/applicationsApi';
+import { mergeLeadWebsiteFilterOptions } from '@/services/leadReport';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadApplicationRecordInventory,
@@ -305,7 +306,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
     if (leadMode) {
       const rows = websiteCountsFromRecords(stampedInventory);
       return sortCompanyFilterOptions(ensureFilterOption(
-        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+        mergeLeadWebsiteFilterOptions(rows),
         company,
       ));
     }

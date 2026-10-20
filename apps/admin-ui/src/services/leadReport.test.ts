@@ -3,6 +3,7 @@ import {
   dedupeLeadItems,
   isCountableLeadForReport,
   isLeadDraftItem,
+  mergeLeadWebsiteFilterOptions,
 } from './leadReport';
 
 const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -33,6 +34,24 @@ describe('lead report dashboard parity', () => {
         '3iMedtech',
       ),
     ).toBe(true);
+  });
+
+  it('keeps RMC in the website dropdown when no live RMC leads exist', () => {
+    const options = mergeLeadWebsiteFilterOptions([
+      { id: 'Modepro', label: 'Modepro', count: 4 },
+    ]);
+    expect(options[0]).toEqual({ id: 'all', label: 'All websites' });
+    expect(options.map((o) => o.id)).toEqual([
+      'all',
+      '3iMedtech',
+      'Refex Mobility',
+      'Adonis',
+      'Modepro',
+      'Venwind',
+      'RMC',
+    ]);
+    expect(options.find((o) => o.id === 'Modepro')?.count).toBe(4);
+    expect(options.find((o) => o.id === 'RMC')?.count).toBeUndefined();
   });
 
   it('dedupes by Kissflow id', () => {

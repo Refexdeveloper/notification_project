@@ -71,7 +71,7 @@ async function main() {
     total_leads: built.totalLeads,
     source: built.source || 'live',
   };
-  if (!built.totalLeads) {
+  if (!built.totalLeads && !rmcLead) {
     throw new Error(`Refusing to write 0-count Lead Tracker HTML for ${websiteFilter}`);
   }
   fs.writeFileSync(path.join(auditDir, `runbook-17-${groupSlug}-${timestamp}.json`), JSON.stringify(audit, null, 2));

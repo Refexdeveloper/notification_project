@@ -23,6 +23,7 @@ assert.strictEqual(
   true,
 );
 assert.strictEqual(isRilRmcRecord({ Company_Code: { Value: 'RIL_RMC' } }), true);
+assert.strictEqual(isRilRmcRecord({ employee_entity: 'RIL_RMC', Entity_1: 'Refex' }), true);
 assert.strictEqual(isRilRmcRecord({ Entity: 'Venwind' }), false);
 assert.strictEqual(isRilRmcRecord({ Entity: 'Refex', Entity_Code: 'RIL_REF' }), false);
 assert.strictEqual(isRilRmcRecord({}), false);

@@ -25,6 +25,10 @@ describe('travel column packs', () => {
       'current_step',
       'status',
       'created_at',
+      'fare_route',
+      'advance_days',
+      'over_median_pct',
+      'fare_check',
     ]);
     expect(isTravelCoreColumn('from_city')).toBe(false);
     expect(isTravelCoreColumn('trip_type')).toBe(false);
@@ -48,6 +52,10 @@ describe('travel column packs', () => {
       'current_step',
       'status',
       'created_at',
+      'fare_route',
+      'advance_days',
+      'over_median_pct',
+      'fare_check',
     ]);
     expect(isTravelCoreColumn('from_city', 'booking')).toBe(true);
     expect(isTravelCoreColumn('trip_type', 'booking')).toBe(true);
@@ -157,5 +165,29 @@ describe('travelExpandTiles', () => {
     });
     const filled = tiles.filter((t) => t.value);
     expect(filled.map((t) => t.label)).toEqual(['Linked travel request']);
+  });
+
+  it('adds fare-check tiles only after analysis is present', () => {
+    const tiles = travelExpandTiles({
+      id: '5',
+      travel_mode: 'Air',
+      fare_check: 'Flagged',
+      advance_check: 'fail',
+      cap_check: 'not evaluated',
+      lowest_fare_check: 'not evaluated',
+      cabin_check: 'not evaluated',
+    });
+    const fare = tiles.filter((t) => [
+      'Advance purchase',
+      'Fare cap',
+      'Lowest logical fare',
+      'Cabin class',
+    ].includes(t.label));
+    expect(fare.map((t) => t.value)).toEqual([
+      'Fail',
+      'Not evaluated',
+      'Not evaluated',
+      'Not evaluated',
+    ]);
   });
 });

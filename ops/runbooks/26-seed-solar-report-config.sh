@@ -21,7 +21,8 @@ PROCESS_ID="${PROCESS_ID:-Technician_Reimbursement__YTLM}"
 TEMPLATE_ID="${SEED_TEMPLATE_ID:-a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1}"
 REPORT_DEF_ID="${SEED_REPORT_DEF_ID:-b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2}"
 REPORT_DEF_VERSION_ID="${SEED_REPORT_DEF_VERSION_ID:-c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3}"
-SCHEDULE_ID="${SEED_SCHEDULE_ID:-d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4}"
+# Live Solar schedule. Do not reuse d4d4d4d4 — that UUID is the RMC PM schedule.
+SCHEDULE_ID="${SEED_SCHEDULE_ID:-409a2a2b-499c-4222-9750-4bfe13a741cc}"
 
 TEMPLATE_NAME="Solar Reinvestment Request Report"
 SCHEDULE_NAME="Daily Solar Reinvestment Request report"

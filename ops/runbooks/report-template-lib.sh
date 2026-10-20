@@ -414,7 +414,8 @@ report_entity_code_predicate() {
   match+=" OR lower(trim(coalesce(${p}->'Company'->>'Code', ''))) = 'ril_rmc'"
   match+=" OR lower(trim(coalesce(${p}->'Employee_entity'->>'Code', ''))) = 'ril_rmc'"
   match+=" OR lower(trim(coalesce(${p}->>'Employee_entity', ''))) = 'ril_rmc'"
-  match+=" OR lower(trim(coalesce(${p}->'Employee_entity'->>'Name', ''))) = 'ril_rmc')"
+  match+=" OR lower(trim(coalesce(${p}->'Employee_entity'->>'Name', ''))) = 'ril_rmc'"
+  match+=" OR lower(trim(coalesce(${p}->>'employee_entity', ''))) = 'ril_rmc')"
   case "${mode}" in
     ril_rmc) printf '%s' "${match}" ;;
     exclude|common) printf 'NOT %s' "${match}" ;;

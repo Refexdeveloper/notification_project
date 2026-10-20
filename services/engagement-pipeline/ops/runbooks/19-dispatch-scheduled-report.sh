@@ -185,16 +185,11 @@ dispatch_pm_style_process() {
       export FULL_INGEST=true
     fi
     if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
-      log "Live ingest failed for ${app_name} — trying last cached HTML"
-      if bash "${REPO_ROOT}/ops/runbooks/load-cached-report-html.sh" "$(report_cache_key)" "${latest}" \
-        || bash "${REPO_ROOT}/ops/runbooks/load-latest-cached-report-html.sh" "${APPLICATION_ID}" "${latest}" "${slug}:"; then
-        export REPORT_FILE_OVERRIDE="${latest}"
-        export DELIVERY_KIND="test"
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
-        log "${app_name} test send completed from last cache"
-        return 0
+      if process_has_snapshot "${PROCESS_ID}"; then
+        log "Live ingest failed for ${app_name} — rendering from existing snapshot (entity=${ENTITY_FILTER:-common})"
+      else
+        stop "Live ingest failed and no ${app_name} snapshot exists. Fix ingest, then retry Test Send."
       fi
-      stop "Live ingest failed and no cached ${app_name} report exists. Fix ingest, then retry Test Send."
     fi
     send_test_report \
       "${latest}" \
@@ -203,14 +198,28 @@ dispatch_pm_style_process() {
     log "${app_name} test send completed"
   else
     log "Step 1/3: Ingest latest Kissflow data for ${app_name}"
-    if process_has_snapshot "${PROCESS_ID}"; then
-      export FULL_INGEST=false
-      log "Incremental sync for ${PROCESS_ID} (delta since last watermark)"
+    local entity_key
+    entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    # Travel_Expense_A00 admin list 403s / hangs with --retry-all-errors. Live
+    # RMC Expense 504'd at 30m on 19 Oct. Snapshot already has RIL_RMC claims.
+    if [[ "${entity_key}" == "rilrmc" ]] && process_has_snapshot "${PROCESS_ID}"; then
+      log "RIL_RMC ${app_name} — snapshot present, skip ingest (avoids Travel_Expense 403/timeout)"
     else
-      export FULL_INGEST=true
-      log "No snapshot yet — FULL_INGEST for ${PROCESS_ID}"
+      if process_has_snapshot "${PROCESS_ID}"; then
+        export FULL_INGEST=false
+        log "Incremental sync for ${PROCESS_ID} (delta since last watermark)"
+      else
+        export FULL_INGEST=true
+        log "No snapshot yet — FULL_INGEST for ${PROCESS_ID}"
+      fi
+      if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
+        if process_has_snapshot "${PROCESS_ID}"; then
+          log "WARNING: ingest failed for ${app_name} — rendering from existing snapshot (entity=${ENTITY_FILTER:-common})"
+        else
+          stop "Ingest failed and no ${app_name} snapshot exists"
+        fi
+      fi
     fi
-    bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"
     log "Step 2/3: Rendering ${app_name} report"
     bash "${render_script}"
     log "Step 3/3: Sending ${app_name} report"
@@ -288,9 +297,25 @@ dispatch_travel_usage_report() {
     bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
     log "Travel Management test send completed (${ENTITY_FILTER})"
   else
-    log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
-    export FULL_INGEST=false
-    ingest_travel_processes || stop "Travel ingest failed for every process"
+    travel_entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    if [[ "${travel_entity_key}" == "rilrmc" ]]; then
+      travel_ready=1
+      for pid in ${TRAVEL_PROCESS_IDS}; do
+        [[ -n "${pid}" ]] || continue
+        process_has_snapshot "${pid}" || travel_ready=0
+      done
+      if [[ "${travel_ready}" -eq 1 ]]; then
+        log "Step 1/3: RIL_RMC Travel — snapshots present, skip ingest (avoids 17:00 timeout with other RMC jobs)"
+      else
+        log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
+        export FULL_INGEST=false
+        ingest_travel_processes || stop "Travel ingest failed for every process"
+      fi
+    else
+      log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
+      export FULL_INGEST=false
+      ingest_travel_processes || stop "Travel ingest failed for every process"
+    fi
     log "Step 2/3: Rendering ${ENTITY_FILTER} Travel usage report"
     bash "${render_script}"
     log "Step 3/3: Sending ${ENTITY_FILTER} Travel usage report"
@@ -529,18 +554,23 @@ case "${APPLICATION_ID}" in
         "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/14-render-pm-html-report.sh"
       log "PM test send completed"
     else
-      log "Step 1/3: Ingest latest Kissflow PM tasks into PostgreSQL"
-      export FULL_INGEST=true
       export PROCESS_ID="${PROCESS_ID:-Project_Sub_Task_A01}"
-      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
-      log "Step 1b/3: Ingest PM sub-tasks (${PM_SUBTASK_PROCESS_ID})"
-      (
-        export PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
-        export PM_PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
-        export PROCESS_NAME="Sub Task"
+      pm_entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+      if [[ "${pm_entity_key}" == "rilrmc" ]] && process_has_snapshot "${PROCESS_ID}"; then
+        log "Step 1/3: RIL_RMC PM — snapshot present, skip full ingest (avoids 17:00 timeout with other RMC jobs)"
+      else
+        log "Step 1/3: Ingest latest Kissflow PM tasks into PostgreSQL"
         export FULL_INGEST=true
         bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
-      ) || log "WARNING: sub-task ingest failed — live portfolio overlay still counts Sub_Task_Process_A00"
+        log "Step 1b/3: Ingest PM sub-tasks (${PM_SUBTASK_PROCESS_ID})"
+        (
+          export PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+          export PM_PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+          export PROCESS_NAME="Sub Task"
+          export FULL_INGEST=true
+          bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
+        ) || log "WARNING: sub-task ingest failed — live portfolio overlay still counts Sub_Task_Process_A00"
+      fi
       log "Step 2/3: Rendering PM portfolio report"
       bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/14-render-pm-html-report.sh"
       log "Step 3/3: Sending PM report"

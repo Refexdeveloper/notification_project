@@ -81,6 +81,70 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  log "RIL_RMC Expense fast path — seed template + snapshot counts (no process-wide SQL)"
+  export PGOPTIONS="${PGOPTIONS:--c statement_timeout=20000}"
+  PM_SUMMARY_JSON="$(psql "${PG_CONN_STRING}" -t -A -c "
+    WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'")
+    SELECT json_build_object(
+      'total_tasks', count(*),
+      'pending_tasks', count(*) FILTER (WHERE i.process_status = 'InProgress'),
+      'completed_tasks', count(*) FILTER (WHERE i.process_status = 'Completed'),
+      'opened_today', 0,
+      'closed_today', 0
+    )
+    FROM engagement_reporting.item i, latest l
+    WHERE i.snapshot_run_id = l.snapshot_run_id
+      AND i.process_id = '${PM_PROCESS_ID}'
+      AND (${ENTITY_CODE_SQL});
+  " 2>/dev/null | tr -d '\r' || true)"
+  if ! jq -e . >/dev/null 2>&1 <<< "${PM_SUMMARY_JSON:-}"; then
+    PM_SUMMARY_JSON='{"total_tasks":0,"pending_tasks":0,"completed_tasks":0,"opened_today":0,"closed_today":0}'
+  fi
+  PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_ROWS_HTML='<tr><td colspan="6" style="padding:14px; color:#6b6b6b;">No RIL_RMC expense claims in this period.</td></tr>'
+  GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
+  TEMPLATE_SRC="$(mktemp)"
+  VARS_JSON="$(mktemp)"
+  trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
+  RIL_SEED="$(report_template_repo_root)/db/seeds/expense-ril-rmc-template.html"
+  [[ -f "${RIL_SEED}" ]] || stop "Missing ${RIL_SEED}"
+  cp "${RIL_SEED}" "${TEMPLATE_SRC}"
+  jq -n \
+    --arg ReportTitle "RMC - Expense Management - Report" \
+    --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+    --arg TotalTasks "${PM_TOTAL}" \
+    --arg PendingTasks "${PM_PENDING}" \
+    --arg CompletedTasks "${PM_COMPLETED}" \
+    --arg OpenedToday "0" \
+    --arg ClosedToday "0" \
+    --arg TotalUsers "0" \
+    --arg SignedInToday "0" \
+    --arg UserTableHtml "${PM_ROWS_HTML}" \
+    --arg PendingDetailHtml "" \
+    --arg ReportBody "" \
+    --arg EntityCode "" \
+    --arg EntityName "" \
+    --arg EntityScope "" \
+    '{
+      ReportTitle:$ReportTitle, ReportDate:$ReportDate, EntityCode:$EntityCode, EntityName:$EntityName, EntityScope:$EntityScope,
+      TotalTasks:$TotalTasks, PendingTasks:$PendingTasks, CompletedTasks:$CompletedTasks,
+      TotalClaims:$TotalTasks, PendingClaims:$PendingTasks, ClosedClaims:$CompletedTasks,
+      OpenedToday:$OpenedToday, ClosedToday:$ClosedToday, TotalUsers:$TotalUsers, SignedInToday:$SignedInToday,
+      UserTableHtml:$UserTableHtml, PendingDetailHtml:$PendingDetailHtml, ReportBody:$ReportBody
+    }' > "${VARS_JSON}"
+  report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
+    || stop "Failed to render RIL_RMC Expense template."
+  cp "${OUTPUT_FILE}" "${LATEST_FILE}"
+  printf '{"action":"RENDER_PROCESS_HTML_REPORT","mode":"ril_rmc_fast","summary":%s}\n' "${PM_SUMMARY_JSON}" > "${AUDIT_FILE}"
+  log "expense report rendered successfully (RIL_RMC fast path)"
+  printf '\nOutput file:\n%s\n' "${OUTPUT_FILE}"
+  printf '\nLatest (stable path):\n%s\n' "${LATEST_FILE}"
+  exit 0
+fi
+
 apply_template_branding_from_pg
 refresh_user_last_sign_ins_for_process "${APPLICATION_ID}" "${PROCESS_ID}"
 

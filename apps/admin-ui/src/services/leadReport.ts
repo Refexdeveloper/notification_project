@@ -56,6 +56,30 @@ export const LEAD_TRACKER_SALES_GROUPS = [
   },
 ] as const;
 
+/** Scheduler + dashboard Website dropdown. Catalog always includes RMC even when no live rows. */
+export function mergeLeadWebsiteFilterOptions(
+  live: Array<{ id: string; label: string; count?: number }> = [],
+): Array<{ id: string; label: string; count?: number }> {
+  const remaining = new Map<string, { id: string; label: string; count?: number }>();
+  for (const row of live) {
+    const key = String(row.label || row.id || '').trim().toLowerCase();
+    if (!key) continue;
+    remaining.set(key, row);
+  }
+  const catalog = LEAD_TRACKER_SALES_GROUPS.map((g) => {
+    const hit = remaining.get(g.websiteFilter.toLowerCase()) || remaining.get(g.groupName.toLowerCase());
+    if (hit) {
+      remaining.delete(g.websiteFilter.toLowerCase());
+      remaining.delete(g.groupName.toLowerCase());
+    }
+    return { id: g.websiteFilter, label: g.groupName, count: hit?.count };
+  });
+  const extras = [...remaining.values()].sort((a, b) =>
+    String(a.label || a.id).localeCompare(String(b.label || b.id)),
+  );
+  return [{ id: 'all', label: 'All websites' }, ...catalog, ...extras];
+}
+
 export function resolveLeadCompany(
   value = '',
 ): (typeof LEAD_TRACKER_SALES_GROUPS)[number] | undefined {

@@ -870,7 +870,6 @@ function loadRmcLeadTemplate() {
 async function buildRmcLeadReport() {
   const {
     RMC_LEAD_REPORT_NAME,
-    isRmcRilLead,
     leadRequestFromRecord,
     summarizeRequests,
     renderRequestTableHtml,
@@ -890,12 +889,16 @@ async function buildRmcLeadReport() {
     })),
   ];
   const leads = await enrichLeadsWithDetails(host, accountId, keyId, keySecret, listLeads);
-  const matched = filterLeadsForReport(leads, 'RMC').filter((lead) => isRmcRilLead(lead));
+  // Schedule identity is Website=RMC + entity RIL_RMC. Lead Tracker has no Entity_Code
+  // field (Website_and_form only), so rows are FY RMC-website leads — same countable
+  // rule as Modepro/Adonis. Do not refuse 0: empty RMC HTML must still send.
+  const matched = filterLeadsForReport(leads, 'RMC');
   const requestRows = matched.map((lead) => leadRequestFromRecord(lead));
   const counts = summarizeRequests(requestRows);
-  if (!counts.total) {
-    throw new Error('Lead Management RMC report is 0 for Form/Website RMC and entity code RIL_RMC — refusing to send');
-  }
+  const websites = [...new Set(leads.map((lead) => extractWebsite(lead)).filter(Boolean))].slice(0, 20);
+  console.warn(
+    `Lead Management RMC: items=${leads.length} websiteRmc=${matched.length} websites=${websites.join('|') || 'none'}`,
+  );
   const date = new Date().toLocaleString('en-IN', {
     timeZone: TZ,
     year: 'numeric',

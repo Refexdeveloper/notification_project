@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ops/runbooks/43-seed-ril-rmc-report-config.sh
 #
-# Idempotent seed: active 17:00 Asia/Kolkata RMC schedules for
+# Idempotent seed: active Asia/Kolkata RMC schedules for
 # Lead Management, Travel Management, Expense Management, and Project Management.
+# Staggered so the four jobs do not share the 17:00 Cloud Run slot (max 3 instances).
 # To: anil.kulkarni@refex.co.in
 # Cc: sudharshan.nc@refex.co.in, pravinkumar.raja@refex.co.in, gowtham.c@refex.co.in,
 #     srivaths.varadharajan@refex.co.in, lalitha.u@refex.co.in
 # Common schedules stay on their existing templates and exclude entity code RIL_RMC.
+# PM schedule UUID d4d4d4d4 is live in production — do not reuse it for Solar.
 #
 set -euo pipefail
 
@@ -45,6 +47,7 @@ seed_one() {
   local scope="${11}"
   local legacy_scheduler_id="${12}"
   local website_filter="${13:-}"
+  local cron_expression="${14:-${CRON_EXPRESSION}}"
   local html="${REPO_ROOT}/${content_ref}"
   [[ -f "${html}" ]] || stop "Template HTML not found: ${html}"
   local checksum
@@ -62,7 +65,7 @@ seed_one() {
   cc_values="${cc_values%,}"
   [[ -n "${cc_values}" ]] || stop "At least one Cc address is required."
 
-  log "Seeding ${schedule_name} (${application_id}, ${CRON_EXPRESSION} ${TIMEZONE}, active)"
+  log "Seeding ${schedule_name} (${application_id}, ${cron_expression} ${TIMEZONE}, active)"
   psql "${PG_CONN}" -v ON_ERROR_STOP=1 <<SQL
 BEGIN;
 
@@ -140,7 +143,7 @@ INSERT INTO engagement_reporting.report_schedule (
 VALUES (
   '${schedule_id}'::uuid,
   '${report_def_version_id}'::uuid,
-  '${CRON_EXPRESSION}',
+  '${cron_expression}',
   '${TIMEZONE}',
   true,
   'daily:${application_id}:ril_rmc:${ENVIRONMENT}'
@@ -173,7 +176,7 @@ WHERE rt.report_template_id = rtv.report_template_id
   AND rt.name = '${template_name}'
   AND rtv.version_number = 1;
 "
-  printf 'scope=%s schedule=%s cron=%s to=%s cc=%s\n' "${scope}" "${schedule_id}" "${CRON_EXPRESSION}" "${TO_EMAIL}" "${CC_EMAILS}"
+  printf 'scope=%s schedule=%s cron=%s to=%s cc=%s\n' "${scope}" "${schedule_id}" "${cron_expression}" "${TO_EMAIL}" "${CC_EMAILS}"
 }
 
 seed_one \
@@ -189,7 +192,8 @@ seed_one \
   "RMC - Lead Management - Report" \
   "lead" \
   "sch-rmc-lead-daily" \
-  "RMC"
+  "RMC" \
+  "0 17 * * *"
 
 seed_one \
   "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1" \
@@ -203,7 +207,9 @@ seed_one \
   "Travel_Management_A02" \
   "RMC - Travel Management - Report" \
   "travel" \
-  "sch-ril-rmc-travel-daily"
+  "sch-ril-rmc-travel-daily" \
+  "" \
+  "8 17 * * *"
 
 seed_one \
   "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1" \
@@ -217,7 +223,9 @@ seed_one \
   "Travel_Expense_A00" \
   "RMC - Expense Management - Report" \
   "expense" \
-  "sch-ril-rmc-expense-daily"
+  "sch-ril-rmc-expense-daily" \
+  "" \
+  "4 17 * * *"
 
 seed_one \
   "d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1" \
@@ -231,6 +239,8 @@ seed_one \
   "Project_Sub_Task_A01" \
   "RMC - Project Management - Report" \
   "pm" \
-  "sch-ril-rmc-pm-daily"
+  "sch-ril-rmc-pm-daily" \
+  "" \
+  "2 17 * * *"
 
-log "RMC schedules seeded active at 17:00 ${TIMEZONE} (To ${TO_EMAIL}, Cc ${CC_EMAILS})."
+log "RMC schedules seeded active ${TIMEZONE} (Lead 17:00, PM 17:02, Expense 17:04, Travel 17:08). To ${TO_EMAIL}, Cc ${CC_EMAILS}."

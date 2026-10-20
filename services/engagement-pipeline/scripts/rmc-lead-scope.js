@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * Lead Management report that is sent only when both are true:
+ * Lead Management RMC schedule identity:
  *   Form/Website = RMC
- *   Entity code = RIL_RMC
+ *   Entity filter = RIL_RMC (routes this template; Lead Tracker has no Entity_Code field)
  *
+ * Rows in the email are FY Website=RMC leads (same countable rule as Modepro).
  * Other Lead Tracker websites keep the existing sales-person email.
  */
 

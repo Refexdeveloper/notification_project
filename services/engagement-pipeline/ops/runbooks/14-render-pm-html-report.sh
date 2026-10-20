@@ -76,11 +76,144 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  log "RIL_RMC PM fast path — seed template + snapshot counts (no process-wide SQL)"
+  export PGOPTIONS="${PGOPTIONS:--c statement_timeout=20000}"
+  PM_SUMMARY_JSON="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
+    WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'")
+    SELECT json_build_object(
+      'total_tasks', count(*),
+      'pending_tasks', count(*) FILTER (WHERE i.process_status = 'InProgress'),
+      'completed_tasks', count(*) FILTER (WHERE i.process_status = 'Completed'),
+      'opened_today', 0,
+      'closed_today', 0
+    )
+    FROM engagement_reporting.item i, latest l
+    WHERE i.snapshot_run_id = l.snapshot_run_id
+      AND i.process_id = '${PM_PROCESS_ID}'
+      AND (${ENTITY_CODE_SQL});
+  " 2>/dev/null | tr -d '\r' || true)"
+  if ! jq -e . >/dev/null 2>&1 <<< "${PM_SUMMARY_JSON:-}"; then
+    PM_SUMMARY_JSON='{"total_tasks":0,"pending_tasks":0,"completed_tasks":0,"opened_today":0,"closed_today":0}'
+  fi
+  PM_USERS_JSON='[]'
+  PM_ROWS_HTML='<tr><td colspan="6" style="padding:14px; color:#6b6b6b;">No RIL_RMC project tasks in this period.</td></tr>'
+  PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  PM_OPENED_TODAY="0"
+  PM_CLOSED_TODAY="0"
+  PM_TOTAL_PROJECTS="0"
+  PM_OPEN_PROJECTS="0"
+  PM_COMPLETED_PROJECTS="0"
+  PM_LINKED_TASKS="0"
+  PM_INDIVIDUAL="0"
+  PM_INDIVIDUAL_PENDING="0"
+  PM_INDIVIDUAL_COMPLETED="0"
+  PM_TOTAL_SUBTASKS="0"
+  PM_PENDING_SUBTASKS="0"
+  PM_COMPLETED_SUBTASKS="0"
+  PM_TOTAL_USERS="0"
+  PM_SIGNED_IN_TODAY="0"
+  GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
+  TEMPLATE_SRC="$(mktemp)"
+  VARS_JSON="$(mktemp)"
+  trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
+  RIL_SEED="$(report_template_repo_root)/db/seeds/pm-ril-rmc-template.html"
+  [[ -f "${RIL_SEED}" ]] || stop "Missing ${RIL_SEED}"
+  cp "${RIL_SEED}" "${TEMPLATE_SRC}"
+  jq -n \
+    --arg ReportTitle "RMC - Project Management - Report" \
+    --arg ReportDate "${GENERATED_AT_DISPLAY}" \
+    --arg TotalProjects "${PM_TOTAL_PROJECTS}" \
+    --arg OpenProjects "${PM_OPEN_PROJECTS}" \
+    --arg CompletedProjects "${PM_COMPLETED_PROJECTS}" \
+    --arg TotalTasks "${PM_TOTAL}" \
+    --arg PendingTasks "${PM_PENDING}" \
+    --arg CompletedTasks "${PM_COMPLETED}" \
+    --arg LinkedTasks "${PM_LINKED_TASKS}" \
+    --arg IndividualTasks "${PM_INDIVIDUAL}" \
+    --arg IndividualPending "${PM_INDIVIDUAL_PENDING}" \
+    --arg IndividualCompleted "${PM_INDIVIDUAL_COMPLETED}" \
+    --arg TotalSubTasks "${PM_TOTAL_SUBTASKS}" \
+    --arg PendingSubTasks "${PM_PENDING_SUBTASKS}" \
+    --arg CompletedSubTasks "${PM_COMPLETED_SUBTASKS}" \
+    --arg OpenedToday "${PM_OPENED_TODAY}" \
+    --arg ClosedToday "${PM_CLOSED_TODAY}" \
+    --arg TotalUsers "${PM_TOTAL_USERS}" \
+    --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
+    --arg UserTableHtml "${PM_ROWS_HTML}" \
+    --arg PendingDetailHtml "" \
+    --arg ReportBody "" \
+    --arg EntityCode "" \
+    --arg EntityName "" \
+    --arg EntityScope "" \
+    '{
+      ReportTitle:$ReportTitle, ReportDate:$ReportDate, EntityCode:$EntityCode, EntityName:$EntityName, EntityScope:$EntityScope,
+      TotalProjects:$TotalProjects, OpenProjects:$OpenProjects, CompletedProjects:$CompletedProjects,
+      TotalTasks:$TotalTasks, PendingTasks:$PendingTasks, CompletedTasks:$CompletedTasks, LinkedTasks:$LinkedTasks,
+      IndividualTasks:$IndividualTasks, IndividualPending:$IndividualPending, IndividualCompleted:$IndividualCompleted,
+      TotalSubTasks:$TotalSubTasks, PendingSubTasks:$PendingSubTasks, CompletedSubTasks:$CompletedSubTasks,
+      OpenedToday:$OpenedToday, ClosedToday:$ClosedToday, TotalUsers:$TotalUsers, SignedInToday:$SignedInToday,
+      UserTableHtml:$UserTableHtml, PendingDetailHtml:$PendingDetailHtml, ReportBody:$ReportBody
+    }' > "${VARS_JSON}"
+  report_template_render "${OUTPUT_FILE}" "${VARS_JSON}" "${TEMPLATE_SRC}" \
+    || stop "Failed to render RIL_RMC PM template."
+  cp "${OUTPUT_FILE}" "${LATEST_FILE}"
+  mkdir -p "${AUDIT_DIR}"
+  printf '{"action":"RENDER_PM_HTML_REPORT","mode":"ril_rmc_fast","summary":%s}\n' "${PM_SUMMARY_JSON}" > "${AUDIT_FILE}"
+  log "PM report rendered successfully (RIL_RMC fast path)"
+  printf '\nOutput file:\n%s\n' "${OUTPUT_FILE}"
+  printf '\nLatest (stable path):\n%s\n' "${LATEST_FILE}"
+  exit 0
+fi
+
 apply_template_branding_from_pg
-refresh_user_last_sign_ins_for_process "${PM_APP_ID}" "${PM_PROCESS_ID}"
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  log "RIL_RMC PM — skip last-sign-in refresh (keeps the 17:00 send inside Cloud Run time)"
+else
+  refresh_user_last_sign_ins_for_process "${PM_APP_ID}" "${PM_PROCESS_ID}"
+fi
 
 log "Querying Project Management task summary"
 
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  log "RIL_RMC PM — lightweight snapshot counts (skip process-wide user SQL)"
+  PM_SUMMARY_JSON="$(echo "
+\pset tuples_only on
+\pset format unaligned
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
+tasks AS (
+  SELECT
+    instance_id,
+    process_status,
+    (${REPORT_ITEM_CREATED_AT_SQL}) AS created_at,
+    (${REPORT_ITEM_COMPLETED_AT_SQL}) AS completed_at
+  FROM engagement_reporting.item i, latest l
+  WHERE i.snapshot_run_id = l.snapshot_run_id
+    AND i.process_id = '${PM_PROCESS_ID}'
+    AND (${ENTITY_CODE_SQL})
+)
+SELECT json_build_object(
+  'total_tasks', (SELECT count(*) FROM tasks),
+  'assigned_tasks', (SELECT count(*) FROM tasks),
+  'pending_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'InProgress'),
+  'completed_tasks', (SELECT count(*) FROM tasks WHERE process_status = 'Completed'),
+  'opened_today', (
+    SELECT count(*) FROM tasks
+    WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  ),
+  'closed_today', (
+    SELECT count(*) FROM tasks
+    WHERE completed_at IS NOT NULL
+      AND (completed_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+  ),
+  'total_app_users', 0,
+  'signed_in_today', 0
+);
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+  PM_USERS_JSON='[]'
+else
 PM_SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
@@ -253,6 +386,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   ORDER BY a.pending_count DESC, a.completed_count DESC
 ) t;
 " | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+fi
 
 [[ -n "${PM_SUMMARY_JSON}" ]] || stop "Failed to retrieve PM summary."
 [[ -n "${PM_USERS_JSON}" ]] || stop "Failed to retrieve PM user breakdown."
@@ -310,7 +444,9 @@ PM_PENDING_SUBTASKS="0"
 PM_COMPLETED_SUBTASKS="0"
 
 PM_PORTFOLIO_SCRIPT="${REPO_ROOT}/services/engagement-pipeline/scripts/count-pm-portfolio-kpis.js"
-if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
+if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
+  log "RIL_RMC PM — snapshot entity filter only (skip live Kissflow portfolio overlay)"
+elif [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
   if PM_PORTFOLIO_JSON="$(
     PROCESS_ID="${PM_PROCESS_ID}" \
     PM_TASK_PROCESS_ID="${PM_PROCESS_ID}" \
@@ -337,7 +473,7 @@ if [[ -f "${PM_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1; then
     log "Live PM portfolio overlay unavailable — using snapshot task totals only"
   fi
 fi
-if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" "${ENTITY_FILTER:-}"; then
+if [[ "${ENTITY_CODE_MODE}" != "ril_rmc" ]] && report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" "${ENTITY_FILTER:-}"; then
   log "Live Kissflow today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?}"
   PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
   if [[ -n "${REPORT_LIVE_CLOSED_TODAY}" && "${REPORT_LIVE_CLOSED_TODAY}" =~ ^[0-9]+$ && "${REPORT_LIVE_CLOSED_TODAY}" -ge "${PM_CLOSED_TODAY}" ]]; then

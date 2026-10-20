@@ -31,6 +31,7 @@ import {
 } from '@/services/appDashboardApi';
 import type { KissflowApplication } from '@/mocks/applications';
 import { resolveBackendApplicationId } from '@/services/applicationsApi';
+import { mergeLeadWebsiteFilterOptions } from '@/services/leadReport';
 import {
   buildMisUsersFromRecords,
   companyCountsFromRecords,
@@ -982,7 +983,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     if (leadMode) {
       const rows = websiteCountsFromRecords(source);
       return sortCompanyFilterOptions(ensureFilterOption(
-        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+        mergeLeadWebsiteFilterOptions(rows),
         company,
       ));
     }

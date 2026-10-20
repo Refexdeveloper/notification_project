@@ -25,6 +25,7 @@ const CODE_KEYS = [
   'Employee_Entity_Code',
   'Entity',
   'Employee_entity',
+  'employee_entity',
   'Company',
   'Legal_Entity',
   'entity',

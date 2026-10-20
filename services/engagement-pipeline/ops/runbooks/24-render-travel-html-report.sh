@@ -635,9 +635,13 @@ fi
 apply_template_branding_from_pg
 ensure_refexone_logo
 
-for pid in ${TRAVEL_PROCESS_IDS}; do
-  refresh_user_last_sign_ins_for_process "${TRAVEL_APP_ID}" "${pid}"
-done
+if [[ "${ENTITY_FILTER_NORM}" == "ril_rmc" ]]; then
+  log "RIL_RMC Travel — skip last-sign-in refresh (keeps the 17:00 send inside Cloud Run time)"
+else
+  for pid in ${TRAVEL_PROCESS_IDS}; do
+    refresh_user_last_sign_ins_for_process "${TRAVEL_APP_ID}" "${pid}"
+  done
+fi
 
 USAGE_PAYLOAD="$(load_entity_payload "${ENTITY_FILTER}")"
 [[ -n "${USAGE_PAYLOAD}" ]] || stop "Travel usage payload is empty for ${ENTITY_FILTER}"

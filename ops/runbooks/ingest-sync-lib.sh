@@ -24,6 +24,14 @@ ingest_force_full_for_schedule() {
       ingest_log "Schedule ${SCHEDULE_ID}: Travel incremental ingest (3 processes, watermark delta)"
       return 0
     fi
+    # Travel_Expense_A00 admin list 403s/hangs. RMC Expense renders from snapshot.
+    local entity_key
+    entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+    if [[ "${app_id}" == "EMS_001_A00" && "${entity_key}" == "rilrmc" ]]; then
+      export FULL_INGEST=false
+      ingest_log "Schedule ${SCHEDULE_ID}: RMC Expense incremental/skip (Travel_Expense_A00 403s on full pull)"
+      return 0
+    fi
     export FULL_INGEST=true
     ingest_log "Schedule ${SCHEDULE_ID}: forcing FULL_INGEST=true (today KPIs require complete snapshot)"
   fi
