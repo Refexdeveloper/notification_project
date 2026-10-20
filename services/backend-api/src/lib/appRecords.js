@@ -468,15 +468,66 @@ function travelProcessTitle(processId) {
 }
 
 const TRAVEL_TRIP_TYPE_KEYS = ['OnewayRound_tripNot_applicable', 'Travel_Type', 'FS_Trip_Type', 'Trip_Type'];
-const TRAVEL_FROM_CITY_KEYS = ['Boarding_from', 'FS_From_City', 'common_From', 'Source', 'From_City'];
-const TRAVEL_TO_CITY_KEYS = ['Destination_to_1', 'FS_To_City', 'common_To', 'Destination', 'To_City'];
+/** One-way airport fields first; round-trip / multi-city use Boarding + Destination_1 (+ Google Place JSON). */
+const TRAVEL_FROM_CITY_KEYS = [
+  'Boarding_from', 'FS_From_City', 'common_From', 'Boarding', 'Boarding_From_1',
+  'Show_Source', 'From_City', 'Source',
+];
+const TRAVEL_TO_CITY_KEYS = [
+  'Destination_to_1', 'FS_To_City', 'common_To', 'Destination_1', 'Destination_To_3',
+  'Show_Destination', 'City_1', 'Destination', 'To_City',
+];
 const TRAVEL_DEPARTURE_KEYS = ['Departure_Date', 'FS_Departure_Date', 'From_Date', 'Common_from_date'];
+const TRAVEL_PLACE_TRIP_TYPE = /^(one\s*way|round\s*trip|multi\s*city|not\s*applicable)$/i;
+const TRAVEL_PLACE_REGION = /\b(india|tamil nadu|gujarat|west bengal|karnataka|maharashtra|delhi|telangana|andhra|kerala|rajasthan|uttar pradesh|madhya pradesh|odisha|bihar|assam|punjab|haryana|goa)\b/i;
+
+function travelPlaceText(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text || text === '—') return '';
+    if (text.startsWith('{')) {
+      try {
+        return travelPlaceText(JSON.parse(text));
+      } catch {
+        return text;
+      }
+    }
+    return text;
+  }
+  if (typeof value === 'object') {
+    return travelPlaceText(
+      value.description || value.Name || value.name || value.v || value.value || value.text || value.Text || '',
+    );
+  }
+  return '';
+}
+
+function formatTravelPlace(value) {
+  const text = travelPlaceText(value);
+  if (!text || TRAVEL_PLACE_TRIP_TYPE.test(text)) return '';
+  const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 2 && TRAVEL_PLACE_REGION.test(parts.slice(1).join(' '))) {
+    return parts[0];
+  }
+  return text;
+}
+
+function pickTravelPlace(raw, keys) {
+  if (!raw || typeof raw !== 'object') return '';
+  for (const key of keys) {
+    const place = formatTravelPlace(raw[key]);
+    if (place) return place;
+  }
+  return '';
+}
 
 function travelPlaceFieldsFromRaw(raw) {
   return {
     trip_type: pickString(raw, TRAVEL_TRIP_TYPE_KEYS) || undefined,
-    from_city: pickString(raw, TRAVEL_FROM_CITY_KEYS) || undefined,
-    to_city: pickString(raw, TRAVEL_TO_CITY_KEYS) || undefined,
+    from_city: pickTravelPlace(raw, TRAVEL_FROM_CITY_KEYS) || undefined,
+    to_city: pickTravelPlace(raw, TRAVEL_TO_CITY_KEYS) || undefined,
     departure_date: pickDateTime(raw, TRAVEL_DEPARTURE_KEYS) || undefined,
   };
 }
@@ -909,7 +960,7 @@ function overlayTravelPlacesFromItems(records, items, applicationId) {
         if (!Array.isArray(next[key]) || !next[key].length) next[key] = details[key];
         continue;
       }
-      if (next[key] == null || next[key] === '') next[key] = details[key];
+      if (next[key] == null || next[key] === '' || next[key] === '—') next[key] = details[key];
     }
     if (ems && (!next.expense_type || next.expense_type === '—')) {
       next.expense_type = pickTravelExpenseType(raw) || next.expense_type;

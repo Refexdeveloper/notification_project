@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { pickAmountFromRaw, buildLiveRecordRows, serializeRecordItem, overlayTravelPlacesFromItems, travelDetailFieldsFromRaw, emsDetailFieldsFromRaw, emsSplitsFromRaw } = require('./appRecords');
+const { pickAmountFromRaw, buildLiveRecordRows, serializeRecordItem, overlayTravelPlacesFromItems, travelPlaceFieldsFromRaw, travelDetailFieldsFromRaw, emsDetailFieldsFromRaw, emsSplitsFromRaw } = require('./appRecords');
 
 test('pickAmountFromRaw reads travel advance Final_amount', () => {
   assert.equal(pickAmountFromRaw({ Final_amount: 3000 }), 3000);
@@ -90,6 +90,42 @@ test('travel details skip empty and Kissflow instance linked ids', () => {
   assert.equal(expense.claimed_amount, 2391);
 });
 
+test('round trip and multi city read Boarding / Destination_1 place fields', () => {
+  const roundTrip = travelPlaceFieldsFromRaw({
+    OnewayRound_tripNot_applicable: 'Round Trip',
+    Boarding: 'Chennai, Tamil Nadu, India',
+    Destination_1: 'Karur, Tamil Nadu, India',
+    Boarding_From_1: '{"description":"Chennai, Tamil Nadu, India","place_id":"abc"}',
+    Destination_To_3: { description: 'Karur, Tamil Nadu, India', place_id: 'xyz' },
+    Show_Source: 'Chennai, Tamil Nadu, India',
+    Show_Destination: 'Karur, Tamil Nadu, India',
+    Travel_Type: 'oneWay',
+  });
+  assert.equal(roundTrip.from_city, 'Chennai');
+  assert.equal(roundTrip.to_city, 'Karur');
+  assert.equal(roundTrip.trip_type, 'Round Trip');
+
+  const flightRound = travelPlaceFieldsFromRaw({
+    OnewayRound_tripNot_applicable: 'One Way',
+    Travel_Type: 'roundTrip',
+    FS_From_City: 'Chennai',
+    FS_To_City: 'Kolkata',
+    Show_Source: 'Round Trip',
+    Show_Destination: 'Round Trip',
+  });
+  assert.equal(flightRound.from_city, 'Chennai');
+  assert.equal(flightRound.to_city, 'Kolkata');
+
+  const multiCity = travelPlaceFieldsFromRaw({
+    OnewayRound_tripNot_applicable: 'Multi City',
+    Boarding_From_1: { description: 'Ahmedabad' },
+    Destination_To_3: { description: 'Surat' },
+  });
+  assert.equal(multiCity.from_city, 'Ahmedabad');
+  assert.equal(multiCity.to_city, 'Surat');
+  assert.equal(multiCity.trip_type, 'Multi City');
+});
+
 test('overlayTravelPlacesFromItems fills place fields from Kissflow items', () => {
   const appId = 'Expense_and_Travel_Management_A00';
   const out = overlayTravelPlacesFromItems(
@@ -107,6 +143,19 @@ test('overlayTravelPlacesFromItems fills place fields from Kissflow items', () =
   assert.equal(out[0].to_city, 'Coimbatore');
   assert.equal(out[0].trip_type, 'oneWay');
   assert.match(String(out[0].departure_date), /^2026-10-23/);
+
+  const filled = overlayTravelPlacesFromItems(
+    [{ id: 'PkEI5eXjAcO6', request_id: 'TRReq-Refex-FY26-017', from_city: '—', to_city: '' }],
+    [{
+      _id: 'PkEI5eXjAcO6',
+      OnewayRound_tripNot_applicable: 'Round Trip',
+      Boarding: 'Chennai, Tamil Nadu, India',
+      Destination_1: 'Karur, Tamil Nadu, India',
+    }],
+    appId,
+  );
+  assert.equal(filled[0].from_city, 'Chennai');
+  assert.equal(filled[0].to_city, 'Karur');
 });
 
 test('ems details skip empty and concatenate expense types', () => {
