@@ -21,7 +21,36 @@ async function getAccessToken() {
   return data.access_token;
 }
 
+/**
+ * Live Cloud Scheduler job names keyed by PostgreSQL schedule UUID.
+ * Admin UI sync must update these jobs — never create a second ne-schedule-* twin.
+ */
+const SCHEDULE_CLOUD_JOB_NAMES = {
+  '55555555-5555-4555-8555-555555555555': 'sch-refex-itsm-daily',
+  '18e6c3a0-df09-473e-9c52-8993b7b1ea9b': 'ne-schedule-18e6c3a0-df09-473e-9c52-8993b7b1ea9b',
+  '99999999-9999-4999-8999-999999999999': 'sch-refex-pm-daily',
+  '409a2a2b-499c-4222-9750-4bfe13a741cc': 'ne-schedule-409a2a2b-499c-4222-9750-4bfe13a741cc',
+  'e7a22909-59b9-422a-84fc-95ad5a49b8d6': 'ne-schedule-e7a22909-59b9-422a-84fc-95ad5a49b8d6',
+  'd4cc8f6d-c3da-4bc2-9f9b-ca0ae159fffe': 'sch-refex-travel-daily',
+  'c5c3cc0c-2702-4018-a9eb-10fea3bde379': 'sch-refex-travel-daily-refex',
+  'e4e4e4e4-e4e4-4e4e-8e4e-e4e4e4e4e4e4': 'sch-ril-rmc-travel-daily',
+  'c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4': 'sch-ril-rmc-expense-daily',
+  'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4': 'sch-ril-rmc-pm-daily',
+  'f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4': 'sch-rmc-lead-daily',
+  '3475b0d0-f9d6-472f-b1e6-387e82066cb3': 'ne-schedule-3475b0d0-f9d6-472f-b1e6-387e82066cb3',
+  'dddd1111-1111-4111-8111-111111111001': 'sch-refex-lead-prod-3i',
+  'dddd1111-1111-4111-8111-111111111002': 'sch-refex-lead-prod-modepro',
+  'dddd1111-1111-4111-8111-111111111003': 'sch-refex-lead-prod-adonis',
+  'dddd1111-1111-4111-8111-111111111004': 'sch-refex-lead-prod-refex-mobility',
+};
+
+function knownCloudJobName(scheduleId) {
+  return SCHEDULE_CLOUD_JOB_NAMES[String(scheduleId || '').toLowerCase()] || null;
+}
+
 function jobNameFor(scheduleId, legacySchedulerId) {
+  const known = knownCloudJobName(scheduleId);
+  if (known) return known;
   if (legacySchedulerId && legacySchedulerId !== 'null') {
     return legacySchedulerId;
   }
@@ -33,8 +62,30 @@ function resolveLegacySchedulerId(applicationId, entityFilter) {
   const app = String(applicationId || '');
   const entity = String(entityFilter || '').trim().toLowerCase();
   if (app === 'Expense_and_Travel_Management_A00') {
+    if (entity === 'ril_rmc' || entity === 'rilrmc') return 'sch-ril-rmc-travel-daily';
     if (entity === 'refex') return 'sch-refex-travel-daily-refex';
     if (entity === 'venwind' || !entity || entity === 'all') return 'sch-refex-travel-daily';
+  }
+  if (app === 'IT_Service_Management_A00') {
+    if (entity === 'extrovis') return 'ne-schedule-18e6c3a0-df09-473e-9c52-8993b7b1ea9b';
+    if (!entity) return 'sch-refex-itsm-daily';
+    return null;
+  }
+  if (app === 'Project_Management_Tracker_A00') {
+    if (entity === 'ril_rmc' || entity === 'rilrmc') return 'sch-ril-rmc-pm-daily';
+    return 'sch-refex-pm-daily';
+  }
+  if (app === 'EMS_001_A00') {
+    if (entity === 'ril_rmc' || entity === 'rilrmc') return 'sch-ril-rmc-expense-daily';
+    return 'ne-schedule-e7a22909-59b9-422a-84fc-95ad5a49b8d6';
+  }
+  if (app === 'Lead_Trcaker_A00') {
+    if (entity === 'ril_rmc' || entity === 'rilrmc' || entity === 'rmc') return 'sch-rmc-lead-daily';
+    if (entity === '3imedtech' || entity === '3i') return 'sch-refex-lead-prod-3i';
+    if (entity === 'modepro') return 'sch-refex-lead-prod-modepro';
+    if (entity === 'adonis') return 'sch-refex-lead-prod-adonis';
+    if (entity === 'refex mobility' || entity === 'refexmobility') return 'sch-refex-lead-prod-refex-mobility';
+    if (entity === 'venwind') return 'ne-schedule-3475b0d0-f9d6-472f-b1e6-387e82066cb3';
   }
   return null;
 }
@@ -153,5 +204,7 @@ async function syncScheduleCloudJob(row) {
 module.exports = {
   syncScheduleCloudJob,
   jobNameFor,
+  knownCloudJobName,
   resolveLegacySchedulerId,
+  SCHEDULE_CLOUD_JOB_NAMES,
 };

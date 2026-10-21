@@ -44,6 +44,22 @@ require_gcloud() {
 job_name_for() {
   local legacy_id="$1"
   local schedule_id="$2"
+  local sid
+  sid="$(echo "${schedule_id}" | tr '[:upper:]' '[:lower:]')"
+  case "${sid}" in
+    55555555-5555-4555-8555-555555555555) printf '%s' 'sch-refex-itsm-daily'; return ;;
+    99999999-9999-4999-8999-999999999999) printf '%s' 'sch-refex-pm-daily'; return ;;
+    d4cc8f6d-c3da-4bc2-9f9b-ca0ae159fffe) printf '%s' 'sch-refex-travel-daily'; return ;;
+    c5c3cc0c-2702-4018-a9eb-10fea3bde379) printf '%s' 'sch-refex-travel-daily-refex'; return ;;
+    e4e4e4e4-e4e4-4e4e-8e4e-e4e4e4e4e4e4) printf '%s' 'sch-ril-rmc-travel-daily'; return ;;
+    c4c4c4c4-c4c4-4c4c-8c4c-c4c4c4c4c4c4) printf '%s' 'sch-ril-rmc-expense-daily'; return ;;
+    d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4) printf '%s' 'sch-ril-rmc-pm-daily'; return ;;
+    f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4) printf '%s' 'sch-rmc-lead-daily'; return ;;
+    dddd1111-1111-4111-8111-111111111001) printf '%s' 'sch-refex-lead-prod-3i'; return ;;
+    dddd1111-1111-4111-8111-111111111002) printf '%s' 'sch-refex-lead-prod-modepro'; return ;;
+    dddd1111-1111-4111-8111-111111111003) printf '%s' 'sch-refex-lead-prod-adonis'; return ;;
+    dddd1111-1111-4111-8111-111111111004) printf '%s' 'sch-refex-lead-prod-refex-mobility'; return ;;
+  esac
   if [[ -n "${legacy_id}" && "${legacy_id}" != "null" ]]; then
     printf '%s' "${legacy_id}"
     return
@@ -127,6 +143,7 @@ sync_one() {
       --time-zone="${tz}" \
       --uri="${uri}" \
       --http-method=GET \
+      --attempt-deadline=1800s \
       --oidc-service-account-email="${SCHEDULER_SA}" \
       --oidc-token-audience="${SCHEDULE_RUNNER_URL}" \
       --quiet
@@ -138,6 +155,7 @@ sync_one() {
       --time-zone="${tz}" \
       --uri="${uri}" \
       --http-method=GET \
+      --attempt-deadline=1800s \
       --oidc-service-account-email="${SCHEDULER_SA}" \
       --oidc-token-audience="${SCHEDULE_RUNNER_URL}" \
       --quiet
