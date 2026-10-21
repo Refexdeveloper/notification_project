@@ -198,26 +198,18 @@ dispatch_pm_style_process() {
     log "${app_name} test send completed"
   else
     log "Step 1/3: Ingest latest Kissflow data for ${app_name}"
-    local entity_key
-    entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
-    # Travel_Expense_A00 admin list 403s / hangs with --retry-all-errors. Live
-    # RMC Expense 504'd at 30m on 19 Oct. Snapshot already has RIL_RMC claims.
-    if [[ "${entity_key}" == "rilrmc" ]] && process_has_snapshot "${PROCESS_ID}"; then
-      log "RIL_RMC ${app_name} — snapshot present, skip ingest (avoids Travel_Expense 403/timeout)"
+    if process_has_snapshot "${PROCESS_ID}"; then
+      export FULL_INGEST=false
+      log "Incremental sync for ${PROCESS_ID} (delta since last watermark; includes RIL_RMC)"
     else
+      export FULL_INGEST=true
+      log "No snapshot yet — FULL_INGEST for ${PROCESS_ID}"
+    fi
+    if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
       if process_has_snapshot "${PROCESS_ID}"; then
-        export FULL_INGEST=false
-        log "Incremental sync for ${PROCESS_ID} (delta since last watermark)"
+        log "WARNING: ingest failed for ${app_name} — rendering from existing snapshot (entity=${ENTITY_FILTER:-common})"
       else
-        export FULL_INGEST=true
-        log "No snapshot yet — FULL_INGEST for ${PROCESS_ID}"
-      fi
-      if ! bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/22-ingest-process-and-load.sh"; then
-        if process_has_snapshot "${PROCESS_ID}"; then
-          log "WARNING: ingest failed for ${app_name} — rendering from existing snapshot (entity=${ENTITY_FILTER:-common})"
-        else
-          stop "Ingest failed and no ${app_name} snapshot exists"
-        fi
+        stop "Ingest failed and no ${app_name} snapshot exists"
       fi
     fi
     log "Step 2/3: Rendering ${app_name} report"
@@ -297,25 +289,9 @@ dispatch_travel_usage_report() {
     bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/07-send-email-report.sh"
     log "Travel Management test send completed (${ENTITY_FILTER})"
   else
-    travel_entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
-    if [[ "${travel_entity_key}" == "rilrmc" ]]; then
-      travel_ready=1
-      for pid in ${TRAVEL_PROCESS_IDS}; do
-        [[ -n "${pid}" ]] || continue
-        process_has_snapshot "${pid}" || travel_ready=0
-      done
-      if [[ "${travel_ready}" -eq 1 ]]; then
-        log "Step 1/3: RIL_RMC Travel — snapshots present, skip ingest (avoids 17:00 timeout with other RMC jobs)"
-      else
-        log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
-        export FULL_INGEST=false
-        ingest_travel_processes || stop "Travel ingest failed for every process"
-      fi
-    else
-      log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
-      export FULL_INGEST=false
-      ingest_travel_processes || stop "Travel ingest failed for every process"
-    fi
+    log "Step 1/3: Incremental Travel sync (delta since last watermark; carry-forward prior items)"
+    export FULL_INGEST=false
+    ingest_travel_processes || stop "Travel ingest failed for every process"
     log "Step 2/3: Rendering ${ENTITY_FILTER} Travel usage report"
     bash "${render_script}"
     log "Step 3/3: Sending ${ENTITY_FILTER} Travel usage report"
@@ -557,7 +533,18 @@ case "${APPLICATION_ID}" in
       export PROCESS_ID="${PROCESS_ID:-Project_Sub_Task_A01}"
       pm_entity_key="$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
       if [[ "${pm_entity_key}" == "rilrmc" ]] && process_has_snapshot "${PROCESS_ID}"; then
-        log "Step 1/3: RIL_RMC PM — snapshot present, skip full ingest (avoids 17:00 timeout with other RMC jobs)"
+        log "Step 1/3: Incremental Kissflow sync for RIL_RMC PM (delta since last watermark)"
+        export FULL_INGEST=false
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh" \
+          || log "WARNING: RIL_RMC PM incremental ingest failed — rendering from existing snapshot"
+        log "Step 1b/3: Incremental PM sub-tasks (${PM_SUBTASK_PROCESS_ID})"
+        (
+          export PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+          export PM_PROCESS_ID="${PM_SUBTASK_PROCESS_ID}"
+          export PROCESS_NAME="Sub Task"
+          export FULL_INGEST=false
+          bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/12-ingest-pm-and-load.sh"
+        ) || log "WARNING: sub-task ingest failed — rendering from existing snapshot"
       else
         log "Step 1/3: Ingest latest Kissflow PM tasks into PostgreSQL"
         export FULL_INGEST=true
