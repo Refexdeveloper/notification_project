@@ -104,8 +104,107 @@ if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
   PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
   PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
   PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
-  PM_ROWS_HTML='<tr><td colspan="6" style="padding:14px; color:#6b6b6b;">No RIL_RMC expense claims in this period.</td></tr>'
-  GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
+export PGOPTIONS="-c statement_timeout=180000"
+  TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
+  log "Building Users section from the RIL_RMC snapshot (name, raised by, sign-in, pending step, pending with, days, completed)"
+  PM_USERS_JSON="$(echo "
+\pset tuples_only on
+\pset format unaligned
+WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'"),
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  WHERE environment = 'production'
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+),
+activity AS (
+  SELECT user_id, SUM(pending_count)::int AS pending_count, SUM(completed_count)::int AS completed_count
+  FROM (
+    SELECT ia.principal_id AS user_id, count(*)::int AS pending_count, 0 AS completed_count
+    FROM engagement_reporting.item_assignment ia
+    JOIN engagement_reporting.item i
+      ON i.instance_id = ia.instance_id AND i.snapshot_at = ia.snapshot_at
+    WHERE ia.process_id = '${PM_PROCESS_ID}'
+      AND ia.principal_type = 'USER'
+      AND i.process_status = 'InProgress'
+      AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND (${ENTITY_CODE_SQL})
+      AND ia.principal_id IS NOT NULL
+      AND trim(ia.principal_id) <> ''
+    GROUP BY ia.principal_id
+    UNION ALL
+    SELECT assignee_id AS user_id, 0 AS pending_count, count(*)::int AS completed_count
+    FROM (
+      SELECT DISTINCT ON (i.instance_id)
+        i.instance_id,
+        COALESCE(
+          NULLIF(i.source_payload->'Assigned_To'->>'_id', ''),
+          NULLIF(ia.principal_id, ''),
+          NULLIF(i.source_payload->'_modified_by'->>'_id', ''),
+          NULLIF(i.source_payload->'_created_by'->>'_id', '')
+        ) AS assignee_id
+      FROM engagement_reporting.item i
+      LEFT JOIN engagement_reporting.item_assignment ia
+        ON ia.instance_id = i.instance_id
+       AND ia.snapshot_at = i.snapshot_at
+       AND ia.principal_type = 'USER'
+       AND ia.snapshot_run_id = i.snapshot_run_id
+      WHERE i.process_id = '${PM_PROCESS_ID}'
+        AND i.process_status = 'Completed'
+        AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+        AND (${ENTITY_CODE_SQL})
+      ORDER BY i.instance_id, ia.principal_id NULLS LAST
+    ) completed_items
+    WHERE assignee_id IS NOT NULL
+    GROUP BY assignee_id
+  ) counts
+  GROUP BY user_id
+)
+SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+  SELECT
+    COALESCE(NULLIF(trim(u.user_name), ''), a.user_id) AS user_name,
+    ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
+    a.pending_count,
+    a.completed_count
+  FROM activity a
+  LEFT JOIN LATERAL (
+    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    FROM engagement_reporting.\"user\" u0
+    WHERE u0.user_id = a.user_id
+      AND u0.environment = 'production'
+    ORDER BY
+      ${REPORT_BEST_USER_ORDER_SQL}
+    LIMIT 1
+  ) u ON true
+  WHERE (a.pending_count > 0 OR a.completed_count > 0)
+  ORDER BY a.pending_count DESC, a.completed_count DESC
+) t;
+" | psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+
+MIS_PENDING_JSON="$(report_mis_pending_detail_json "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'" "${ENTITY_CODE_SQL}")"
+  PM_ROWS_HTML="$(
+    USERS_JSON="${PM_USERS_JSON}" \
+    MIS_PENDING_JSON="${MIS_PENDING_JSON}" \
+    TODAY_IST="${TODAY_IST}" \
+    MIS_MATCH="pending_with" \
+    node "$(report_template_repo_root)/services/engagement-pipeline/scripts/mis-pending-detail.js"
+  )"
+  if [[ -z "${PM_ROWS_HTML}" ]]; then
+    PM_ROWS_HTML='<tr><td colspan="6" style="padding:14px; color:#6b6b6b;">No users with pending or completed items in this snapshot.</td></tr>'
+  fi
+  PM_MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
+    [ .[] | select((.user_name // "") | tostring | length > 0) ] as $rows
+    | {
+        total: ($rows | length),
+        signed_in_today: (
+          [$rows[] | select((.last_sign_in // "") | tostring | startswith($today))] | length
+        )
+      }
+  ' <<< "${PM_USERS_JSON}")"
+  PM_TOTAL_USERS="$(jq -r '.total // 0' <<< "${PM_MIS_COUNTS}")"
+  PM_SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${PM_MIS_COUNTS}")"
+    GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
   TEMPLATE_SRC="$(mktemp)"
   VARS_JSON="$(mktemp)"
   trap 'rm -f "${TEMPLATE_SRC}" "${VARS_JSON}"' EXIT
@@ -120,8 +219,8 @@ if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
     --arg CompletedTasks "${PM_COMPLETED}" \
     --arg OpenedToday "0" \
     --arg ClosedToday "0" \
-    --arg TotalUsers "0" \
-    --arg SignedInToday "0" \
+    --arg TotalUsers "${PM_TOTAL_USERS}" \
+    --arg SignedInToday "${PM_SIGNED_IN_TODAY}" \
     --arg UserTableHtml "${PM_ROWS_HTML}" \
     --arg PendingDetailHtml "" \
     --arg ReportBody "" \
