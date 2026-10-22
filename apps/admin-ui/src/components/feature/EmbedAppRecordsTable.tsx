@@ -19,6 +19,7 @@ import {
   annotateTravelBookingFareRows,
   fareTrendFilterLabel,
   formatDeviationPct,
+  isTravelBookingRow,
   isTravelCoreColumn,
   travelExpandTiles,
   travelPurposeText,
@@ -130,8 +131,8 @@ export default function EmbedAppRecordsTable({
   }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
 
   const fareReadyInventory = useMemo(
-    () => (travelMode && travelPackKind === 'booking' ? annotateTravelBookingFareRows(inventory) : inventory),
-    [inventory, travelMode, travelPackKind],
+    () => (travelMode ? annotateTravelBookingFareRows(inventory) : inventory),
+    [inventory, travelMode],
   );
 
   const scoped = useMemo(
@@ -350,6 +351,7 @@ export default function EmbedAppRecordsTable({
       return travelExpandTiles(row, {
         hideRouteFields: Boolean(route),
         hideTravelMode: travelPackKind === 'booking',
+        includeFareDetails: travelPackKind !== 'booking' && isTravelBookingRow(row),
       });
     }
     return emsMode ? emsExpandTiles(row) : itsmExpandTiles(row);

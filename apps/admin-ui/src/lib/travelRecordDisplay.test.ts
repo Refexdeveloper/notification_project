@@ -9,6 +9,7 @@ import {
   fareTrendFilterLabel,
   formatFareTrendPct,
   formatOverMedianPct,
+  isTravelBookingRow,
   isTravelCoreColumn,
   travelSlaDisplay,
   travelColumnsForPack,
@@ -159,6 +160,37 @@ describe('travelExpandTiles', () => {
     }))).toBe(true);
   });
 
+  it('adds fare tiles on Total bookings expand only', () => {
+    const tiles = travelExpandTiles({
+      id: '1',
+      process_id: 'Travel_Management_A02',
+      travel_mode: 'Air',
+      reference_fare: 5822,
+      policy_deviation_cost: 2644,
+      deviation_pct: 2644 / 5822,
+      fare_trend: 'Up',
+      created_at: '2026-03-01',
+      departure_date: '2026-03-13',
+    }, { includeFareDetails: true });
+    const filled = tiles.filter((t) => t.value);
+    expect(filled.map((t) => t.label)).toEqual(expect.arrayContaining([
+      'Reference fare',
+      'Policy deviation cost',
+      'Deviation %',
+      'SLA',
+      'Fare trend',
+    ]));
+    expect(filled.find((t) => t.label === 'Fare trend')?.value).toBe('▲45%');
+    expect(travelExpandTiles({
+      id: '1',
+      process_id: 'Travel_Management_A02',
+      fare_trend: 'Up',
+      deviation_pct: 0.45,
+    }).some((t) => t.label === 'Fare trend' && t.value)).toBe(false);
+    expect(isTravelBookingRow({ id: '1', process_id: 'Travel_Management_A02' })).toBe(true);
+    expect(isTravelBookingRow({ id: '2', process_id: 'Travel Advance' })).toBe(false);
+  });
+
   it('does not surface blank trip / place tiles on advance or expense rows', () => {
     const tiles = travelExpandTiles({
       id: '4',
@@ -213,6 +245,18 @@ describe('travel booking fare columns', () => {
     expect(fareTrendFilterLabel('Flat', 0)).toBe('■0%');
     expect(rows[3].reference_fare).toBeNull();
     expect(rows[3].policy_deviation_cost).toBeNull();
+  });
+
+  it('does not let advance or expense rows change booking fare medians', () => {
+    const rows = annotateTravelBookingFareRows([
+      { id: '1', process_id: 'Travel_Management_A02', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5605, created_at: '2026-01-01' },
+      { id: '2', process_id: 'Travel_Management_A02', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5822, created_at: '2026-02-01' },
+      { id: '3', process_id: 'Travel_Management_A02', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466, created_at: '2026-03-01' },
+      { id: 'adv', process_id: 'Advance_Payment_Request_Process_A01', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 100 },
+    ]);
+    expect(rows[2].reference_fare).toBe(5822);
+    expect(rows[3].reference_fare).toBeUndefined();
+    expect(rows[3].fare_trend).toBeUndefined();
   });
 
   it('leaves fare columns empty when a route has fewer than 3 flights', () => {

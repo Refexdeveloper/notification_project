@@ -1,6 +1,6 @@
 import type { TravelRouteSummary } from '@/components/feature/TravelRouteBanner';
 import type { AppRecordColumn, AppRecordRow } from '@/services/appRecordsApi';
-import { displayWhen, isBlankDash } from '@/lib/dashboardEmpty';
+import { displayWhen, formatInr, isBlankDash } from '@/lib/dashboardEmpty';
 
 export type TravelPackKind = 'booking' | 'advance' | 'expense';
 
@@ -73,6 +73,13 @@ const TRAVEL_ALWAYS_COLUMNS = new Set(TRAVEL_DASH_COLUMNS.map((col) => col.id));
 const TRAVEL_REQUEST_ALWAYS = new Set(TRAVEL_REQUEST_COLUMNS.map((col) => col.id));
 const TRAVEL_ADVANCE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'amount', 'current_step', 'status', 'created_at']);
 const TRAVEL_EXPENSE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'raised_amount', 'amount', 'current_step', 'status', 'created_at']);
+
+export function isTravelBookingRow(row: AppRecordRow): boolean {
+  const process = String(row.process_id || row.subject || '').toLowerCase();
+  if (/advance_payment|travel advance|expense_management|travel expense/.test(process)) return false;
+  if (/travel_management|travel booking|travel request/.test(process)) return true;
+  return !process;
+}
 
 export function isTravelCoreColumn(colId: string, pack?: TravelPackKind | null): boolean {
   if (pack === 'booking') return TRAVEL_REQUEST_ALWAYS.has(colId);
@@ -209,6 +216,7 @@ export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRo
   const routeAmounts = new Map<string, number[]>();
   const routeHistory = new Map<string, Array<{ id: string; amount: number; at: number }>>();
   for (const row of list) {
+    if (!isTravelBookingRow(row)) continue;
     if (!isFlightTravelMode(row.travel_mode)) continue;
     const route = travelFareRoute(row.from_city, row.to_city);
     if (!route) continue;
@@ -233,6 +241,7 @@ export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRo
   }
 
   return list.map((row) => {
+    if (!isTravelBookingRow(row)) return row;
     const sla = travelSlaLabel(row) || null;
     if (!isFlightTravelMode(row.travel_mode)) {
       return { ...emptyFareAnnotation(row), sla };
@@ -288,10 +297,19 @@ function dateTile(label: string, value: unknown): { label: string; value: string
 /** Fields that are not table columns. Empty values are dropped by the panel. */
 export function travelExpandTiles(
   row: AppRecordRow,
-  opts: { hideRouteFields?: boolean; hideTravelMode?: boolean } = {},
+  opts: { hideRouteFields?: boolean; hideTravelMode?: boolean; includeFareDetails?: boolean } = {},
 ): Array<{ label: string; value: string }> {
   const days = Number(row.travel_days);
   const hideRoute = Boolean(opts.hideRouteFields);
+  const fareTiles = opts.includeFareDetails
+    ? [
+      tile('Reference fare', row.reference_fare == null || row.reference_fare === '' ? '' : formatInr(Number(row.reference_fare))),
+      tile('Policy deviation cost', row.policy_deviation_cost == null || row.policy_deviation_cost === '' ? '' : formatInr(Number(row.policy_deviation_cost))),
+      tile('Deviation %', formatDeviationPct(row.deviation_pct)),
+      tile('SLA', travelSlaLabel(row)),
+      tile('Fare trend', fareTrendFilterLabel(row.fare_trend, row.deviation_pct)),
+    ]
+    : [];
   return [
     hideRoute ? tile('Trip type', '') : tile('Trip type', prettyTravelTripType(row.trip_type) || row.trip_type),
     dateTile('Departure date', row.departure_date),
@@ -309,5 +327,6 @@ export function travelExpandTiles(
     tile('Designation', row.designation),
     tile('Remarks', row.remarks),
     tile('Payment', row.payment_status),
+    ...fareTiles,
   ];
 }

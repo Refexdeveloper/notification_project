@@ -6,8 +6,8 @@ import {
 } from '@/lib/travelRecordDisplay';
 
 const TREND_COLOR: Record<TravelFareTrendKind, string> = {
-  Up: '#16A34A',
-  Down: '#EF4444',
+  Up: '#EF4444',
+  Down: '#16A34A',
   Flat: '#9CA3AF',
 };
 
