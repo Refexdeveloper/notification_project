@@ -11,7 +11,11 @@ import Layout from '@/components/feature/Layout';
 import { getApplicationById, saveDiscoveredFields } from '@/mocks/applications';
 import { syncFieldsFromAdminItems } from '@/services/fieldDiscovery';
 import { isBackendApiMode } from '@/services/backendApi';
-import { loadApplicationFromBackend } from '@/services/applicationsApi';
+import {
+  loadApplicationFromBackend,
+  readCachedApplicationByRouteId,
+  stubApplicationFromRouteId,
+} from '@/services/applicationsApi';
 import { syncFieldsOnBackend } from '@/services/fieldsApi';
 import type { KissflowApplication } from '@/mocks/applications';
 import OverviewTab from './components/OverviewTab';
@@ -49,33 +53,47 @@ export default function ApplicationDetail() {
   const [headerSyncError, setHeaderSyncError] = useState('');
   const [tabRefreshNonce, setTabRefreshNonce] = useState(0);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
-  const [loading, setLoading] = useState(isBackendApiMode());
+  const fieldsTab = searchParams.get('tab') === 'discovery' || searchParams.get('tab') === 'resources';
+  const [loading, setLoading] = useState(() => {
+    if (!isBackendApiMode()) return false;
+    if (!id) return true;
+    return !(readCachedApplicationByRouteId(id) || stubApplicationFromRouteId(id));
+  });
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [backendApp, setBackendApp] = useState<KissflowApplication | undefined>();
+  const [backendApp, setBackendApp] = useState<KissflowApplication | undefined>(() => {
+    if (!id || !isBackendApiMode()) return undefined;
+    return readCachedApplicationByRouteId(id) || stubApplicationFromRouteId(id) || undefined;
+  });
 
   useEffect(() => {
     if (!id || !isBackendApiMode()) return;
     let cancelled = false;
-    setLoading(true);
+    const seed = readCachedApplicationByRouteId(id) || stubApplicationFromRouteId(id);
+    if (seed) {
+      setBackendApp((prev) => (prev?.id === id ? prev : seed));
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setLoadError(null);
-    const tab = searchParams.get('tab') || defaultApplicationTab;
-    const needsFields = tab === 'discovery' || tab === 'resources';
-    loadApplicationFromBackend(id, { includeFields: needsFields }).then((result) => {
+    loadApplicationFromBackend(id, { includeFields: fieldsTab }).then((result) => {
       if (cancelled) return;
-      setBackendApp(result.application ?? undefined);
+      if (result.application) setBackendApp(result.application);
+      else if (!seed) setBackendApp(undefined);
       setLoadError(result.error || null);
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [id, appRevision, searchParams]);
+  }, [id, appRevision, fieldsTab]);
 
   const app = useMemo(() => {
     void appRevision;
     if (!id) return undefined;
-    if (isBackendApiMode()) return backendApp;
-    return getApplicationById(id);
+    if (!isBackendApiMode()) return getApplicationById(id);
+    if (backendApp?.id === id) return backendApp;
+    return readCachedApplicationByRouteId(id) || stubApplicationFromRouteId(id) || undefined;
   }, [id, appRevision, backendApp]);
 
   const tabs = useMemo(() => {
@@ -200,8 +218,8 @@ export default function ApplicationDetail() {
             ]
       }
     >
-      {/* App header card — hidden in embed dashboard (hero lives in AppDashboardTab). */}
-      {!(embed && (activeTab === 'dashboard' || activeTab === 'records')) ? (
+      {/* Hero in AppDashboardTab / RecordsTab owns the heading on dashboard + records. */}
+      {activeTab === 'dashboard' || activeTab === 'records' ? null : (
       <div
         className={`relative mb-4 overflow-hidden rounded-2xl p-5 text-slate-800 ${
           embed
@@ -261,19 +279,6 @@ export default function ApplicationDetail() {
                   </span>
                 ) : null}
               </div>
-              {!embed ? (
-                <p className="mt-1 truncate text-sm text-slate-500">
-                  {/procurement|p2p/i.test(app.appId || app.name || '')
-                    ? 'Cloud SQL · purchase requests & orders'
-                    : `${app.subdomain}.kissflow.${app.region}${app.appId ? ` · ${app.appId}` : ''}`}
-                </p>
-              ) : null}
-              {headerSyncError ? (
-                <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#B24E66]">
-                  <AlertCircle className="h-3.5 w-3.5" />
-                  {headerSyncError}
-                </p>
-              ) : null}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -315,7 +320,7 @@ export default function ApplicationDetail() {
           </div>
         </div>
       </div>
-      ) : null}
+      )}
 
       <div className="mb-4 overflow-x-auto pb-1">
         <div className="flex items-center gap-1 glass rounded-[18px] p-1.5 w-max min-w-full sm:min-w-0">
@@ -346,7 +351,7 @@ export default function ApplicationDetail() {
         </div>
       </div>
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence initial={false}>
         <motion.div
           key={activeTab}
           initial={{ opacity: 0, y: 6 }}

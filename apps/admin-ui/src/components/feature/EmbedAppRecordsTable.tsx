@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Loader2, X } from 'lucide-react';
 import {
   assignedRecordLabel,
   filterAppRecords,
@@ -17,13 +17,17 @@ import {
 import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
 import {
   annotateTravelBookingFareRows,
-  formatOverMedianPct,
+  fareTrendFilterLabel,
+  formatDeviationPct,
   isTravelCoreColumn,
   travelExpandTiles,
   travelPurposeText,
   travelRouteSummary,
+  travelSlaLabel,
   type TravelPackKind,
 } from '@/lib/travelRecordDisplay';
+import TravelFareTrendCell from '@/components/feature/TravelFareTrendCell';
+import TravelSlaCell from '@/components/feature/TravelSlaCell';
 import TravelRouteBanner from '@/components/feature/TravelRouteBanner';
 import type { AppRecordColumn, AppRecordRow } from '@/services/appRecordsApi';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
@@ -187,12 +191,18 @@ export default function EmbedAppRecordsTable({
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
     if (col.id === 'purpose') return displayDashText(travelPurposeText(row), '—');
-    if (col.id === 'route_median' || col.id === 'over_median') {
+    if (col.id === 'reference_fare' || col.id === 'policy_deviation_cost') {
       if (raw == null || raw === '') return '—';
       const n = typeof raw === 'number' ? raw : Number(raw);
       return Number.isFinite(n) ? formatInr(n) : '—';
     }
-    if (col.id === 'over_median_pct') return displayDashText(formatOverMedianPct(raw), '—');
+    if (col.id === 'deviation_pct') return displayDashText(formatDeviationPct(raw), '—');
+    if (col.id === 'fare_trend') return displayDashText(fareTrendFilterLabel(raw, row.deviation_pct), '—');
+    if (col.id === 'sla') {
+      return travelMode
+        ? displayDashText(travelSlaLabel(row), '—')
+        : displayDashText(raw, '—');
+    }
     if (col.id === 'amount' || col.id === 'raised_amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
@@ -355,14 +365,19 @@ export default function EmbedAppRecordsTable({
   const showExpandColumn = expandEnabled && pageItems.some((row) => rowCanExpand(row));
 
   return (
-    <div className="relative rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
+    <div className="ne-list-panel relative p-5">
       {showLoader && pageItems.length ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/60 backdrop-blur-[1px]">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[1.25rem] bg-white/60 backdrop-blur-[1px]">
           <Loader2 className="h-6 w-6 animate-spin text-[#3977BE]" />
         </div>
       ) : null}
       <div className="mb-4 flex items-center justify-between gap-2">
-        <h3 className={NE_TYPE.sectionTitle}>Records</h3>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1E88E5]/10 text-[#1E88E5]">
+            <ClipboardList className="h-4 w-4" strokeWidth={2.25} />
+          </div>
+          <h3 className={NE_TYPE.sectionTitle}>Records</h3>
+        </div>
         <div className="flex items-center gap-2">
           {filtersActive ? (
             <button
@@ -391,7 +406,7 @@ export default function EmbedAppRecordsTable({
       ) : (
         <>
           <div className="space-y-2.5 lg:hidden">
-            {pageItems.map((row) => {
+            {pageItems.map((row, index) => {
               const titleCol = visibleColumns.find((c) => c.id === 'subject') || visibleColumns[0];
               const idCol = visibleColumns.find((c) => c.id === 'request_id');
               const statusCol = visibleColumns.find((c) => c.id === 'status');
@@ -408,6 +423,12 @@ export default function EmbedAppRecordsTable({
                   : new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
               const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
               const displayField = (col: AppRecordColumn) => {
+                if (col.id === 'fare_trend') {
+                  return <TravelFareTrendCell trend={row.fare_trend} deviationPct={row.deviation_pct} />;
+                }
+                if (travelMode && col.id === 'sla') {
+                  return <TravelSlaCell row={row} />;
+                }
                 const text = cellValue(row, col);
                 if (itsmCompanyMode && personCols.has(col.id)) {
                   return <MisPersonInitialsCell name={text === '—' ? '' : text} />;
@@ -421,12 +442,14 @@ export default function EmbedAppRecordsTable({
                 .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
                 .map((c) => ({ label: c.label, value: displayField(c) }))
                 .filter((field) => {
+                  if (field.value && typeof field.value !== 'string') return true;
                   const text = typeof field.value === 'string' ? field.value.trim() : '';
                   return Boolean(text) && text !== '—';
                 });
               return (
                 <MisMobileRecordCard
                   key={row.id}
+                  index={index}
                   title={cellValue(row, titleCol || { id: 'subject', label: 'Subject' })}
                   subtitle={idCol ? cellValue(row, idCol) : undefined}
                   badge={statusCol ? (
@@ -441,10 +464,10 @@ export default function EmbedAppRecordsTable({
               );
             })}
           </div>
-          <div className="-mx-5 -mb-5 hidden overflow-x-auto overflow-y-visible lg:block">
-            <table className="w-full min-w-[780px] text-sm">
-              <thead className={NE_TYPE.tableHead}>
-                <tr className="border-b border-slate-200">
+          <div className="-mx-5 hidden overflow-x-auto overflow-y-visible px-3 lg:block">
+            <table className="ne-list-table text-sm">
+              <thead className={`${NE_TYPE.tableHead} bg-transparent`}>
+                <tr>
                   {showExpandColumn ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
                   {visibleColumns.map((col) => (
                     <th key={col.id} className={`${NE_TYPE.tableHeadCell} font-semibold`}>
@@ -492,13 +515,16 @@ export default function EmbedAppRecordsTable({
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((row) => {
+                {pageItems.map((row, index) => {
                   const rowId = String(row.id || row.request_id || '');
                   const canExpand = rowCanExpand(row);
                   const expanded = canExpand && expandedId === rowId;
                   return (
                   <Fragment key={rowId}>
-                  <tr className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
+                  <tr
+                    className="ne-list-row group"
+                    style={{ '--r': index } as CSSProperties}
+                  >
                     {showExpandColumn ? (
                       <td className="px-3 py-2.5">
                         {canExpand ? (
@@ -523,7 +549,21 @@ export default function EmbedAppRecordsTable({
                           </td>
                         );
                       }
-                      if (col.id === 'route_median' || col.id === 'over_median' || col.id === 'over_median_pct') {
+                      if (col.id === 'fare_trend') {
+                        return (
+                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right">
+                            <TravelFareTrendCell trend={row.fare_trend} deviationPct={row.deviation_pct} />
+                          </td>
+                        );
+                      }
+                      if (travelMode && col.id === 'sla') {
+                        return (
+                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right">
+                            <TravelSlaCell row={row} />
+                          </td>
+                        );
+                      }
+                      if (col.id === 'reference_fare' || col.id === 'policy_deviation_cost' || col.id === 'deviation_pct' || col.id === 'sla') {
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
                             {cellValue(row, col)}
@@ -610,7 +650,7 @@ export default function EmbedAppRecordsTable({
                           title={text}
                           className={`px-5 py-2.5 text-slate-800 ${
                             wrapIds.has(col.id)
-                              ? 'min-w-[11rem] max-w-[18rem] whitespace-normal break-words'
+                              ? 'max-w-[14rem] whitespace-normal break-words'
                               : 'max-w-[220px]'
                           }`}
                         >

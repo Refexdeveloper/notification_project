@@ -249,21 +249,34 @@ router.get('/application/:applicationId/records', async (req, res) => {
     }
 
     const pool = getPool();
-    const payload = await loadApplicationRecords(pool, {
-      applicationId,
-      environment,
-      entity: req.query.entity,
-      status: req.query.status,
-      search: req.query.search || req.query.q,
-      assigned: req.query.assigned || req.query.assigned_to,
-      requester: req.query.requester || req.query.requested_by,
-      dateFrom: req.query.date_from || req.query.dateFrom || req.query.from,
-      dateTo: req.query.date_to || req.query.dateTo || req.query.to,
-      limit: req.query.limit,
-      offset: req.query.offset,
-      forceLive: req.query.force_live === '1' || req.query.live === '1',
-      inventory: req.query.inventory === '1' || req.query.inventory === 'true',
-    });
+    const client = await pool.connect();
+    let payload;
+    try {
+      // Same timeout pattern as app dashboard KPIs. Records used to hold a
+      // Cloud SQL connection until Cloud Run died, which emptied every table.
+      const timeoutMs = req.query.force_live === '1' || req.query.live === '1' ? 90000 : 25000;
+      await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+      payload = await loadApplicationRecords(client, {
+        applicationId,
+        environment,
+        entity: req.query.entity,
+        status: req.query.status,
+        search: req.query.search || req.query.q,
+        assigned: req.query.assigned || req.query.assigned_to,
+        requester: req.query.requester || req.query.requested_by,
+        dateFrom: req.query.date_from || req.query.dateFrom || req.query.from,
+        dateTo: req.query.date_to || req.query.dateTo || req.query.to,
+        limit: req.query.limit,
+        offset: req.query.offset,
+        forceLive: req.query.force_live === '1' || req.query.live === '1',
+        inventory: req.query.inventory === '1' || req.query.inventory === 'true',
+      });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
+    }
     return ok(res, req.correlationId, {
       ...payload,
       generated_at: payload.generated_at || new Date().toISOString(),

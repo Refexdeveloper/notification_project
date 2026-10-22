@@ -68,10 +68,11 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
   useEffect(() => {
     if (!embed) return undefined;
     document.body.classList.add('embed-shell');
-    const returnTo = resolveEmbedReturnUrl(searchParams);
     // One guard entry so the first browser Back always fires popstate (even on direct/new-tab opens).
+    // Do not re-run on tab/filter query changes — that desyncs React Router from the URL.
     window.history.pushState({ refexEmbedBack: true }, '');
     const onPopState = () => {
+      const returnTo = resolveEmbedReturnUrl(new URLSearchParams(window.location.search));
       window.location.replace(returnTo);
     };
     window.addEventListener('popstate', onPopState);
@@ -79,7 +80,7 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
       window.removeEventListener('popstate', onPopState);
       document.body.classList.remove('embed-shell');
     };
-  }, [embed, searchParams]);
+  }, [embed]);
 
   const toggleSidebar = useCallback(() => {
     if (isMobile) {

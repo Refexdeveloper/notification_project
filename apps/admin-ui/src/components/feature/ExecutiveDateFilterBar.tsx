@@ -332,7 +332,7 @@ export default function ExecutiveDateFilterBar({
     : 'h-11 w-full appearance-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-8 text-sm font-semibold text-slate-800 outline-none';
   /** Compact CEO-sized controls (max 180px / 18rem) — do not stretch across the row. */
   const filterSelectClass = embedLayout
-    ? 'h-9 w-full min-w-0 appearance-none truncate rounded-xl border border-slate-100 bg-white pl-9 pr-7 text-xs font-medium text-slate-700 shadow-sm outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe] sm:text-sm'
+    ? 'h-11 w-full min-w-0 appearance-none truncate rounded-2xl border border-slate-100 bg-white pl-10 pr-8 text-sm font-medium text-slate-700 shadow-[0_4px_18px_rgba(112,144,176,0.10)] outline-none transition hover:border-[#c7daf5] focus:ring-2 focus:ring-[#dbeafe]'
     : 'h-11 w-full appearance-none rounded-2xl border border-emerald-200/80 bg-white/95 pl-3.5 pr-9 text-sm font-semibold text-slate-800 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none ring-emerald-100/50 transition hover:border-emerald-300 focus:ring-2';
 
   const filterLabelClass = embedLayout
@@ -340,16 +340,16 @@ export default function ExecutiveDateFilterBar({
     : `mb-1 block ${NE_TYPE.label}`;
 
   const embedPeriodBtnClass =
-    'group inline-flex h-9 w-full min-w-0 items-center gap-2 rounded-xl border border-slate-100 bg-white px-2.5 text-left shadow-sm transition hover:border-[#c7daf5]';
+    'group inline-flex h-11 w-full min-w-0 items-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 text-left shadow-[0_4px_18px_rgba(112,144,176,0.10)] transition hover:border-[#c7daf5]';
 
-  const embedIconWrap = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#eef3ff]';
-  const embedFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[10.5rem] lg:max-w-[180px]';
-  const embedPeriodFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[12.5rem] lg:max-w-[18rem]';
-  const embedAppFieldClass = 'flex min-w-0 w-full flex-col lg:w-auto lg:min-w-[10.5rem] lg:max-w-[18rem]';
-  const embedClearFieldClass = 'inline-flex shrink-0 flex-col lg:w-auto';
+  const embedIconWrap = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#eef3ff]';
+  const embedFieldClass = 'flex min-w-0 w-full flex-1 flex-col';
+  const embedPeriodFieldClass = 'flex min-w-0 w-full flex-1 flex-col';
+  const embedAppFieldClass = 'flex min-w-0 w-full flex-1 flex-col';
+  const embedClearFieldClass = 'inline-flex shrink-0 flex-col';
   const embedControlWrapClass = 'relative block min-w-0';
-  const embedIconClass = 'pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#0f6cbd]';
-  const embedChevronClass = 'pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400';
+  const embedIconClass = 'pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#0f6cbd]';
+  const embedChevronClass = 'pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400';
 
   return (
     <div ref={rootRef} className="relative z-30 overflow-visible">
@@ -360,7 +360,7 @@ export default function ExecutiveDateFilterBar({
       <div
         className={
           embedLayout
-            ? 'hidden w-full min-w-0 max-w-full flex-wrap items-end justify-end gap-2 lg:flex'
+            ? 'hidden w-full min-w-0 max-w-full items-end gap-2.5 lg:flex'
             : 'hidden items-end justify-end gap-2.5 lg:flex lg:flex-wrap'
         }
       >

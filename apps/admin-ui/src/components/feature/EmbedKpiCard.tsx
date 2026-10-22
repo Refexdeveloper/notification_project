@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { CheckCircle2, FolderKanban, Layers, Percent, UserCheck, Users, XCircle } from 'lucide-react';
 import { displayDashCount, formatInr, formatInrExact } from '@/lib/dashboardEmpty';
@@ -18,7 +19,7 @@ export type EmbedKpiTheme = {
  * Project Tracker DASHBOARD_CARD_GRID — 2-up on mobile.
  * 6+ cards split into two equal rows (10→5+5, 8→4+4, 12→6+6, 6→3+3).
  * 4 cards stay 4-up. 2–3 cards fill the row (no empty right cells).
- * Reference: /Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx
+ * Visual theme: P2P public insights (white card, left icon, share bar).
  */
 export const NE_KPI_GRID_CLASS =
   'grid min-w-0 w-full grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 lg:grid-cols-4 [&>*]:min-w-0 [&>*]:h-full';
@@ -56,14 +57,15 @@ export function neKpiSectionGridClass(count: number) {
   return neKpiBalancedGridClass(count);
 }
 
-export const NE_KPI_CARD_MIN_H = 'min-h-[96px] lg:min-h-[112px]';
+/** Tall enough for left icon + value + optional share bar (P2P insights). */
+export const NE_KPI_CARD_MIN_H = 'min-h-[128px] lg:min-h-[148px]';
 
 /** @deprecated count is ignored — use neKpiBalancedGridClass */
 export function neKpiGridClass(_count = 4) {
   return NE_KPI_GRID_CLASS;
 }
 
-/** Project Tracker KPI_THEME palette (UserSpecificPT / ProjectDashboardPage). */
+/** Accent palette — same hues as before; used on icon / chip / bar only. */
 export const EMBED_KPI_THEMES: EmbedKpiTheme[] = [
   {
     bg: '#eef4ff',
@@ -143,10 +145,30 @@ export const EMBED_EXEC_KPI_THEMES: EmbedKpiTheme[] = [
   },
 ];
 
+function clampPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/** Display-only share. Never used as a KPI matcher. */
+export function kpiSharePercent(value: number, shareOf?: number, percent?: number) {
+  if (percent != null && Number.isFinite(percent)) return clampPct(percent);
+  if (shareOf != null && shareOf > 0) return clampPct((Number(value) / shareOf) * 100);
+  return null;
+}
+
+function percentFromSub(sub?: string) {
+  const hit = String(sub || '').match(/(\d+(?:\.\d+)?)\s*%/);
+  if (!hit) return null;
+  return clampPct(Number(hit[1]));
+}
+
 type Props = {
   label: string;
   value: number;
   sub?: string;
+  /** Small line under the title (period, status hint). */
+  hint?: string;
   suffix?: string;
   /** `inr` shows ₹ rounded Indian grouping; default is a plain count. */
   valueFormat?: 'count' | 'inr';
@@ -160,18 +182,24 @@ type Props = {
   iconContext?: string;
   active?: boolean;
   onClick?: () => void;
-  /** White card surface (Adoption / Users row). Values and icons keep accent color. */
+  /** White card surface (Adoption / Users row). Values stay dark; accents stay on icon/bar. */
   surface?: 'themed' | 'white';
+  /** Explicit 0–100 share for the chip / bar. */
+  percent?: number;
+  /** Denominator for a decorative share-of-total bar. Display only. */
+  shareOf?: number;
 };
 
 /**
- * Project Tracker PremiumKPICard (UserSpecificPT) — embed + normal.
- * Label + value left, icon badge right. Inter / dark-grey label / low-grey hint / themed value.
+ * P2P public-insights card — embed + normal.
+ * Left pastel icon, dark value, optional share chip + bar.
+ * onClick stays immediate; no tilt / count-up / delayed navigation.
  */
 export default function EmbedKpiCard({
   label,
   value,
   sub,
+  hint,
   suffix,
   valueFormat = 'count',
   styleIndex = 0,
@@ -182,12 +210,25 @@ export default function EmbedKpiCard({
   active = false,
   onClick,
   surface = 'themed',
+  percent,
+  shareOf,
 }: Props) {
   const theme = themes[styleIndex % themes.length];
   const Icon = icon
     || (appKind ? iconForNeKpi(appKind, `${iconContext || ''} ${label}`, styleIndex) : theme.icon);
   const interactive = Boolean(onClick);
   const whiteSurface = surface === 'white';
+  const resolvedPercent =
+    kpiSharePercent(value, shareOf, percent)
+    ?? (suffix === '%' ? clampPct(value) : null)
+    ?? percentFromSub(sub);
+  const showChip = resolvedPercent != null && suffix !== '%';
+  const showBar = resolvedPercent != null;
+  const foot =
+    sub
+    || (resolvedPercent != null && shareOf != null && suffix !== '%'
+      ? `${resolvedPercent}% of total`
+      : undefined);
 
   return (
     <div
@@ -204,30 +245,63 @@ export default function EmbedKpiCard({
             }
           : undefined
       }
-      className={`ne-kpi-card group relative flex h-full w-full min-w-0 ${NE_KPI_CARD_MIN_H} items-start overflow-hidden rounded-xl border p-2.5 text-left sm:rounded-2xl sm:p-3 ${
-        whiteSurface ? 'bg-white' : 'bg-gradient-to-br from-white via-white to-slate-50'
-      } ${
+      className={`ne-kpi-card group relative flex h-full w-full min-w-0 ${NE_KPI_CARD_MIN_H} flex-col overflow-hidden rounded-2xl border border-white/80 bg-white p-3 text-left sm:rounded-[18px] sm:p-3.5 ${
         interactive ? 'cursor-pointer' : ''
-      } ${active ? 'border-[#1E88E5] ring-2 ring-[#1E88E5]/35' : ''}`}
+      } ${active ? 'ne-kpi-card-active' : ''}`}
       style={{
-        borderColor: active ? undefined : (whiteSurface ? '#e2e8f0' : theme.border),
-        backgroundImage: whiteSurface
-          ? 'none'
-          : `linear-gradient(to bottom right, ${theme.bg}eb, #ffffff 42%, ${theme.bg}b8)`,
-        backgroundColor: whiteSurface ? '#ffffff' : undefined,
-        boxShadow: whiteSurface
-          ? '0 4px 18px rgba(112,144,176,0.12)'
-          : '0 10px 28px -14px rgba(15,23,42,0.18)',
-      }}
+        '--ne-kpi-accent': theme.iconColor,
+        '--ne-kpi-soft': theme.bg,
+        '--i': styleIndex,
+        boxShadow: active
+          ? `0 0 0 2px ${theme.iconColor}33, 0 14px 28px -16px ${theme.iconColor}66`
+          : '0 8px 24px -12px rgba(15, 23, 42, 0.12)',
+      } as CSSProperties}
     >
-      <div className="relative flex w-full items-start justify-between gap-2 sm:gap-3">
-        <div className="min-w-0 flex-1">
-          <p className={NE_TYPE.kpiLabel}>
-            {label}
-          </p>
+      <span className="ne-kpi-shine" />
+      <span
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: `radial-gradient(120% 90% at 100% 0%, ${theme.bg}cc 0%, rgba(255,255,255,0) 55%)`,
+        }}
+      />
+      <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
+        <div className="flex items-start gap-2.5">
+          <div
+            className="ne-kpi-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] text-white shadow-sm sm:h-10 sm:w-10 sm:rounded-[13px]"
+            style={{
+              background: `linear-gradient(135deg, ${theme.iconBg}, ${theme.iconColor})`,
+              boxShadow: `0 8px 16px -8px ${theme.iconColor}88`,
+            }}
+          >
+            <Icon className="h-4 w-4 text-white sm:h-[18px] sm:w-[18px]" strokeWidth={2.25} />
+          </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <p className="truncate text-[13px] font-semibold leading-tight text-slate-800 sm:text-sm">
+              {label}
+            </p>
+            {hint ? (
+              <p className="mt-0.5 truncate text-[11px] font-medium text-slate-400">{hint}</p>
+            ) : null}
+          </div>
+          {showChip ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 pt-0.5 text-[11px] font-semibold tabular-nums sm:text-xs"
+              style={{ color: theme.iconColor }}
+              title="Share of total"
+            >
+              <i
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: theme.iconColor }}
+              />
+              {resolvedPercent}%
+            </span>
+          ) : null}
+        </div>
+
+        <div className="mt-3 min-w-0 sm:mt-3.5">
           <p
-            className={`mt-1 min-w-0 sm:mt-1.5 ${NE_TYPE.kpiValue}`}
-            style={{ color: whiteSurface ? '#0f172a' : theme.value }}
+            className={`min-w-0 ${NE_TYPE.kpiValue}`}
+            style={{ color: whiteSurface ? '#0f172a' : '#0e1726' }}
             title={valueFormat === 'inr' ? formatInrExact(value) : undefined}
           >
             {valueFormat === 'inr'
@@ -235,21 +309,33 @@ export default function EmbedKpiCard({
               : displayDashCount(value).toLocaleString('en-IN')}
             {suffix}
           </p>
-          {sub ? (
-            <p className={NE_TYPE.kpiSub}>
-              {sub}
+          {foot ? (
+            <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-400 sm:text-xs">
+              {foot}
             </p>
           ) : null}
         </div>
-        <div
-          className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/90 shadow-sm sm:h-10 sm:w-10 sm:rounded-xl"
-          style={{
-            backgroundColor: `${theme.iconBg}8c`,
-            boxShadow: `0 6px 14px -8px ${theme.iconColor}33`,
-          }}
-        >
-          <Icon className="h-3.5 w-3.5 text-white sm:h-4.5 sm:w-4.5" strokeWidth={2.25} />
-        </div>
+
+        {showBar ? (
+          <div className="ne-kpi-progress mt-auto flex items-center gap-2 pt-3">
+            <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-100">
+              <span
+                className="ne-kpi-progress-fill block h-full rounded-full"
+                style={{
+                  width: `${resolvedPercent}%`,
+                  background: `linear-gradient(90deg, ${theme.iconBg}, ${theme.iconColor})`,
+                }}
+              />
+            </div>
+            <em
+              className="min-w-[2rem] text-right text-[11px] font-semibold not-italic tabular-nums text-slate-400"
+            >
+              {resolvedPercent}%
+            </em>
+          </div>
+        ) : (
+          <div className="mt-auto" />
+        )}
       </div>
     </div>
   );

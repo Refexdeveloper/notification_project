@@ -1,5 +1,6 @@
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
 import { friendlyApplicationName } from '@/lib/processLabels';
+import { neCacheForEach, neCacheRead, neCacheRemove, neCacheWrite } from '@/lib/neLandingCache';
 
 export type AppDashboardProcess = {
   process_id: string;
@@ -101,6 +102,8 @@ export type AppDashboardData = {
     inactive_users?: number;
     amount_total?: number;
     amount_open?: number;
+    opened_today?: number;
+    closed_today?: number;
     status_model?: 'open_closed' | 'open_in_progress_closed';
   };
   amounts?: {
@@ -148,8 +151,8 @@ export type AppDashboardData = {
 const APP_DASHBOARD_CACHE_PREFIX = 'ne_app_dashboard_v13';
 /** Fresh cache — skip network on filter switch. */
 const APP_DASHBOARD_CACHE_STALE_MS = 5 * 60 * 1000;
-/** Stale-but-usable cache — instant paint while revalidating in embed. */
-const APP_DASHBOARD_CACHE_MAX_MS = 30 * 60 * 1000;
+/** Stale-but-usable cache — instant paint while revalidating. */
+const APP_DASHBOARD_CACHE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 type AppDashboardCacheEntry = {
   ts: number;
@@ -209,15 +212,15 @@ export function readAppDashboardCacheEntry(
   queryKey: string,
 ): AppDashboardCacheEntry | null {
   try {
-    const raw = sessionStorage.getItem(appDashboardCacheKey(applicationId, queryKey));
+    const raw = neCacheRead(appDashboardCacheKey(applicationId, queryKey));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AppDashboardCacheEntry;
     if (!parsed?.data?.application_id) {
-      sessionStorage.removeItem(appDashboardCacheKey(applicationId, queryKey));
+      neCacheRemove(appDashboardCacheKey(applicationId, queryKey));
       return null;
     }
     if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_MAX_MS) {
-      sessionStorage.removeItem(appDashboardCacheKey(applicationId, queryKey));
+      neCacheRemove(appDashboardCacheKey(applicationId, queryKey));
       return null;
     }
     return parsed;
@@ -235,21 +238,21 @@ export function isAppDashboardCacheFresh(
   return Boolean(entry && Date.now() - entry.ts <= maxAgeMs);
 }
 
-/** Soft paint — newest cached dashboard for this app (any filter combo, up to 30 min). */
+/** Soft paint — newest cached dashboard for this app (any filter combo). */
 export function readAppDashboardCacheSoft(applicationId: string): AppDashboardData | null {
   try {
     const prefix = `${APP_DASHBOARD_CACHE_PREFIX}:${applicationId}:`;
     let best: AppDashboardCacheEntry | null = null;
-    for (let i = 0; i < sessionStorage.length; i += 1) {
-      const key = sessionStorage.key(i);
-      if (!key?.startsWith(prefix)) continue;
-      const raw = sessionStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw) as AppDashboardCacheEntry;
-      if (!parsed?.data?.application_id) continue;
-      if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_MAX_MS) continue;
-      if (!best || parsed.ts > best.ts) best = parsed;
-    }
+    neCacheForEach(prefix, (_key, raw) => {
+      try {
+        const parsed = JSON.parse(raw) as AppDashboardCacheEntry;
+        if (!parsed?.data?.application_id) return;
+        if (Date.now() - parsed.ts > APP_DASHBOARD_CACHE_MAX_MS) return;
+        if (!best || parsed.ts > best.ts) best = parsed;
+      } catch {
+        /* ignore one bad entry */
+      }
+    });
     return best?.data ?? null;
   } catch {
     return null;
@@ -269,12 +272,8 @@ export function readAppDashboardCache(
 }
 
 function writeAppDashboardCache(applicationId: string, queryKey: string, data: AppDashboardData) {
-  try {
-    const entry: AppDashboardCacheEntry = { ts: Date.now(), data };
-    sessionStorage.setItem(appDashboardCacheKey(applicationId, queryKey), JSON.stringify(entry));
-  } catch {
-    /* ignore quota / private mode */
-  }
+  const entry: AppDashboardCacheEntry = { ts: Date.now(), data };
+  neCacheWrite(appDashboardCacheKey(applicationId, queryKey), JSON.stringify(entry));
 }
 
 export async function loadApplicationDashboard(opts: {
@@ -326,7 +325,7 @@ export async function loadApplicationDashboard(opts: {
   const path = `/dashboard/application/${encodeURIComponent(opts.applicationId)}?${params.toString()}`;
   const useCachePath = opts.preferCache !== false;
   const slowApp = /solar|technician_reimbursement|reinvestment/i.test(String(opts.applicationId || ''));
-  const timeoutMs = useCachePath ? 25000 : (slowApp ? 45000 : 90000);
+  const timeoutMs = useCachePath ? 90000 : (slowApp ? 90000 : 120000);
   const res = await apiV1Fetch<AppDashboardData>(path, { cache: 'no-store' }, { timeoutMs });
 
   if (!res.ok || !res.data) {

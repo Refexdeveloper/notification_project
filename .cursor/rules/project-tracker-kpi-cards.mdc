@@ -1,17 +1,19 @@
 ---
-description: KPI card size and palette must match Project Tracker — never stretch 3-col
+description: KPI card size and palette — P2P insights look, never stretch 3-col
 globs: apps/admin-ui/src/components/feature/EmbedKpiCard.tsx,apps/admin-ui/src/pages/dashboard/page.tsx,apps/admin-ui/src/pages/applications/detail/components/AppDashboardTab.tsx
 alwaysApply: true
 ---
 
-# Project Tracker KPI card contract (Notification Engine)
+# KPI card contract (Notification Engine)
 
-Design reference (read-only, do not merge repos):
+Visual reference (read-only, do not merge repos):
 
-`/Users/mohamedaasik/Desktop/Cursor/ProjectTracker/src/ProjectDashboardPage.jsx`
+`/Users/mohamedaasik/Desktop/Cursor/P2P-main/client/src/components/feature/AnimatedKpiCard.tsx`
+Live look: `https://p2p-backend-645830234926.asia-south1.run.app/public/insights`
 
-- `EmbedKpiCard` — `min-h-[96px] lg:min-h-[120px]`, label + value left, icon right (Head compact, no empty padding)
-- `DASHBOARD_CARD_GRID` — `grid grid-cols-2 items-stretch gap-2.5 sm:gap-4 md:gap-5 xl:grid-cols-4`
+- `EmbedKpiCard` — white card, left pastel icon, dark value, optional share chip + bar
+- `NE_KPI_CARD_MIN_H` — `min-h-[128px] lg:min-h-[148px]`
+- Grid: `NE_KPI_GRID_CLASS` / `neKpiBalancedGridClass` — 2-up mobile, **always 4-up on lg/xl**
 - Palette: `#2B5AED` `#0084AD` `#22C55E` `#EF4444` `#8B5CF6` `#F97316`
 
 ## Rules
@@ -19,5 +21,6 @@ Design reference (read-only, do not merge repos):
 - Embed and normal dashboards use the same `EmbedKpiCard` / `NE_KPI_GRID_CLASS`.
 - **Always 4-up on xl.** Never `md:grid-cols-3` for 3 or 6 cards — that stretches cards too wide.
 - Incomplete last rows stay quarter-width (empty cells OK). Do not grow remaining cards to fill the row.
-- Same height and width for every card in the grid. No empty space *inside* a stretched card.
-- Do not change scheduled-email KPI logic when restyling cards.
+- Same height and width for every card in the grid.
+- UI/theme only — do not change scheduled-email KPI logic, click/filter handlers, or incremental sync.
+- No P2P click FX (tilt, confetti, delayed onClick, count-up). Share bar is display-only from existing values.

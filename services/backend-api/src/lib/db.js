@@ -3,6 +3,7 @@
 const { Pool } = require('pg');
 
 let pool = null;
+let connector = null;
 
 function resolvePassword() {
   const value = process.env.PGPASSWORD ?? process.env.PG_PASS ?? '';
@@ -26,7 +27,7 @@ function isDatabaseConfigured() {
 
 function poolOptions(extra = {}) {
   return {
-    max: Math.max(2, Number(process.env.PG_POOL_MAX || 15)),
+    max: Math.max(2, Number(process.env.PG_POOL_MAX || 4)),
     idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 30000),
     connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 20000),
     ...extra,
@@ -38,35 +39,68 @@ async function initDatabase() {
   if (!isDatabaseConfigured()) return null;
 
   if (process.env.DATABASE_URL) {
-    pool = new Pool(poolOptions({ connectionString: process.env.DATABASE_URL }));
+    pool = guardPool(new Pool(poolOptions({ connectionString: process.env.DATABASE_URL })));
     return pool;
   }
 
   const instance = cloudSqlInstanceName();
   if (instance) {
     const { Connector, IpAddressTypes } = require('@google-cloud/cloud-sql-connector');
-    const connector = new Connector();
+    connector = new Connector();
     const clientOpts = await connector.getOptions({
       instanceConnectionName: instance,
       ipType: IpAddressTypes.PUBLIC,
     });
-    pool = new Pool(poolOptions({
+    pool = guardPool(new Pool(poolOptions({
       ...clientOpts,
       user: process.env.PGUSER || 'postgres',
       password: resolvePassword(),
       database: process.env.PGDATABASE || 'engagement_reporting',
-    }));
+    })));
     return pool;
   }
 
-  pool = new Pool(poolOptions({
+  pool = guardPool(new Pool(poolOptions({
     host: process.env.PGHOST || 'localhost',
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER || 'postgres',
     password: resolvePassword(),
     database: process.env.PGDATABASE || 'engagement_reporting',
-  }));
+  })));
   return pool;
+}
+
+function isDeadConnectionError(err) {
+  const msg = String(err && err.message || '');
+  const code = String(err && err.code || '');
+  return code === 'ECONNRESET'
+    || code === '57P01'
+    || code === '57P03'
+    || /terminat|not yet connected|Connection ended|ECONNRESET|server closed/i.test(msg);
+}
+
+function guardPool(nextPool) {
+  nextPool.on('error', (err) => {
+    console.error('[pg-pool] idle client error', err && err.message);
+    if (isDeadConnectionError(err)) {
+      resetPool().catch(() => undefined);
+    }
+  });
+  return nextPool;
+}
+
+async function resetPool() {
+  const oldPool = pool;
+  const oldConnector = connector;
+  pool = null;
+  connector = null;
+  if (oldPool) {
+    try { await oldPool.end(); } catch { /* ignore */ }
+  }
+  if (oldConnector) {
+    try { await oldConnector.close(); } catch { /* ignore */ }
+  }
+  return initDatabase();
 }
 
 function getPool() {
@@ -81,13 +115,25 @@ async function checkConnection() {
     throw Object.assign(new Error('DATABASE_NOT_CONFIGURED'), { code: 'DATABASE_NOT_CONFIGURED' });
   }
   await initDatabase();
-  const client = await getPool().connect();
   try {
-    await client.query('SELECT 1');
-    return true;
-  } finally {
-    client.release();
+    const client = await getPool().connect();
+    try {
+      await client.query('SELECT 1');
+      return true;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    if (!isDeadConnectionError(err)) throw err;
+    await resetPool();
+    const client = await getPool().connect();
+    try {
+      await client.query('SELECT 1');
+      return true;
+    } finally {
+      client.release();
+    }
   }
 }
 
-module.exports = { getPool, initDatabase, checkConnection, isDatabaseConfigured, resolvePassword };
+module.exports = { getPool, initDatabase, checkConnection, isDatabaseConfigured, resolvePassword, resetPool };

@@ -6,8 +6,11 @@ import {
   TRAVEL_EXPENSE_COLUMNS,
   TRAVEL_REQUEST_COLUMNS,
   annotateTravelBookingFareRows,
+  fareTrendFilterLabel,
+  formatFareTrendPct,
   formatOverMedianPct,
   isTravelCoreColumn,
+  travelSlaDisplay,
   travelColumnsForPack,
   travelExpandTiles,
   travelFareRoute,
@@ -48,16 +51,18 @@ describe('travel column packs', () => {
       'to_city',
       'travel_mode',
       'amount',
-      'route_median',
-      'over_median',
-      'over_median_pct',
+      'reference_fare',
+      'policy_deviation_cost',
+      'deviation_pct',
+      'sla',
+      'fare_trend',
       'current_step',
       'status',
       'created_at',
     ]);
-    expect(isTravelCoreColumn('route_median', 'booking')).toBe(true);
-    expect(isTravelCoreColumn('over_median', 'advance')).toBe(false);
-    expect(travelColumnsForPack(null).map((c) => c.id)).not.toContain('route_median');
+    expect(isTravelCoreColumn('reference_fare', 'booking')).toBe(true);
+    expect(isTravelCoreColumn('policy_deviation_cost', 'advance')).toBe(false);
+    expect(travelColumnsForPack(null).map((c) => c.id)).not.toContain('reference_fare');
     expect(isTravelCoreColumn('from_city', 'booking')).toBe(true);
     expect(isTravelCoreColumn('trip_type', 'booking')).toBe(true);
     expect(isTravelCoreColumn('travel_mode', 'booking')).toBe(true);
@@ -175,19 +180,39 @@ describe('travel booking fare columns', () => {
     expect(travelFareRoute('Chennai (MAA)', 'Pune')).toBe('CHENNAI-PUNE');
   });
 
-  it('matches the sample median, above-median rupees, and percent', () => {
+  it('matches the sample reference fare, policy deviation, and percent', () => {
     const rows = annotateTravelBookingFareRows([
-      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5605 },
-      { id: '2', travel_mode: 'Flight', from_city: 'Chennai (MAA)', to_city: 'Pune', amount: 5822 },
-      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466 },
+      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5605, created_at: '2026-01-01' },
+      { id: '2', travel_mode: 'Flight', from_city: 'Chennai (MAA)', to_city: 'Pune', amount: 5822, created_at: '2026-02-01' },
+      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466, created_at: '2026-03-01', departure_date: '2026-03-13' },
       { id: '4', travel_mode: 'Bus', from_city: 'Chennai', to_city: 'Pune', amount: 2000 },
     ]);
-    expect(rows[2].route_median).toBe(5822);
-    expect(rows[2].over_median).toBe(2644);
-    expect(rows[2].over_median_pct).toBeCloseTo(2644 / 5822);
-    expect(formatOverMedianPct(rows[2].over_median_pct)).toBe('+45.4%');
-    expect(rows[3].route_median).toBeNull();
-    expect(rows[3].over_median).toBeNull();
+    expect(rows[2].reference_fare).toBe(5822);
+    expect(rows[2].policy_deviation_cost).toBe(2644);
+    expect(rows[2].deviation_pct).toBeCloseTo(2644 / 5822);
+    expect(formatOverMedianPct(rows[2].deviation_pct)).toBe('+45.4%');
+    expect(rows[2].sla).toBe('Not breached · 12d');
+    expect(travelSlaDisplay(rows[2])).toEqual({
+      primary: 'Not breached',
+      sub: '12d',
+      state: 'ok',
+    });
+    expect(travelSlaDisplay({
+      id: 'late',
+      created_at: '2026-03-20',
+      departure_date: '2026-03-13',
+    })).toEqual({
+      primary: 'Breached',
+      sub: '7d',
+      state: 'breached',
+    });
+    expect(rows[2].fare_trend).toBe('Up');
+    expect(fareTrendFilterLabel(rows[2].fare_trend, rows[2].deviation_pct)).toBe('▲45%');
+    expect(formatFareTrendPct(rows[2].deviation_pct)).toBe('45%');
+    expect(fareTrendFilterLabel('Down', -0.03)).toBe('▼3%');
+    expect(fareTrendFilterLabel('Flat', 0)).toBe('■0%');
+    expect(rows[3].reference_fare).toBeNull();
+    expect(rows[3].policy_deviation_cost).toBeNull();
   });
 
   it('leaves fare columns empty when a route has fewer than 3 flights', () => {
@@ -195,8 +220,9 @@ describe('travel booking fare columns', () => {
       { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 8000 },
       { id: '2', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 9000 },
     ]);
-    expect(rows[0].route_median).toBeNull();
-    expect(rows[0].over_median).toBeNull();
-    expect(rows[0].over_median_pct).toBeNull();
+    expect(rows[0].reference_fare).toBeNull();
+    expect(rows[0].policy_deviation_cost).toBeNull();
+    expect(rows[0].deviation_pct).toBeNull();
+    expect(rows[0].fare_trend).toBeNull();
   });
 });

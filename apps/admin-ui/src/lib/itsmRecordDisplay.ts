@@ -56,10 +56,17 @@ export function itsmStageLabel(row: AppRecordRow): string {
   return raw;
 }
 
-export function itsmClosedByDisplay(row: AppRecordRow): string {
+export function isItsmClosedRecord(row: AppRecordRow): boolean {
   const status = String(row.status || '').toLowerCase();
-  const closed = status === 'closed' || status === 'rejected';
-  if (!closed) return '';
+  const stage = String(row.form_status || row.current_step || '').toLowerCase();
+  return status === 'closed'
+    || status === 'rejected'
+    || status === 'completed'
+    || /complet|closed|reopen|employee feedback/.test(stage);
+}
+
+export function itsmClosedByDisplay(row: AppRecordRow): string {
+  if (!isItsmClosedRecord(row)) return '';
   const closer = normalizeItsmPersonLabel(String(row.closed_by || '').trim());
   if (closer && !isPlaceholderPersonName(closer) && !isItsmSystemActor(closer) && isDisplayablePersonName(closer)) {
     return closer;
@@ -68,11 +75,7 @@ export function itsmClosedByDisplay(row: AppRecordRow): string {
 }
 
 export function itsmClosedAtDisplay(row: AppRecordRow): string {
-  const status = String(row.status || '').toLowerCase();
-  const stage = String(row.form_status || row.current_step || '').toLowerCase();
-  const closed = status === 'closed'
-    || status === 'rejected'
-    || /complet|reopen|employee feedback/.test(stage);
+  const closed = isItsmClosedRecord(row);
   return String(
     row.closed_at
     || (closed ? (row.agent_closed_at || row.modified_at || '') : '')

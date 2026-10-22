@@ -2,7 +2,7 @@
  * Project Tracker-style MIS cards: table on lg+, stacked cards on mobile.
  * Display-only — same values the desktop table already shows.
  */
-import { useState, type ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 export function MisMobileFieldRow({
@@ -27,6 +27,7 @@ export function MisMobileRecordCard({
   fields,
   extraFields,
   extra,
+  index = 0,
 }: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -34,12 +35,16 @@ export function MisMobileRecordCard({
   fields: Array<{ label: string; value: ReactNode }>;
   extraFields?: Array<{ label: string; value: ReactNode }>;
   extra?: ReactNode;
+  index?: number;
 }) {
   const [open, setOpen] = useState(false);
   const canExpand = Boolean(extra || extraFields?.length);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div
+      className="ne-list-card ne-mis-card overflow-hidden rounded-xl border border-white/80 bg-white shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      style={{ '--r': index } as CSSProperties}
+    >
       <div className="w-full p-3 text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">

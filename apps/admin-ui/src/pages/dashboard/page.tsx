@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -37,7 +37,8 @@ import {
 } from '@/lib/embedMode';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
 import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, neKpiBalancedGridClass } from '@/components/feature/EmbedKpiCard';
-import { NE_DASH_CLASS, NE_INK_SOFT, NE_TYPE } from '@/lib/neDashType';
+import { neAppHeroTitle, resolveNeAppKind } from '@/lib/neKpiIcons';
+import { NE_DASH_CLASS, NE_DASH_STACK_CLASS, NE_INK_SOFT, NE_TYPE } from '@/lib/neDashType';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
 import { buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
 import { loadApplicationRecordInventory } from '@/services/appRecordsApi';
@@ -150,23 +151,29 @@ function KpiCard({
   value,
   suffix,
   sub,
+  hint,
   styleIndex = 0,
+  shareOf,
 }: {
   label: string;
   value: number;
   suffix?: string;
   sub?: string;
+  hint?: string;
   styleIndex?: number;
+  shareOf?: number;
 }) {
   return (
     <EmbedKpiCard
       label={label}
       value={value}
       sub={sub}
+      hint={hint}
       suffix={suffix}
       styleIndex={styleIndex}
       themes={EMBED_EXEC_KPI_THEMES}
       appKind="consolidated"
+      shareOf={shareOf}
     />
   );
 }
@@ -221,10 +228,11 @@ function AppDetailCard({
     >
       <div className="mb-4 h-1 w-full rounded-full" style={{ background: accent.bg }} />
       <div className="space-y-2">
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           <div
             key={row.metric}
-            className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-100"
+            className="ne-list-row-lite flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-100"
+            style={{ '--r': index } as CSSProperties}
           >
             <span className={`text-xs font-medium ${NE_INK_SOFT}`}>{row.metric}</span>
             <span className="text-sm font-bold tabular-nums text-slate-800">{row.value}</span>
@@ -249,9 +257,12 @@ export default function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const embed = readEmbedFromSearch(searchParams);
   const backendMode = isBackendApiMode();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [applications, setApplications] = useState<DashboardApplication[]>([]);
+  const [applications, setApplications] = useState<DashboardApplication[]>(() => {
+    const soft = readDashboardCacheSoft('production');
+    return soft?.applications || [];
+  });
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [refreshMode, setRefreshMode] = useState<'live' | 'snapshot' | null>(null);
   const [refreshWarnings, setRefreshWarnings] = useState<string[]>([]);
@@ -323,7 +334,7 @@ export default function DashboardPage() {
     if (soft) {
       applyDashboardData(soft);
       setLoading(false);
-    } else {
+    } else if (!forceRefresh) {
       setLoading(true);
     }
 
@@ -367,7 +378,8 @@ export default function DashboardPage() {
     void load(false);
   }, [load]);
 
-  const needsCatalog = entity !== 'all' || company !== 'all';
+  const periodNeedsRecords = period !== 'fy' && period !== 'all';
+  const needsCatalog = entity !== 'all' || company !== 'all' || periodNeedsRecords || Boolean(dateFrom || dateTo);
 
   useEffect(() => {
     // Snapshot KPIs land first. Full inventories are only for Entity / Company filters.
@@ -437,16 +449,29 @@ export default function DashboardPage() {
       return;
     }
 
-    // All entities/companies: incremental overview snapshot — do not wait on 7 inventories.
-    if (entity === 'all' && company === 'all') {
+    // Default FY + all companies: keep the overview snapshot. Any other filter needs records.
+    if (entity === 'all' && company === 'all' && !periodNeedsRecords && !dateFrom && !dateTo) {
       setFilteredApplications(null);
       setFilterLoading(false);
       return;
     }
 
     if (!catalogReady) {
-      // Keep snapshot KPIs on screen — do not block landing while inventories load.
-      setFilterLoading(false);
+      setFilterLoading(true);
+      // Keep last filtered view if we have one; never leave the unfiltered
+      // snapshot looking like the filter already applied.
+      setFilteredApplications((prev) => prev ?? applications.map((app) => ({
+        ...app,
+        metrics: {
+          ...app.metrics,
+          open_tickets: 0,
+          closed_tickets: 0,
+          rejected: 0,
+          total_items: 0,
+          opened_today: 0,
+          closed_today: 0,
+        },
+      })));
       return;
     }
 
@@ -590,32 +615,22 @@ export default function DashboardPage() {
 
   return (
     <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
-      <div className={`relative rounded-3xl border border-slate-100 bg-transparent shadow-none ${NE_DASH_CLASS}`}>
+      <div className={`relative min-h-[240px] rounded-3xl border border-slate-100 bg-transparent shadow-none ${NE_DASH_CLASS}`}>
         <DashboardLoadingOverlay
-          show={Boolean(loading && applications.length === 0)}
+          show={loading && applications.length === 0}
           mode="fixed"
           label="Loading dashboard…"
         />
-        <div className="relative space-y-4 px-0 py-0 md:px-0">
-          {refreshWarnings.length > 0 && (
-            <div className="space-y-1 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-              {refreshWarnings.map((w) => (
-                <p key={w}>{w}</p>
-              ))}
-            </div>
-          )}
+        <div className={`relative px-0 py-0 md:px-0 ${NE_DASH_STACK_CLASS}`}>
 
-          {error ? (
-            <EmptyState
-              variant="activity"
-              title="Could not load dashboard"
-              description={error}
-              primaryLabel="Retry"
-              onPrimary={() => void load()}
-            />
-          ) : loading && applications.length === 0 ? null : (
-            <div className="space-y-4">
+          <div className={NE_DASH_STACK_CLASS}>
               <EmbedDashboardHero
+                headline={
+                  selectedAppId === 'all'
+                    ? neAppHeroTitle('consolidated')
+                    : neAppHeroTitle(resolveNeAppKind(selectedAppId, embedAppTitle), embedAppTitle)
+                }
+                description="Here's your usage overview across applications"
                 actions={
                   <>
                     <Button
@@ -640,13 +655,25 @@ export default function DashboardPage() {
                 }
                 filters={dashboardFilterBar}
               />
+          {error ? (
+            <EmptyState
+              variant="activity"
+              title="Could not load dashboard"
+              description={error}
+              primaryLabel="Retry"
+              onPrimary={() => void load()}
+            />
+          ) : loading && applications.length === 0 ? null : (
 
-              <div className="space-y-4">
-                <div className="space-y-4">
-                  <div className={neKpiBalancedGridClass(8)}>
+              <div className={NE_DASH_STACK_CLASS}>
+                  {filterLoading ? (
+                    <p className="text-sm font-medium text-slate-500">Applying filters…</p>
+                  ) : null}
+                  <div className={`${neKpiBalancedGridClass(8)}${filterLoading ? ' opacity-60' : ''}`}>
                     <KpiCard
                       label="Total items"
                       value={totals.open_tickets + totals.closed_tickets + totals.rejected}
+                      shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       styleIndex={0}
                     />
                     <KpiCard label="Total users" value={totals.total_users} styleIndex={1} />
@@ -664,12 +691,21 @@ export default function DashboardPage() {
                       styleIndex={0}
                       surface="white"
                     />
-                    <KpiCard label="Open items" value={totals.open_tickets} styleIndex={2} />
-                    <KpiCard label="Closed items" value={totals.closed_tickets} styleIndex={3} />
+                    <KpiCard
+                      label="Open items"
+                      value={totals.open_tickets}
+                      shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
+                      styleIndex={2}
+                    />
+                    <KpiCard
+                      label="Closed items"
+                      value={totals.closed_tickets}
+                      shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
+                      styleIndex={3}
+                    />
                     <KpiCard label="Opened today" value={totals.opened_today} styleIndex={0} />
                     <KpiCard label="Closed today" value={totals.closed_today} styleIndex={2} />
                   </div>
-                </div>
 
                 <SectionHeader icon={LayoutGrid} title="Application detail" accent="from-blue-500 to-indigo-600" />
 
@@ -717,8 +753,8 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
-            </div>
           )}
+          </div>
         </div>
       </div>
     </Layout>

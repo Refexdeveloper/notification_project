@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { REFEXONE_LOGO_URL } from '@/constants/branding';
 import { staggerContainer } from '@/lib/motion';
 import { isBackendApiMode } from '@/services/backendApi';
-import { loadApplicationsFromBackend } from '@/services/applicationsApi';
+import { loadApplicationsFromBackend, readCachedApplicationsList, stubCatalogApplications } from '@/services/applicationsApi';
 import { useAuth } from '@/hooks/AuthContext';
 
 /** Production-only surface for executive review — Development env is not shown. */
@@ -22,10 +22,14 @@ export default function ApplicationsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [tick, setTick] = useState(0);
-  const [loading, setLoading] = useState(isBackendApiMode());
+  const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
-  const [backendApps, setBackendApps] = useState<ReturnType<typeof getApplications>>([]);
+  const [backendApps, setBackendApps] = useState<ReturnType<typeof getApplications>>(() => {
+    if (!isBackendApiMode()) return [];
+    const cached = readCachedApplicationsList();
+    return cached.length ? cached : stubCatalogApplications();
+  });
 
   useEffect(() => {
     try {
@@ -38,7 +42,6 @@ export default function ApplicationsPage() {
   useEffect(() => {
     if (!isBackendApiMode()) return;
     let cancelled = false;
-    setLoading(true);
     loadApplicationsFromBackend().then((result) => {
       if (cancelled) return;
       setBackendApps(result.applications);

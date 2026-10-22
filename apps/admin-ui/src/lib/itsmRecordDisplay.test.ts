@@ -184,6 +184,20 @@ describe('itsmClosedByDisplay', () => {
       closed_by: 'Sakthivel',
       form_status: 'InProgress',
     })).toBe('');
+    expect(itsmClosedByDisplay({
+      id: '5',
+      status: 'open',
+      assigned_to: '',
+      closed_by: 'Sakthivel',
+      form_status: 'Completed',
+    })).toBe('Sakthivel');
+    expect(itsmClosedByDisplay({
+      id: '6',
+      status: 'completed',
+      assigned_to: 'ITSM Bot',
+      closed_by: 'Bhukkay Naik',
+      form_status: 'IT Tech Reopen',
+    })).toBe('Bhukkay Naik');
   });
 });
 

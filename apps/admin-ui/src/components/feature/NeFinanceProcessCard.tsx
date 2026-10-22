@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import EmbedKpiCard, { EMBED_KPI_THEMES, NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
+import type { NeAppKind } from '@/lib/neKpiIcons';
 import { NE_TYPE } from '@/lib/neDashType';
 
 export type FinancePackMetric = {
@@ -17,6 +18,7 @@ type Props = {
   icon: LucideIcon;
   styleIndex?: number;
   metrics: FinancePackMetric[];
+  appKind?: NeAppKind;
 };
 
 /**
@@ -29,8 +31,13 @@ export default function NeFinanceProcessCard({
   icon: Icon,
   styleIndex = 0,
   metrics,
+  appKind,
 }: Props) {
   const theme = EMBED_KPI_THEMES[styleIndex % EMBED_KPI_THEMES.length];
+  const packTotal = /^total/i.test(String(metrics[0]?.label || ''))
+    ? Number(metrics[0]?.value)
+    : undefined;
+  const shareOf = Number.isFinite(packTotal) && (packTotal || 0) > 0 ? packTotal : undefined;
 
   return (
     <section className="ne-finance-pack space-y-2.5">
@@ -58,6 +65,9 @@ export default function NeFinanceProcessCard({
             styleIndex={index}
             active={metric.active}
             onClick={metric.onClick}
+            shareOf={shareOf}
+            appKind={appKind}
+            iconContext={title}
           />
         ))}
       </div>

@@ -7,8 +7,9 @@ import {
   type BackendProcessRow,
   type ProcessesListResponse,
 } from './backendApi';
-import { catalogEntryForApp, REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
+import { catalogEntryForApp, REFEX_APP_CATALOG, REFEX_ENV_CONFIG, type RefexEnvironment } from '@/seeds/refexAppCatalog';
 import { friendlyApplicationName, isPmApp } from '@/lib/processLabels';
+import { neCacheRead, neCacheRemove, neCacheWrite } from '@/lib/neLandingCache';
 
 function mapEnvironment(env: string): RefexEnvironment {
   const lower = env.toLowerCase();
@@ -139,6 +140,95 @@ function mapRowToApplication(row: BackendApplicationRow): KissflowApplication {
   };
 }
 
+const APPS_CACHE_KEY = 'ne_applications_list_v1';
+const APP_ONE_CACHE_PREFIX = 'ne_application_one_v1:';
+const APPS_CACHE_MS = 3 * 60 * 1000;
+
+function writeCachedApplication(application: KissflowApplication) {
+  neCacheWrite(
+    `${APP_ONE_CACHE_PREFIX}${application.id}`,
+    JSON.stringify({ ts: Date.now(), application }),
+  );
+}
+
+/** Instant paint on localhost / embed — list cache, then last single-app fetch. */
+export function readCachedApplicationByRouteId(routeId: string): KissflowApplication | null {
+  try {
+    const one = neCacheRead(`${APP_ONE_CACHE_PREFIX}${routeId}`);
+    if (one) {
+      const parsed = JSON.parse(one) as { ts?: number; application?: KissflowApplication };
+      if (parsed?.application?.id === routeId) return parsed.application;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const raw = neCacheRead(APPS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { applications?: KissflowApplication[] };
+    return parsed.applications?.find((row) => row.id === routeId) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function readCachedApplicationsList(): KissflowApplication[] {
+  try {
+    const raw = neCacheRead(APPS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { applications?: KissflowApplication[] };
+    return parsed.applications?.length ? parsed.applications : [];
+  } catch {
+    return [];
+  }
+}
+
+export function stubCatalogApplications(): KissflowApplication[] {
+  return REFEX_APP_CATALOG
+    .map((row) => stubApplicationFromRouteId(`production-${row.kissflowAppId}`))
+    .filter((row): row is KissflowApplication => Boolean(row));
+}
+
+/** Catalog stub so the dashboard can mount before Cloud Run answers. */
+export function stubApplicationFromRouteId(routeId: string): KissflowApplication | null {
+  const parsed = parseBackendApplicationRouteId(routeId);
+  if (!parsed) return null;
+  const catalog = catalogEntryForApp({ appId: parsed.applicationId });
+  const applicationName = catalog?.applicationName
+    || friendlyApplicationName(parsed.applicationId, parsed.applicationId);
+  const environment = mapEnvironment(parsed.environment);
+  const envConfig = REFEX_ENV_CONFIG[environment];
+  return {
+    id: routeId,
+    accountId: envConfig.accountId,
+    appId: parsed.applicationId,
+    subdomain: envConfig.subdomain,
+    name: applicationName,
+    displayName: applicationName,
+    description: '',
+    region: 'com',
+    environment,
+    status: 'Active',
+    processIds: catalog ? [catalog.processId, ...(catalog.extraProcessIds || [])].filter(Boolean) : [],
+    dataformIds: [],
+    boardIds: catalog?.boardIds || [],
+    datasetIds: [],
+    accessKeyId: '',
+    accessKeySecret: '',
+    icon: catalog?.icon || 'ri-apps-line',
+    owner: '—',
+    created: '—',
+    lastSync: '—',
+    embedUrl: '',
+    connected: true,
+    dataformsCount: 0,
+    processesCount: catalog ? 1 + (catalog.extraProcessIds?.length || 0) : 0,
+    boardsCount: catalog?.boardIds?.length || 0,
+    templatesCount: 0,
+    schedulersCount: 0,
+  };
+}
+
 export type ApplicationsLoadResult = {
   applications: KissflowApplication[];
   source: 'backend' | 'local';
@@ -153,10 +243,8 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     return { applications: [], source: 'local' };
   }
 
-  const APPS_CACHE_KEY = 'ne_applications_list_v1';
-  const APPS_CACHE_MS = 3 * 60 * 1000;
   try {
-    const raw = sessionStorage.getItem(APPS_CACHE_KEY);
+    const raw = neCacheRead(APPS_CACHE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as { ts: number; applications: KissflowApplication[]; warning?: string };
       if (parsed?.applications?.length && Date.now() - parsed.ts <= APPS_CACHE_MS) {
@@ -174,7 +262,7 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
   const res = await apiV1Fetch<ApplicationsListResponse>('/applications', { cache: 'no-store' }, { timeoutMs: 25000 });
   if (!res.ok || !res.data) {
     try {
-      const raw = sessionStorage.getItem(APPS_CACHE_KEY);
+      const raw = neCacheRead(APPS_CACHE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as { applications: KissflowApplication[]; warning?: string };
         if (parsed?.applications?.length) {
@@ -190,6 +278,15 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
     } catch {
       /* ignore */
     }
+    const catalog = stubCatalogApplications();
+    if (catalog.length) {
+      return {
+        applications: catalog,
+        source: 'local',
+        stale: true,
+        error: res.error || 'Failed to load applications',
+      };
+    }
     return {
       applications: [],
       source: 'backend',
@@ -201,14 +298,10 @@ export async function loadApplicationsFromBackend(): Promise<ApplicationsLoadRes
   const applications = res.data.items
     .filter((row) => !/vindview|lead tracker venwind/i.test(`${row.application_id || ''} ${row.application_name || ''}`))
     .map(mapRowToApplication);
-  try {
-    sessionStorage.setItem(
-      APPS_CACHE_KEY,
-      JSON.stringify({ ts: Date.now(), applications, warning: res.data.warning || res.data.hint }),
-    );
-  } catch {
-    /* ignore */
-  }
+  neCacheWrite(
+    APPS_CACHE_KEY,
+    JSON.stringify({ ts: Date.now(), applications, warning: res.data.warning || res.data.hint }),
+  );
 
   return {
     applications,
@@ -276,10 +369,23 @@ export async function loadApplicationFromBackend(
   const includeFields = options?.includeFields === true;
   const envParam = encodeURIComponent(toDbEnvironment(mapEnvironment(parsed.environment)));
 
-  const appRes = await apiV1Fetch<{ item: BackendApplicationRow }>(
-    `/applications/${encodeURIComponent(parsed.applicationId)}?environment=${envParam}`,
-  );
+  const [appRes, processesRes] = await Promise.all([
+    apiV1Fetch<{ item: BackendApplicationRow }>(
+      `/applications/${encodeURIComponent(parsed.applicationId)}?environment=${envParam}`,
+      { cache: 'no-store' },
+      { timeoutMs: 12000 },
+    ),
+    apiV1Fetch<ProcessesListResponse>(
+      `/applications/${encodeURIComponent(parsed.applicationId)}/processes`,
+      { cache: 'no-store' },
+      { timeoutMs: 12000 },
+    ),
+  ]);
   if (!appRes.ok || !appRes.data?.item) {
+    const cached = readCachedApplicationByRouteId(routeId);
+    if (cached) {
+      return { application: cached, error: appRes.error, warning: 'Showing last loaded application' };
+    }
     return {
       application: null,
       error: appRes.error || 'Application not found in database',
@@ -287,9 +393,6 @@ export async function loadApplicationFromBackend(
   }
 
   const row = appRes.data.item;
-  const processesRes = await apiV1Fetch<ProcessesListResponse>(
-    `/applications/${encodeURIComponent(parsed.applicationId)}/processes`,
-  );
 
   let application = mapRowToApplication(row);
   if (processesRes.ok && processesRes.data) {
@@ -325,6 +428,7 @@ export async function loadApplicationFromBackend(
     }
   }
 
+  writeCachedApplication(application);
   return {
     application,
     warning: processesRes.data?.warning || processesRes.data?.hint,
@@ -505,10 +609,14 @@ export async function saveApplicationEmbedUrl(
     return { ok: false, error: res.error || 'Failed to save embed link' };
   }
   try {
-    sessionStorage.removeItem('ne_applications_list_v1');
-    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
-      const key = sessionStorage.key(i);
-      if (key && key.startsWith('ne_dashboard_snapshot_')) sessionStorage.removeItem(key);
+    neCacheRemove('ne_applications_list_v1');
+    try {
+      for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+        const key = sessionStorage.key(i);
+        if (key && key.startsWith('ne_dashboard_snapshot_')) neCacheRemove(key);
+      }
+    } catch {
+      /* ignore */
     }
   } catch {
     /* ignore */

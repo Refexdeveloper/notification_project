@@ -1,5 +1,6 @@
 import { apiV1Fetch, isBackendApiMode } from './backendApi';
 import { friendlyApplicationName } from '@/lib/processLabels';
+import { neCacheRead, neCacheRemove, neCacheWrite } from '@/lib/neLandingCache';
 
 export type DashboardMetricLabels = {
   sign_in_today: string;
@@ -84,11 +85,11 @@ function cacheKey(environment: string) {
 
 export function readDashboardCache(environment: 'production' | 'development'): DashboardData | null {
   try {
-    const raw = sessionStorage.getItem(cacheKey(environment));
+    const raw = neCacheRead(cacheKey(environment));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DashboardCacheEntry;
     if (!parsed?.data || !Array.isArray(parsed.data.applications) || parsed.data.applications.length === 0) {
-      sessionStorage.removeItem(cacheKey(environment));
+      neCacheRemove(cacheKey(environment));
       return null;
     }
     if (Date.now() - parsed.ts > DASHBOARD_CACHE_STALE_MS) {
@@ -103,7 +104,7 @@ export function readDashboardCache(environment: 'production' | 'development'): D
 /** Soft paint — returns last snapshot even when older than 5 minutes. */
 export function readDashboardCacheSoft(environment: 'production' | 'development'): DashboardData | null {
   try {
-    const raw = sessionStorage.getItem(cacheKey(environment));
+    const raw = neCacheRead(cacheKey(environment));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as DashboardCacheEntry;
     if (!parsed?.data || !Array.isArray(parsed.data.applications) || parsed.data.applications.length === 0) {
@@ -120,7 +121,7 @@ export function isDashboardCacheFresh(
   maxAgeMs = DASHBOARD_CACHE_STALE_MS,
 ): boolean {
   try {
-    const raw = sessionStorage.getItem(cacheKey(environment));
+    const raw = neCacheRead(cacheKey(environment));
     if (!raw) return false;
     const parsed = JSON.parse(raw) as DashboardCacheEntry;
     return Boolean(parsed?.ts && Date.now() - parsed.ts <= maxAgeMs);
@@ -130,12 +131,8 @@ export function isDashboardCacheFresh(
 }
 
 function writeDashboardCache(environment: string, data: DashboardData) {
-  try {
-    const entry: DashboardCacheEntry = { ts: Date.now(), data };
-    sessionStorage.setItem(cacheKey(environment), JSON.stringify(entry));
-  } catch {
-    /* ignore quota / private mode */
-  }
+  const entry: DashboardCacheEntry = { ts: Date.now(), data };
+  neCacheWrite(cacheKey(environment), JSON.stringify(entry));
 }
 
 export async function loadDashboard(
@@ -162,7 +159,7 @@ export async function loadDashboard(
 
   const res = await apiV1Fetch<DashboardData>(`/dashboard?${params.toString()}`, {
     cache: 'no-store',
-  }, { timeoutMs: 30000 });
+  }, { timeoutMs: 90000 });
 
   if (!res.ok || !res.data) {
     return { ok: false, error: res.error || 'Failed to load dashboard' };

@@ -1,25 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Layers,
   LayoutDashboard,
   RefreshCw,
   Search,
   X,
-  XCircle,
 } from 'lucide-react';
 import EmbedKpiCard, { NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
 import type { KissflowApplication } from '@/mocks/applications';
+import { neAppHeroTitle, resolveNeAppKind } from '@/lib/neKpiIcons';
 import { resolveBackendApplicationId } from '@/services/applicationsApi';
 import { mergeLeadWebsiteFilterOptions } from '@/services/leadReport';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadApplicationRecordInventory,
+  peekApplicationRecordInventory,
   type AppRecordsResponse,
 } from '@/services/appRecordsApi';
 import { buildEntityBucketOptions, buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
@@ -37,7 +36,7 @@ import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverla
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
 import MisPersonInitialsCell from '@/components/feature/MisPersonInitialsCell';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
-import { NE_DASH_CLASS, NE_TYPE } from '@/lib/neDashType';
+import { NE_DASH_CLASS, NE_DASH_STACK_CLASS, NE_TYPE } from '@/lib/neDashType';
 import {
   currentIstYear,
   resolveDateScope,
@@ -89,6 +88,7 @@ function statusTone(status: string): string {
 export default function RecordsTab({ app, embed = false }: Props) {
   const navigate = useNavigate();
   const backendAppId = resolveBackendApplicationId(app);
+  const appKind = resolveNeAppKind(backendAppId, app?.displayName || app?.name);
   const itsmCompanyMode = /itsm|service_management/i.test(String(app.appId || app.id || backendAppId || ''));
   const travelMode = /travel|expense_and_travel/i.test(String(app.appId || app.id || backendAppId || ''));
   const leadMode = /lead/i.test(String(app.appId || app.id || backendAppId || ''));
@@ -96,10 +96,18 @@ export default function RecordsTab({ app, embed = false }: Props) {
   const [searchParams] = useSearchParams();
   const embedReturnTo = readEmbedReturnUrl(searchParams);
   const [data, setData] = useState<AppRecordsResponse | null>(null);
-  const [inventory, setInventory] = useState<AppRecordsResponse['items']>([]);
-  const [recordColumns, setRecordColumns] = useState<AppRecordsResponse['columns']>([]);
-  const [inventoryReady, setInventoryReady] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [inventory, setInventory] = useState<AppRecordsResponse['items']>(() => (
+    peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.items || []
+  ));
+  const [recordColumns, setRecordColumns] = useState<AppRecordsResponse['columns']>(() => (
+    peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.columns || []
+  ));
+  const [inventoryReady, setInventoryReady] = useState(() => (
+    Boolean(peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.items.length)
+  ));
+  const [loading, setLoading] = useState(() => (
+    !peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })
+  ));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -148,7 +156,18 @@ export default function RecordsTab({ app, embed = false }: Props) {
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    const seed = peekApplicationRecordInventory({
+      applicationId: backendAppId,
+      environment: app.environment,
+    });
+    if (seed?.items.length && refreshKey === 0) {
+      setInventory(seed.items);
+      setRecordColumns(seed.columns);
+      setInventoryReady(true);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError('');
     loadApplicationRecordInventory({
       applicationId: backendAppId,
@@ -158,10 +177,12 @@ export default function RecordsTab({ app, embed = false }: Props) {
     }).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        setError(result.error || 'Failed to load records');
-        setInventory([]);
-        setRecordColumns([]);
-      } else {
+        if (!seed?.items.length) {
+          setError(result.error || 'Failed to load records');
+          setInventory([]);
+          setRecordColumns([]);
+        }
+      } else if (result.items.length) {
         setInventory(result.items);
         setRecordColumns(result.columns);
       }
@@ -463,15 +484,17 @@ export default function RecordsTab({ app, embed = false }: Props) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.fast, ease: easeOutSoft }}
-      className={`relative ${embed ? 'space-y-4' : 'space-y-3'} ${NE_DASH_CLASS}`}
+      className={`relative ${NE_DASH_STACK_CLASS} ${NE_DASH_CLASS}`}
     >
       <DashboardLoadingOverlay
-        show={loading && !inventoryReady}
-        mode="absolute"
+        show={loading && !inventoryReady && !data?.items?.length}
+        mode="fixed"
         label="Loading records…"
       />
 
       <EmbedDashboardHero
+        headline={neAppHeroTitle(appKind, app.displayName || app.name)}
+        description="Record list for the current filters"
         actions={
           embed ? (
             embedHeroActions
@@ -494,26 +517,30 @@ export default function RecordsTab({ app, embed = false }: Props) {
         <EmbedKpiCard
           label="Total"
           value={Number(summary.total || 0)}
-          icon={Layers}
           styleIndex={0}
+          shareOf={Number(summary.total || 0)}
+          appKind={appKind}
         />
         <EmbedKpiCard
           label="Open"
           value={Number(summary.open || 0)}
-          icon={AlertCircle}
           styleIndex={1}
+          shareOf={Number(summary.total || 0)}
+          appKind={appKind}
         />
         <EmbedKpiCard
           label="Closed"
           value={Number(summary.closed || 0)}
-          icon={CheckCircle2}
           styleIndex={2}
+          shareOf={Number(summary.total || 0)}
+          appKind={appKind}
         />
         <EmbedKpiCard
           label="Rejected"
           value={Number(summary.rejected || 0)}
-          icon={XCircle}
           styleIndex={3}
+          shareOf={Number(summary.total || 0)}
+          appKind={appKind}
         />
       </div>
 
@@ -596,10 +623,8 @@ export default function RecordsTab({ app, embed = false }: Props) {
       ) : null}
 
       <div
-        className={`relative min-h-[220px] overflow-x-auto ${
-          embed
-            ? 'rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
-            : 'rounded-2xl border border-slate-200 bg-white shadow-sm'
+        className={`ne-list-panel relative min-h-[220px] overflow-x-auto ${
+          embed ? 'p-5' : ''
         }`}
       >
         {embed ? (
@@ -618,7 +643,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
         ) : data?.items?.length ? (
           <>
             <div className="space-y-2.5 lg:hidden">
-              {data.items.map((row) => {
+              {data.items.map((row, index) => {
                 const titleCol = columns.find((c) => c.id === 'subject') || columns[0];
                 const idCol = columns.find((c) => c.id === 'request_id');
                 const statusCol = columns.find((c) => c.id === 'status');
@@ -653,6 +678,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
                 return (
                   <MisMobileRecordCard
                     key={row.id}
+                    index={index}
                     title={titleCol ? fieldValue(titleCol) : '—'}
                     subtitle={idCol ? fieldValue(idCol) : undefined}
                     badge={statusCol ? (
@@ -668,16 +694,14 @@ export default function RecordsTab({ app, embed = false }: Props) {
                 );
               })}
             </div>
-            <div className={`hidden overflow-x-auto lg:block ${embed ? '-mx-5 -mb-5' : ''}`}>
-              <table className="w-full min-w-[780px] text-sm sm:min-w-[980px]">
-                <thead className={NE_TYPE.tableHead}>
-                  <tr className="border-b border-slate-200">
+            <div className={`hidden overflow-x-auto px-3 lg:block ${embed ? '-mx-5' : ''}`}>
+              <table className="ne-list-table text-sm">
+                <thead className={`${NE_TYPE.tableHead} bg-transparent`}>
+                  <tr>
                     {columns.map((col) => (
                       <th
                         key={col.id}
-                        className={`${NE_TYPE.tableHeadCell} font-semibold ${
-                          col.id === 'request_id' ? 'min-w-[7.5rem]' : ''
-                        }`}
+                        className={`${NE_TYPE.tableHeadCell} font-semibold`}
                       >
                         {isDateRecordColumn(col.id) ? (
                           <RecordsColumnDateFilter
@@ -734,8 +758,12 @@ export default function RecordsTab({ app, embed = false }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
+                  {data.items.map((row, index) => (
+                    <tr
+                      key={row.id}
+                      className="ne-list-row group"
+                      style={{ '--r': index } as CSSProperties}
+                    >
                       {columns.map((col) => {
                         const raw = (row as Record<string, unknown>)[col.id];
                         const cellPad = embed ? 'px-5 py-2.5' : 'px-3 py-2.5';
@@ -823,7 +851,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
                             title={text}
                             className={`${cellPad} text-slate-800 ${
                               wrapIds.has(col.id)
-                                ? 'min-w-[11rem] max-w-[18rem] whitespace-normal break-words'
+                                ? 'max-w-[14rem] whitespace-normal break-words'
                                 : 'max-w-[220px]'
                             }`}
                           >

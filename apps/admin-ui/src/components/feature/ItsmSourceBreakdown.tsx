@@ -10,53 +10,65 @@ import {
 function SourcePanel({
   title,
   subtitle,
-  headerBg,
-  headerColor,
+  accent,
   rows,
 }: {
   title: string;
   subtitle: string;
-  headerBg: string;
-  headerColor: string;
+  accent: string;
   rows?: SourceBreakdownRow[] | null;
 }) {
   const counts = sourceCountsFromBreakdown(rows);
   const total = sourceChannelTotal(counts);
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
-      <div className="px-3.5 py-3" style={{ background: headerBg }}>
-        <p className={`${NE_TYPE.label}`} style={{ color: headerColor }}>
-          {title}
-        </p>
-        <p className={`mt-0.5 ${NE_TYPE.meta}`}>
-          {subtitle}
-          {' · '}
-          <span className="font-semibold text-slate-900">{displayDashCount(total)}</span>
+    <div className="ne-list-card overflow-hidden rounded-2xl border border-white/80 bg-white p-4 shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)] sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+            {title}
+          </p>
+          <p className={`mt-0.5 ${NE_TYPE.meta}`}>{subtitle}</p>
+        </div>
+        <p className="text-xl font-extrabold tabular-nums tracking-tight text-slate-900 sm:text-2xl">
+          {displayDashCount(total).toLocaleString('en-IN')}
         </p>
       </div>
-      <table className="w-full text-sm">
-        <tbody>
-          {ITSM_SOURCE_CHANNELS.map((channel, index) => (
-            <tr key={channel.id} className={index % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
-              <td className={`${NE_TYPE.tableCell}`}>
-                <span
-                  className="mr-2 inline-block h-2 w-2 rounded-full"
-                  style={{ background: channel.tone }}
-                />
-                {channel.id}
-              </td>
-              <td className={`${NE_TYPE.tableCell} text-right font-bold tabular-nums text-slate-900`}>
-                {displayDashCount(counts[channel.id])}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {counts.Other > 0 ? (
-        <p className={`border-t border-slate-100 px-3.5 py-2 ${NE_TYPE.meta}`}>
-          Other / unmapped · <span className="font-semibold text-slate-600">{displayDashCount(counts.Other)}</span>
-        </p>
-      ) : null}
+      <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-100">
+        {ITSM_SOURCE_CHANNELS.map((channel) => {
+          const n = counts[channel.id];
+          const width = total > 0 ? (n / total) * 100 : 0;
+          if (width <= 0) return null;
+          return (
+            <span
+              key={channel.id}
+              className="h-full"
+              style={{ width: `${width}%`, background: channel.tone }}
+              title={`${channel.id} ${n.toLocaleString('en-IN')}`}
+            />
+          );
+        })}
+        {total === 0 ? (
+          <span className="h-full w-full" style={{ background: accent, opacity: 0.25 }} />
+        ) : null}
+      </div>
+      <ul className="mt-3 space-y-2">
+        {ITSM_SOURCE_CHANNELS.map((channel) => {
+          const n = counts[channel.id];
+          const pct = total > 0 ? Math.round((n / total) * 1000) / 10 : 0;
+          return (
+            <li key={channel.id} className="flex items-center gap-2 text-sm">
+              <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: channel.tone }} />
+              <span className="min-w-0 flex-1 truncate font-medium text-slate-600">{channel.id}</span>
+              <span className="tabular-nums font-semibold text-slate-800">
+                {displayDashCount(n).toLocaleString('en-IN')}
+              </span>
+              <span className="w-12 text-right tabular-nums text-slate-400">
+                {pct.toLocaleString('en-IN', { maximumFractionDigits: 1 })}%
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
@@ -80,17 +92,15 @@ export default function ItsmSourceBreakdown({
       </div>
       <div className="grid grid-cols-1 items-stretch gap-2.5 sm:gap-4 md:grid-cols-2 md:gap-5">
         <SourcePanel
-          title="All tickets"
-          subtitle="By source"
-          headerBg="#f1f5f9"
-          headerColor="#475569"
+          title="All tickets — by source"
+          subtitle="All tickets"
+          accent="#2B5AED"
           rows={all}
         />
         <SourcePanel
-          title="Today open tickets"
+          title="Today open tickets — by source"
           subtitle="Opened today by source"
-          headerBg="#fff7ed"
-          headerColor="#9a7a3a"
+          accent="#F97316"
           rows={today}
         />
       </div>

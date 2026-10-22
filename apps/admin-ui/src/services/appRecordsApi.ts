@@ -146,7 +146,7 @@ export async function loadApplicationRecords(opts: {
   if (opts.forceLive) params.set('force_live', '1');
 
   const path = `/dashboard/application/${encodeURIComponent(appId)}/records?${params.toString()}`;
-  const result = await apiV1Fetch<AppRecordsResponse>(path, { cache: 'no-store' }, { timeoutMs: 25000 });
+  const result = await apiV1Fetch<AppRecordsResponse>(path, { cache: 'no-store' }, { timeoutMs: 45000 });
   if (!result.ok || !result.data) {
     return { ok: false, error: result.error || 'Failed to load records' };
   }
@@ -155,6 +155,30 @@ export async function loadApplicationRecords(opts: {
 }
 
 const INVENTORY_PAGE = 2000;
+
+function inventoryCacheKey(environment: KissflowApplication['environment'] | string) {
+  return `${buildRecordsQueryKey({
+    environment: toDbEnvironment(environment),
+    limit: INVENTORY_PAGE,
+    offset: 0,
+  })}|inventory`;
+}
+
+/** Paint last good inventory immediately while a live refresh is in flight. */
+export function peekApplicationRecordInventory(opts: {
+  applicationId: string;
+  environment: KissflowApplication['environment'] | string;
+}): { items: AppRecordRow[]; columns: AppRecordColumn[]; dataSource?: string } | null {
+  const appId = String(opts.applicationId || '').trim();
+  if (!appId) return null;
+  const cached = readRecordsCache(appId, inventoryCacheKey(opts.environment), true);
+  if (!cached?.items?.length) return null;
+  return {
+    items: cached.items,
+    columns: cached.columns || [],
+    dataSource: cached.data_source,
+  };
+}
 
 /** One-time full inventory for client-side dashboard filters (single request from engagement cache). */
 export async function loadApplicationRecordInventory(opts: {
@@ -167,11 +191,7 @@ export async function loadApplicationRecordInventory(opts: {
   | { ok: false; error: string }
 > {
   const appId = String(opts.applicationId || '').trim();
-  const inventoryKey = buildRecordsQueryKey({
-    environment: toDbEnvironment(opts.environment),
-    limit: INVENTORY_PAGE,
-    offset: 0,
-  }) + '|inventory';
+  const inventoryKey = inventoryCacheKey(opts.environment);
 
   if (!opts.skipCache) {
     const cached = readRecordsCache(appId, inventoryKey, false);
@@ -185,51 +205,52 @@ export async function loadApplicationRecordInventory(opts: {
     }
   }
 
+  const all: AppRecordRow[] = [];
+  let columns: AppRecordColumn[] = [];
+  let dataSource: string | undefined;
+  let lastError = 'Failed to load records';
+
   const params = new URLSearchParams();
   params.set('environment', toDbEnvironment(opts.environment));
   params.set('inventory', '1');
   if (opts.forceLive) params.set('force_live', '1');
-
-  const path = `/dashboard/application/${encodeURIComponent(appId)}/records?${params.toString()}`;
-  const result = await apiV1Fetch<AppRecordsResponse>(path, { cache: 'no-store' }, { timeoutMs: 45000 });
-
-  const all: AppRecordRow[] = [];
-  let columns: AppRecordColumn[] = [];
-  let dataSource: string | undefined;
-
-  if (result.ok && result.data?.items) {
-    all.push(...result.data.items);
-    columns = result.data.columns || [];
-    dataSource = result.data.data_source;
-    const claimed = Number(result.data.inventory_summary?.total || result.data.total || all.length);
-    let offset = all.length;
-    while (offset < claimed) {
-      const page = await loadApplicationRecords({
-        applicationId: appId,
-        environment: opts.environment,
-        limit: INVENTORY_PAGE,
-        offset,
-        skipCache: true,
-        forceLive: false,
-      });
-      if (!page.ok) break;
-      columns = page.data.columns?.length ? page.data.columns : columns;
-      dataSource = page.data.data_source || dataSource;
-      const batch = page.data.items || [];
-      if (!batch.length) break;
-      const seen = new Set(all.map((r) => String(r.id || r.request_id)));
-      let added = 0;
-      for (const row of batch) {
-        const id = String(row.id || row.request_id || '');
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        all.push(row);
-        added += 1;
+  const inventoryPath = `/dashboard/application/${encodeURIComponent(appId)}/records?${params.toString()}`;
+  const inventoryResult = await apiV1Fetch<AppRecordsResponse>(
+    inventoryPath,
+    { cache: 'no-store' },
+    { timeoutMs: 45000 },
+  );
+  if (inventoryResult.ok && inventoryResult.data?.items?.length) {
+    all.push(...inventoryResult.data.items);
+    columns = inventoryResult.data.columns || [];
+    dataSource = inventoryResult.data.data_source;
+    const reportedTotal = Number(inventoryResult.data.total || all.length);
+    // P2P inventory=1 can return a single page (50) with a larger total.
+    if (all.length < reportedTotal) {
+      let offset = all.length;
+      let total = reportedTotal;
+      while (offset < total) {
+        const page = await loadApplicationRecords({
+          applicationId: appId,
+          environment: opts.environment,
+          limit: INVENTORY_PAGE,
+          offset,
+          skipCache: opts.skipCache || opts.forceLive,
+        });
+        if (!page.ok) {
+          lastError = page.error;
+          break;
+        }
+        columns = page.data.columns?.length ? page.data.columns : columns;
+        dataSource = page.data.data_source || dataSource;
+        all.push(...(page.data.items || []));
+        total = Number(page.data.total || total);
+        offset += INVENTORY_PAGE;
+        if (!page.data.items?.length) break;
       }
-      if (!added) break;
-      offset = all.length;
     }
   } else {
+    lastError = inventoryResult.error || lastError;
     let offset = 0;
     let total = Infinity;
     while (offset < total) {
@@ -242,8 +263,8 @@ export async function loadApplicationRecordInventory(opts: {
         forceLive: opts.forceLive && offset === 0,
       });
       if (!page.ok) {
-        if (all.length) break;
-        return { ok: false, error: page.error };
+        lastError = page.error;
+        break;
       }
       columns = page.data.columns?.length ? page.data.columns : columns;
       dataSource = page.data.data_source;
@@ -252,6 +273,19 @@ export async function loadApplicationRecordInventory(opts: {
       offset += INVENTORY_PAGE;
       if (!page.data.items?.length) break;
     }
+  }
+
+  if (!all.length) {
+    const stale = readRecordsCache(appId, inventoryKey, true);
+    if (stale?.items?.length) {
+      return {
+        ok: true,
+        items: stale.items,
+        columns: stale.columns || [],
+        dataSource: stale.data_source,
+      };
+    }
+    return { ok: false, error: lastError };
   }
 
   const payload: AppRecordsResponse = {

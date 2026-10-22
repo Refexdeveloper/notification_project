@@ -185,7 +185,11 @@ function applyItsmMisExtras(records, extrasById) {
       || extrasById.get(String(row.request_id || ''));
     if (!extra) return row;
     const status = String(row.status || '').toLowerCase();
-    const closed = status === 'closed' || status === 'rejected';
+    const stage = String(row.form_status || row.current_step || extra.form_status || '').toLowerCase();
+    const closed = status === 'closed'
+      || status === 'rejected'
+      || status === 'completed'
+      || /complet|closed|reopen|employee feedback/.test(stage);
     const closedBy = (blankMis(row.closed_by) || isItsmNonHumanActor(row.closed_by))
       ? extra.closed_by
       : row.closed_by;
@@ -225,6 +229,44 @@ function applyItsmMisExtras(records, extrasById) {
         : row.assigned_to,
     };
   });
+}
+
+function itsmRowLooksClosed(row) {
+  const status = String(row?.status || '').toLowerCase();
+  const stage = String(row?.form_status || row?.current_step || '').toLowerCase();
+  return status === 'closed'
+    || status === 'rejected'
+    || status === 'completed'
+    || /complet|closed|reopen|employee feedback/.test(stage);
+}
+
+function itsmNeedsCloserOverlay(rows) {
+  return (rows || []).some((row) => (
+    itsmRowLooksClosed(row)
+    && (blankMis(row.closed_by) || isItsmNonHumanActor(row.closed_by))
+  ));
+}
+
+function primeItsmReportCloserCache(environment, map) {
+  itsmReportCloserCache = {
+    at: Date.now(),
+    environment: String(environment || 'production'),
+    map: map instanceof Map ? map : new Map(),
+  };
+}
+
+async function overlayItsmClosedByFromSnapshot(_pool, environment, _applicationId, rows) {
+  if (!itsmNeedsCloserOverlay(rows)) return rows;
+  try {
+    // Same Closed By condition as before (extractItsmCloserMeta):
+    // solver ActedBy → Closed_By → human closer. Process-report rows have ActedBy;
+    // snapshot Closed_By is blank on most completed tickets.
+    // No Get-all-items. Incremental ingest unchanged.
+    const extras = await loadItsmReportCloserById(environment);
+    return applyItsmMisExtras(rows, extras);
+  } catch {
+    return rows;
+  }
 }
 
 async function loadItsmMisExtrasById(pool, environment, applicationId) {
@@ -2207,6 +2249,90 @@ function paginateRows(rows, limit, offset) {
   return { lim, off, page: rows.slice(off, off + lim), total: rows.length };
 }
 
+function recordsPayloadFromCache({
+  applicationId,
+  environment,
+  cache,
+  rows,
+  inventory,
+  status,
+  entity,
+  search,
+  assigned,
+  requester,
+  dateFrom,
+  dateTo,
+  limit,
+  offset,
+}) {
+  const itsm = isItsmApp(applicationId);
+  const all = enrichRecordsWithAssigneeCompany(
+    overlayTravelPlacesFromItems(
+      overlayLeadWebsiteFromItems(
+        dedupeRecords((rows || []).filter((row) => !isDraftRow(row))),
+        cache.items || [],
+        applicationId,
+      ),
+      cache.items || [],
+      applicationId,
+    ),
+    cache.items || [],
+    { skipAssigneeStamp: itsm },
+  );
+  const filtered = dedupeRecords(filterRecordRows(all, {
+    status,
+    entity,
+    search,
+    assigned,
+    requester,
+    dateFrom,
+    dateTo,
+    itsmCompanyMode: itsm,
+  }));
+  filtered.sort((a, b) => {
+    const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return tb - ta;
+  });
+  const summaryAll = summarizeRows(all);
+  const summary = summarizeRows(filtered);
+  const counts = entityCountsFromRows(all);
+  const base = {
+    application_id: applicationId,
+    environment,
+    data_source: 'live_cache',
+    generated_at: cache.fetched_at || null,
+    summary,
+    inventory_summary: summaryAll,
+    filter_options: {
+      entities: entityOptionsForApp(applicationId, counts),
+      assignees: uniqueNames(all, 'assigned_to'),
+      requesters: uniqueNames(all, 'requested_by'),
+      show_assigned: !isSolarApp(applicationId),
+      show_requester: true,
+      show_entity: true,
+    },
+    columns: columnsForApp(applicationId),
+  };
+  if (inventory) {
+    return {
+      ...base,
+      total: filtered.length,
+      limit: filtered.length,
+      offset: 0,
+      items: filtered.map((row) => serializeRecordItem(row, { itsm })),
+    };
+  }
+  const page = paginateRows(filtered, limit, offset);
+  return {
+    ...base,
+    total: page.total,
+    limit: page.lim,
+    offset: page.off,
+    items: page.page.map((row) => serializeRecordItem(row, { itsm })),
+  };
+}
+
 async function loadKissflowRecords(pool, {
   environment,
   applicationId,
@@ -2223,14 +2349,39 @@ async function loadKissflowRecords(pool, {
   inventory = false,
 } = {}) {
   const itsm = isItsmApp(applicationId);
+  const filterOpts = {
+    status, entity, search, assigned, requester, dateFrom, dateTo, limit, offset, inventory,
+  };
+
+  // Landing / filters: return engagement_cache.records immediately.
+  // Extra snapshot/overlay SQL was hanging Cloud SQL and emptying the table.
+  // Incremental ingest is unchanged — this is display-only.
+  try {
+    const cache = await loadApplicationEngagementCache(pool, environment, applicationId);
+    const leadWebsiteReady = !isLeadApp(applicationId)
+      || (cache?.records || []).some((row) => String(row.website || row.website_name || '').trim());
+    if (!forceLive && hasUsableEngagementRecords(cache) && leadWebsiteReady) {
+      const rows = itsm
+        ? await overlayItsmClosedByFromSnapshot(pool, environment, applicationId, cache.records)
+        : cache.records;
+      return recordsPayloadFromCache({
+        applicationId,
+        environment,
+        cache,
+        rows,
+        ...filterOpts,
+      });
+    }
+  } catch {
+    /* try freshness / snapshot path below */
+  }
 
   // Prefer GCP engagement_cache when fresh and newer than snapshot. Never full Kissflow on filter reads.
   try {
     let cache = await loadApplicationEngagementCache(pool, environment, applicationId);
     const snapshotAt = await latestApplicationSnapshotAt(pool, environment, applicationId);
 
-    // Landing / filter reads stay on incremental cache (or snapshot). Kissflow
-    // Get-all-items only when the client explicitly asks force_live.
+    // Kissflow Get-all-items only when the client explicitly asks force_live.
     if (forceLive) {
       try {
         const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
@@ -2261,18 +2412,16 @@ async function loadKissflowRecords(pool, {
         cache.items || [],
         { skipAssigneeStamp: itsm },
       );
-      all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
-      all = await overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, all);
-      if (inventory && itsm) {
-        try {
-          const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
-          all = applyItsmMisExtras(all, extras);
-        } catch {
-          /* keep cache rows — extras overlay is display-only */
-        }
-        // Kissflow process-report closer is dozens of HTTP pages. Never block landing /
-        // filter inventory on it — only Refresh (force_live) may overlay it.
-        if (forceLive) {
+      if (forceLive) {
+        all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
+        all = await overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, all);
+        if (inventory && itsm) {
+          try {
+            const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
+            all = applyItsmMisExtras(all, extras);
+          } catch {
+            /* keep cache rows — extras overlay is display-only */
+          }
           try {
             const reportExtras = await loadItsmReportCloserById(environment);
             all = applyItsmMisExtras(all, reportExtras);
@@ -2281,69 +2430,13 @@ async function loadKissflowRecords(pool, {
           }
         }
       }
-      const filtered = dedupeRecords(filterRecordRows(all, {
-        status,
-        entity,
-        search,
-        assigned,
-        requester,
-        dateFrom,
-        dateTo,
-        itsmCompanyMode: itsm,
-      }));
-      filtered.sort((a, b) => {
-        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return tb - ta;
-      });
-      const summaryAll = summarizeRows(all);
-      const summary = summarizeRows(filtered);
-      if (inventory) {
-        return {
-          application_id: applicationId,
-          environment,
-          data_source: 'live_cache',
-          generated_at: cache.fetched_at || null,
-          total: filtered.length,
-          limit: filtered.length,
-          offset: 0,
-          summary,
-          inventory_summary: summaryAll,
-          filter_options: {
-            entities: entityOptionsForApp(applicationId, entityCountsFromRows(all)),
-            assignees: uniqueNames(all, 'assigned_to'),
-            requesters: uniqueNames(all, 'requested_by'),
-            show_assigned: !isSolarApp(applicationId),
-            show_requester: true,
-            show_entity: true,
-          },
-          columns: columnsForApp(applicationId),
-          items: filtered.map((row) => serializeRecordItem(row, { itsm })),
-        };
-      }
-      const { lim, off, page, total } = paginateRows(filtered, limit, offset);
-      const counts = entityCountsFromRows(all);
-      return {
-        application_id: applicationId,
+      return recordsPayloadFromCache({
+        applicationId,
         environment,
-        data_source: 'live_cache',
-        generated_at: cache.fetched_at || null,
-        total,
-        limit: lim,
-        offset: off,
-        summary,
-        inventory_summary: summaryAll,
-        filter_options: {
-          entities: entityOptionsForApp(applicationId, counts),
-          assignees: uniqueNames(all, 'assigned_to'),
-          requesters: uniqueNames(all, 'requested_by'),
-          show_assigned: !isSolarApp(applicationId),
-          show_requester: true,
-          show_entity: true,
-        },
-        columns: columnsForApp(applicationId),
-        items: page.map((row) => serializeRecordItem(row, { itsm })),
-      };
+        cache,
+        rows: all,
+        ...filterOpts,
+      });
     }
   } catch {
     /* fall through to snapshot */
@@ -2960,6 +3053,7 @@ module.exports = {
   extractItsmCloserMeta,
   applyItsmMisExtras,
   loadItsmReportCloserById,
+  primeItsmReportCloserCache,
   companyTextFromRaw,
   isItsmApp,
   isDraftRaw,

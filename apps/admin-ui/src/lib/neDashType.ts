@@ -21,9 +21,9 @@ export const NE_TYPE = {
   body: 'text-sm text-slate-700',
   meta: 'text-xs font-medium text-slate-400 sm:text-sm',
   label: 'text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-600 sm:text-xs sm:tracking-[0.12em]',
-  kpiValue: 'ne-kpi-value font-bold tabular-nums leading-none tracking-tight',
+  kpiValue: 'ne-kpi-value font-extrabold tabular-nums leading-none tracking-tight text-slate-900',
   kpiLabel:
-    'text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-600 sm:text-xs sm:tracking-[0.1em]',
+    'text-[13px] font-semibold leading-tight text-slate-800 sm:text-sm',
   kpiSub: 'mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-400 sm:text-xs',
   tableHead:
     'bg-gradient-to-b from-[#f1f5f9] to-[#e8edf2] text-left text-xs font-semibold uppercase tracking-[0.06em] text-slate-600',
@@ -32,3 +32,6 @@ export const NE_TYPE = {
 };
 
 export const NE_DASH_CLASS = 'ne-dash';
+
+/** Same top/section gap for KPI grids, records, and MIS on every dashboard (embed + main). */
+export const NE_DASH_STACK_CLASS = 'space-y-5';

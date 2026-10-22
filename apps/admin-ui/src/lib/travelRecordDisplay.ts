@@ -28,9 +28,11 @@ export const TRAVEL_DASH_COLUMNS: AppRecordColumn[] = [
 
 /** Shown only after Travel Booking KPI click. */
 export const TRAVEL_BOOKING_FARE_COLUMNS: AppRecordColumn[] = [
-  { id: 'route_median', label: 'Route median ₹' },
-  { id: 'over_median', label: 'Above median ₹' },
-  { id: 'over_median_pct', label: 'Above median %' },
+  { id: 'reference_fare', label: 'Reference fare' },
+  { id: 'policy_deviation_cost', label: 'Policy deviation cost' },
+  { id: 'deviation_pct', label: 'Deviation %' },
+  { id: 'sla', label: 'SLA' },
+  { id: 'fare_trend', label: 'Fare trend' },
 ];
 
 export const TRAVEL_REQUEST_COLUMNS: AppRecordColumn[] = [
@@ -138,10 +140,74 @@ export function formatOverMedianPct(value: unknown): string {
   return `${pct > 0 ? '+' : ''}${shown}%`;
 }
 
-/** Route median / fare difference for Travel Booking rows only. Non-flight or <3 samples stay empty. */
+export function formatDeviationPct(value: unknown): string {
+  return formatOverMedianPct(value);
+}
+
+export type TravelFareTrendKind = 'Up' | 'Down' | 'Flat';
+
+export function travelFareTrendKind(value: unknown): TravelFareTrendKind | null {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'up') return 'Up';
+  if (key === 'down') return 'Down';
+  if (key === 'flat') return 'Flat';
+  return null;
+}
+
+/** Absolute whole-percent label used next to the fare-trend sparkline (3%, 0%, 14%). */
+export function formatFareTrendPct(value: unknown): string {
+  if (value == null || value === '') return '';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return `${Math.round(Math.abs(n) * 100)}%`;
+}
+
+export function fareTrendFilterLabel(trend: unknown, deviationPct: unknown): string {
+  const kind = travelFareTrendKind(trend);
+  const pct = kind === 'Flat' ? '0%' : formatFareTrendPct(deviationPct);
+  if (!kind || !pct) return '';
+  const marker = kind === 'Up' ? '▲' : kind === 'Down' ? '▼' : '■';
+  return `${marker}${pct}`;
+}
+
+export function travelSlaDisplay(row: AppRecordRow): {
+  primary: string;
+  sub: string | null;
+  state: 'breached' | 'ok' | 'none';
+} {
+  const created = row.created_at ? new Date(String(row.created_at)) : null;
+  const depart = row.departure_date ? new Date(String(row.departure_date)) : null;
+  if (!created || !depart || Number.isNaN(created.getTime()) || Number.isNaN(depart.getTime())) {
+    return { primary: '', sub: null, state: 'none' };
+  }
+  const days = Math.round((depart.getTime() - created.getTime()) / 86400000);
+  const time = days === 0 ? 'Same day' : `${Math.abs(days)}d`;
+  if (days < 0) return { primary: 'Breached', sub: time, state: 'breached' };
+  return { primary: 'Not breached', sub: time, state: 'ok' };
+}
+
+export function travelSlaLabel(row: AppRecordRow): string {
+  const sla = travelSlaDisplay(row);
+  if (sla.state === 'none') return '';
+  return sla.sub ? `${sla.primary} · ${sla.sub}` : sla.primary;
+}
+
+function emptyFareAnnotation(row: AppRecordRow): AppRecordRow {
+  return {
+    ...row,
+    reference_fare: null,
+    policy_deviation_cost: null,
+    deviation_pct: null,
+    sla: travelSlaLabel(row) || null,
+    fare_trend: null,
+  };
+}
+
+/** Route reference fare / policy deviation / SLA / trend for Travel Booking rows. */
 export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRow[] {
   const list = Array.isArray(rows) ? rows : [];
   const routeAmounts = new Map<string, number[]>();
+  const routeHistory = new Map<string, Array<{ id: string; amount: number; at: number }>>();
   for (const row of list) {
     if (!isFlightTravelMode(row.travel_mode)) continue;
     const route = travelFareRoute(row.from_city, row.to_city);
@@ -151,6 +217,10 @@ export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRo
     const bucket = routeAmounts.get(route) || [];
     bucket.push(amount);
     routeAmounts.set(route, bucket);
+    const history = routeHistory.get(route) || [];
+    const at = row.created_at ? new Date(String(row.created_at)).getTime() : 0;
+    history.push({ id: String(row.id || row.request_id || ''), amount, at: Number.isFinite(at) ? at : 0 });
+    routeHistory.set(route, history);
   }
   const routeMedians = new Map<string, number>();
   for (const [route, amounts] of routeAmounts.entries()) {
@@ -158,23 +228,35 @@ export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRo
     const mid = medianAmount(amounts);
     if (mid != null) routeMedians.set(route, mid);
   }
+  for (const history of routeHistory.values()) {
+    history.sort((a, b) => a.at - b.at);
+  }
 
   return list.map((row) => {
+    const sla = travelSlaLabel(row) || null;
     if (!isFlightTravelMode(row.travel_mode)) {
-      return { ...row, route_median: null, over_median: null, over_median_pct: null };
+      return { ...emptyFareAnnotation(row), sla };
     }
     const route = travelFareRoute(row.from_city, row.to_city);
-    const routeMedian = route ? routeMedians.get(route) : undefined;
+    const referenceFare = route ? routeMedians.get(route) : undefined;
     const amount = Number(row.amount);
-    if (routeMedian == null || !Number.isFinite(amount)) {
-      return { ...row, route_median: null, over_median: null, over_median_pct: null };
+    if (referenceFare == null || !Number.isFinite(amount)) {
+      return { ...emptyFareAnnotation(row), sla };
     }
-    const overMedian = amount - routeMedian;
+    const deviation = amount - referenceFare;
+    const history = route ? routeHistory.get(route) || [] : [];
+    const rowId = String(row.id || row.request_id || '');
+    const index = history.findIndex((hit) => hit.id === rowId);
+    const previous = index > 0 ? history[index - 1] : null;
+    const compare = previous ? amount - previous.amount : deviation;
+    const fareTrend = compare > 0 ? 'Up' : compare < 0 ? 'Down' : 'Flat';
     return {
       ...row,
-      route_median: routeMedian,
-      over_median: overMedian,
-      over_median_pct: routeMedian === 0 ? null : overMedian / routeMedian,
+      reference_fare: referenceFare,
+      policy_deviation_cost: deviation,
+      deviation_pct: referenceFare === 0 ? null : deviation / referenceFare,
+      sla,
+      fare_trend: fareTrend,
     };
   });
 }

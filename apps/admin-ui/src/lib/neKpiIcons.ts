@@ -58,6 +58,30 @@ export function resolveNeAppKind(appId?: string | null, appName?: string | null)
   return 'default';
 }
 
+/** Page H1 — application-specific, used on embed + main. Header chrome stays the catalog name. */
+export function neAppHeroTitle(kind: NeAppKind, fallback?: string): string {
+  switch (kind) {
+    case 'itsm':
+      return 'Tech Helpdesk';
+    case 'expense':
+      return 'Expense Management';
+    case 'travel':
+      return 'Travel Management';
+    case 'pm':
+      return 'Project Management';
+    case 'p2p':
+      return 'Procurement to Pay';
+    case 'solar':
+      return 'Solar Expense Hub';
+    case 'lead':
+      return 'Lead Tracker';
+    case 'consolidated':
+      return 'Engagement overview';
+    default:
+      return String(fallback || '').trim() || 'Engagement overview';
+  }
+}
+
 const APP_STATUS_ICONS: Record<Exclude<NeAppKind, 'consolidated'>, [LucideIcon, LucideIcon, LucideIcon, LucideIcon]> = {
   itsm: [Ticket, Inbox, CircleCheckBig, Ban],
   pm: [FolderKanban, FolderOpen, FolderCheck, ListChecks],
