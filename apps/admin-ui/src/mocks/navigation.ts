@@ -9,6 +9,7 @@ import {
   History,
   Settings,
   KeyRound,
+  Plug,
   Database,
 } from 'lucide-react';
 
@@ -31,5 +32,6 @@ export const navigationItems: NavItem[] = [
   { id: 'schedulers', label: 'Schedules', hint: 'When & who to send', icon: CalendarClock, path: '/schedulers' },
   { id: 'history', label: 'Sent history', hint: 'What went out', icon: History, path: '/history' },
   { id: 'email-settings', label: 'Settings', hint: 'SMTP login, app password, and full refresh', icon: KeyRound, path: '/email-settings' },
+  { id: 'external-apis', label: 'External APIs', hint: 'GCP APIs used outside Notification Engine, with request logs', icon: Plug, path: '/external-apis' },
   { id: 'settings', label: 'Settings', hint: 'Users & email setup', icon: Settings, path: '/settings' },
 ];

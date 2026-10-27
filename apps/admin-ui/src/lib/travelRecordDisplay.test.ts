@@ -243,6 +243,8 @@ describe('travel booking fare columns', () => {
     expect(formatFareTrendPct(rows[2].deviation_pct)).toBe('45%');
     expect(fareTrendFilterLabel('Down', -0.03)).toBe('▼3%');
     expect(fareTrendFilterLabel('Flat', 0)).toBe('■0%');
+    expect(fareTrendFilterLabel('Up', 0.001)).toBe('■0%');
+    expect(fareTrendFilterLabel('Down', -0.004)).toBe('■0%');
     expect(rows[3].reference_fare).toBeNull();
     expect(rows[3].policy_deviation_cost).toBeNull();
   });

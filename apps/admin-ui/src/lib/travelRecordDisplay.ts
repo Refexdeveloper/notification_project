@@ -169,12 +169,23 @@ export function formatFareTrendPct(value: unknown): string {
   return `${Math.round(Math.abs(n) * 100)}%`;
 }
 
-export function fareTrendFilterLabel(trend: unknown, deviationPct: unknown): string {
+export function resolveTravelFareTrendDisplay(trend: unknown, deviationPct: unknown): {
+  kind: TravelFareTrendKind;
+  pct: string;
+} | null {
   const kind = travelFareTrendKind(trend);
-  const pct = kind === 'Flat' ? '0%' : formatFareTrendPct(deviationPct);
-  if (!kind || !pct) return '';
-  const marker = kind === 'Up' ? '▲' : kind === 'Down' ? '▼' : '■';
-  return `${marker}${pct}`;
+  if (!kind) return null;
+  const rounded = formatFareTrendPct(deviationPct);
+  if (kind === 'Flat' || rounded === '0%') return { kind: 'Flat', pct: '0%' };
+  if (!rounded) return null;
+  return { kind, pct: rounded };
+}
+
+export function fareTrendFilterLabel(trend: unknown, deviationPct: unknown): string {
+  const display = resolveTravelFareTrendDisplay(trend, deviationPct);
+  if (!display) return '';
+  const marker = display.kind === 'Up' ? '▲' : display.kind === 'Down' ? '▼' : '■';
+  return `${marker}${display.pct}`;
 }
 
 export function travelSlaDisplay(row: AppRecordRow): {

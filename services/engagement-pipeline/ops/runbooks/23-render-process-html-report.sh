@@ -104,6 +104,9 @@ if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
   PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
   PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
   PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_SUMMARY_JSON}")"
+  [[ "${PM_TOTAL}" =~ ^[0-9]+$ ]] || PM_TOTAL=0
+  [[ "${PM_PENDING}" =~ ^[0-9]+$ ]] || PM_PENDING=0
+  [[ "${PM_COMPLETED}" =~ ^[0-9]+$ ]] || PM_COMPLETED=0
 export PGOPTIONS="-c statement_timeout=180000"
   TODAY_IST="$(TZ='Asia/Kolkata' date +'%Y-%m-%d')"
   log "Building Users section from the RIL_RMC snapshot (name, raised by, sign-in, pending step, pending with, days, completed)"

@@ -1,7 +1,6 @@
 import {
   fareTrendFilterLabel,
-  formatFareTrendPct,
-  travelFareTrendKind,
+  resolveTravelFareTrendDisplay,
   type TravelFareTrendKind,
 } from '@/lib/travelRecordDisplay';
 
@@ -37,9 +36,9 @@ export default function TravelFareTrendCell({
   trend?: unknown;
   deviationPct?: unknown;
 }) {
-  const kind = travelFareTrendKind(trend);
-  const pct = kind === 'Flat' ? '0%' : formatFareTrendPct(deviationPct);
-  if (!kind || !pct) return <>—</>;
+  const display = resolveTravelFareTrendDisplay(trend, deviationPct);
+  if (!display) return <>—</>;
+  const { kind, pct } = display;
   const color = TREND_COLOR[kind];
   return (
     <span

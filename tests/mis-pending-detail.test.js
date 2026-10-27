@@ -49,9 +49,10 @@ describe('existing MIS pending detail', () => {
       '2026-10-17',
       'pending_with',
     );
+    assert.match(html, /Rakesh Kumar Gupta/);
+    assert.match(html, /SACHIN JARE/);
     assert.match(html, /Anil S Kulkarni/);
-    assert.match(html, /Raised by Rakesh Kumar Gupta/);
-    assert.match(html, /Raised by SACHIN JARE/);
+    assert.doesNotMatch(html, /Raised by /);
     assert.match(html, /L1 Manager Approval/);
     assert.doesNotMatch(html, /Local Conveyance/);
     assert.match(html, />12</);

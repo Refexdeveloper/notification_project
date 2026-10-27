@@ -23,6 +23,7 @@ const fieldsRoutes = require('./routes/fields');
 const platformUsersRoutes = require('./routes/platformUsers');
 const opsRoutes = require('./routes/ops');
 const settingsSmtpRoutes = require('./routes/settingsSmtp');
+const externalApisRoutes = require('./routes/externalApis');
 const databaseRoutes = require('./routes/database');
 
 function createApp() {
@@ -38,6 +39,7 @@ function createApp() {
   api.use('/users', usersRoutes);
   api.use('/platform-users', platformUsersRoutes);
   api.use('/settings', settingsSmtpRoutes);
+  api.use('/external-apis', externalApisRoutes);
   api.use('/ops', opsRoutes);
   api.use('/applications', applicationsRoutes);
   api.use('/applications/:applicationId/engagement', engagementRoutes);

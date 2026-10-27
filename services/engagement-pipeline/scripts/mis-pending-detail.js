@@ -62,11 +62,8 @@ function itemText(item, snake, camel) {
 
 function nameCell(name, raisedBy) {
   const raised = String(raisedBy || '').trim();
-  const extra =
-    raised && raised !== '—'
-      ? `<div style="font-size:11px; color:#6b6b6b !important; margin-top:2px;">Raised by ${escapeHtml(raised)}</div>`
-      : '';
-  return `<td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(name)}${extra}</td>`;
+  const display = raised && raised !== '—' ? raised : name;
+  return `<td style="padding:10px 8px; border-bottom:1px solid #ececea; color:#1a1a1a !important;">${escapeHtml(display)}</td>`;
 }
 
 function renderRmcMisUserRows(users, pendingItems, today, matchField) {

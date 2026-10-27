@@ -1,0 +1,17 @@
+---
+description: Apply Notification Engine condition changes to embed, main, and Kissflow CEO dashboard URLs
+alwaysApply: true
+---
+
+# CEO dashboard URL parity
+
+When a Notification Engine **condition** changes (KPI counts, period, company or user filters, opened/closed today, adoption, sign-in, source, status, or any number a dashboard shows):
+
+1. Apply it on the **main** dashboard and the **embed** dashboard. They already share the same data code; embed only hides chrome.
+2. Apply the same condition on the Kissflow CEO dashboards hosted at `refex-ceo-dashboards` (aasik_ITSM `NewCeoGcpDashboard`, `NeFinanceCeoDashboard`, `neGcpDashboardMath.js`, `neGcpDashboardClient.js`).
+3. Redeploy Cloud Run `refex-ceo-dashboards` after that host change. Keep the public paths. Do not ask for a new Kissflow zip for these four.
+4. Settings shows those paths as **Kissflow component CEO dashboard URL** via `kissflowCeoDashboardUrl` in `apps/admin-ui/src/lib/ceoDashboardUrls.ts`. Add a new app there only when a new CEO path is created.
+
+Paths: Tech Helpdesk `/techhelpdesk`, Travel `/travel`, Expense `/expense`, Solar `/solar`.
+
+Do not change incremental sync, scheduled-email test-send, Me matchers, or fast landing as part of this parity unless the task is about those.

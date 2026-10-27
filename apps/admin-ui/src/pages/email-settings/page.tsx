@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCircle2, Copy, KeyRound, Mail, RefreshCw, ShieldAlert } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { Button } from '@/components/ui/Button';
@@ -19,6 +20,7 @@ import {
 } from '@/services/applicationsApi';
 import { friendlyApplicationName, isHiddenNeApplication } from '@/lib/processLabels';
 import { defaultEmbedAppUrl } from '@/lib/embedMode';
+import { kissflowCeoDashboardUrl } from '@/lib/ceoDashboardUrls';
 import type { KissflowApplication } from '@/mocks/applications';
 
 export default function EmailSettingsPage() {
@@ -84,6 +86,7 @@ export default function EmailSettingsPage() {
             applicationId,
             name,
             embedUrl: app.embedUrl || defaultEmbedAppUrl(applicationId, name),
+            ceoDashboardUrl: kissflowCeoDashboardUrl(applicationId),
           };
         })
         .filter((app, index, list) => list.findIndex((row) => row.applicationId === app.applicationId) === index)
@@ -127,12 +130,12 @@ export default function EmailSettingsPage() {
     setMessage(`Embed link saved for ${name}. Embed dashboard Open will use this URL.`);
   };
 
-  const onCopyEmbedLink = async (value: string) => {
+  const onCopyEmbedLink = async (value: string, label = 'Embed link') => {
     try {
       await navigator.clipboard.writeText(value);
-      setMessage('Embed link copied.');
+      setMessage(`${label} copied.`);
     } catch {
-      setError('Could not copy the embed link.');
+      setError(`Could not copy the ${label.toLowerCase()}.`);
     }
   };
 
@@ -181,6 +184,15 @@ export default function EmailSettingsPage() {
       breadcrumbs={[{ label: 'Settings' }]}
     >
       <div className="max-w-4xl space-y-4">
+        <Link
+          to="/external-apis"
+          className="block rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm hover:bg-slate-50"
+        >
+          <span className="font-semibold text-foreground-900">External APIs</span>
+          <span className="mt-0.5 block text-xs text-foreground-500">
+            Keyword matching, comments chat, and the other public GCP APIs, with request logs.
+          </span>
+        </Link>
         {!backendMode && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
             Email settings require backend-api mode.
@@ -386,6 +398,29 @@ export default function EmailSettingsPage() {
                       </div>
                     </div>
                   </label>
+                  {app.ceoDashboardUrl ? (
+                    <label className="block text-[11px] font-semibold text-foreground-600">
+                      Kissflow component CEO dashboard URL
+                      <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Input
+                          value={app.ceoDashboardUrl}
+                          readOnly
+                          className="font-mono text-[11px]"
+                          spellCheck={false}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => void onCopyEmbedLink(app.ceoDashboardUrl, 'Kissflow component CEO dashboard URL')}
+                        >
+                          <Copy className="w-3.5 h-3.5 mr-1.5" />
+                          Copy
+                        </Button>
+                      </div>
+                    </label>
+                  ) : null}
                 </div>
               );
             })}

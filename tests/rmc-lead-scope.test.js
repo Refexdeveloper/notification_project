@@ -8,6 +8,7 @@ const {
   isRmcLeadSchedule,
   leadRequestFromRecord,
   summarizeRequests,
+  renderRequestTableHtml,
   rmcLeadSubject,
   RMC_LEAD_REPORT_NAME,
 } = require('../services/engagement-pipeline/scripts/rmc-lead-scope');

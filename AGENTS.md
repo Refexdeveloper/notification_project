@@ -44,3 +44,4 @@ Admin UI / backend-api deploys do **not** update scheduled email KPI logic.
 - `.cursor/rules/engagement-report-kpis.mdc` — Closed Today / entity scope
 - `.cursor/rules/itsm-email-html-data.mdc` — Source panel, Today, Sign-in, Playwright
 - `.cursor/rules/project-tracker-kpi-cards.mdc` — KPI card size/palette from Project Tracker (`PremiumKPICard`, always 4-up). Reference: `/Users/mohamedaasik/Desktop/Cursor/ProjectTracker`
+- `.cursor/rules/ceo-dashboard-url-parity.mdc` — Notification Engine condition changes also go on the Kissflow CEO dashboard URLs (Tech Helpdesk, Travel, Expense, Solar). Redeploy `refex-ceo-dashboards`; do not change the URLs or incremental sync.

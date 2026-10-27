@@ -195,7 +195,7 @@ function renderRequestTableHtml(rows) {
       const bg = row.completed ? '#f4fbf5' : idx % 2 ? '#ffffff' : '#fffaf2';
       const completed = row.completed ? '1' : '0';
       return `<tr style="background-color:${bg};" bgcolor="${bg}">
-<td style="padding:12px 10px; border-bottom:1px solid #ececea; color:#1a1a1a;">${escapeHtml(row.raisedBy)}<div style="font-size:11px; color:#6b6b6b; margin-top:2px;">Raised by ${escapeHtml(row.raisedBy)}</div></td>
+<td style="padding:12px 10px; border-bottom:1px solid #ececea; color:#1a1a1a;">${escapeHtml(row.raisedBy)}</td>
 <td style="padding:12px 10px; border-bottom:1px solid #ececea; color:#1a1a1a;">—</td>
 <td style="padding:12px 10px; border-bottom:1px solid #ececea; color:#1a1a1a;">${escapeHtml(row.pendingAt)}</td>
 <td style="padding:12px 10px; border-bottom:1px solid #ececea; color:#1a1a1a;">${escapeHtml(row.pendingWith)}</td>
