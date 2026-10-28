@@ -49,6 +49,15 @@ function parseSendRequest(body = {}) {
   return { to, cc, subject, html, displayFrom };
 }
 
+function fromDisplayName(email) {
+  const domain = normalizeEmail(email).split('@')[1] || '';
+  if (domain === 'modepro.com') return 'ModePro IT Support';
+  if (domain === 'kavispharma.com') return 'Kavis Pharma IT Support';
+  const configured = String(process.env.COMMENT_MAIL_FROM_NAME || '').trim();
+  if (configured) return configured;
+  return 'Extrovis IT Support';
+}
+
 function smtpConfig() {
   return {
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -73,7 +82,8 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
     auth: { user: cfg.user, pass: cfg.pass },
   });
 
-  const displayName = String(process.env.COMMENT_MAIL_FROM_NAME || 'Extrovis IT Support').trim();
+  const displayName = fromDisplayName(displayFrom);
+  const recipients = [...to, ...cc];
   const mail = {
     from: `"${displayName}" <${displayFrom}>`,
     sender: cfg.user,
@@ -81,7 +91,7 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
     to: to.join(', '),
     subject,
     html,
-    envelope: { from: cfg.user, to: [...to, ...cc] },
+    envelope: { from: displayFrom, to: recipients },
   };
   if (cc.length) mail.cc = cc.join(', ');
 
@@ -89,8 +99,10 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
     return await transporter.sendMail(mail);
   } catch (firstErr) {
     if (normalizeEmail(displayFrom) === normalizeEmail(cfg.user)) throw firstErr;
-    mail.from = `"${displayName}" <${cfg.user}>`;
+    // Keep the entity address in the header. Only the SMTP envelope falls back.
+    mail.from = `"${displayName}" <${displayFrom}>`;
     mail.replyTo = displayFrom;
+    mail.envelope = { from: cfg.user, to: recipients };
     return await transporter.sendMail(mail);
   }
 }
@@ -98,6 +110,7 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
 module.exports = {
   EMAIL_RE,
   asEmailList,
+  fromDisplayName,
   parseSendRequest,
   sendHtmlMail,
   smtpConfig,

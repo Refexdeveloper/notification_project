@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { asEmailList, parseSendRequest } = require('./mail');
+const { asEmailList, fromDisplayName, parseSendRequest } = require('./mail');
 
 describe('parseSendRequest', () => {
   it('accepts to/cc strings and html', () => {
@@ -32,6 +32,14 @@ describe('parseSendRequest', () => {
     });
     assert.deepEqual(parsed.to, ['user@refex.co.in']);
     assert.deepEqual(parsed.cc, []);
+  });
+});
+
+describe('fromDisplayName', () => {
+  it('names the mailbox by entity domain', () => {
+    assert.equal(fromDisplayName('itsupport@modepro.com'), 'ModePro IT Support');
+    assert.equal(fromDisplayName('itsupport@kavispharma.com'), 'Kavis Pharma IT Support');
+    assert.equal(fromDisplayName('itsupport@extrovis.com'), 'Extrovis IT Support');
   });
 });
 
