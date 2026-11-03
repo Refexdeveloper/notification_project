@@ -234,7 +234,12 @@ export default function ApplicationDetail() {
                 {personalGreeting()}
               </p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800 sm:text-base">
-                {embedIdentity.name}
+                {embedIdentity.name ? (
+                  <>
+                    {embedIdentity.name}
+                    <span className="ne-hi-wave" role="img" aria-label="Hi">👋</span>
+                  </>
+                ) : null}
                 {embedIdentity.title ? ` · ${embedIdentity.title}` : ''}
               </p>
             </div>

@@ -66,7 +66,7 @@ ENTITY_CODE_MODE="exclude"
 case "$(printf '%s' "${ENTITY_FILTER:-}" | tr '[:upper:]' '[:lower:]')" in
   ril_rmc) ENTITY_CODE_MODE="ril_rmc" ;;
 esac
-ENTITY_CODE_SQL="$(report_entity_code_predicate i "${ENTITY_CODE_MODE}")"
+ENTITY_CODE_SQL="$(report_pm_rmc_scope_predicate i "${ENTITY_CODE_MODE}")"
 
 log() { printf '\n[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 stop() { printf '\nSTOP: %s\n' "$*" >&2; exit 1; }
@@ -77,8 +77,8 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 if [[ "${ENTITY_CODE_MODE}" == "ril_rmc" ]]; then
-  log "RIL_RMC PM fast path — seed template + snapshot counts (no process-wide SQL)"
-  export PGOPTIONS="${PGOPTIONS:--c statement_timeout=20000}"
+  log "RIL_RMC PM fast path — seed template, RMC entity code or RMC project, live Kissflow KPIs"
+  export PGOPTIONS="-c statement_timeout=60000"
   PM_SUMMARY_JSON="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
     WITH $(report_latest_snapshot_cte "'${PM_APP_ID}'" "'${PM_PROCESS_ID}'")
     SELECT json_build_object(
@@ -114,6 +114,8 @@ activity AS (
       AND ia.principal_type = 'USER'
       AND i.process_status = 'InProgress'
       AND ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+      AND i.process_id = '${PM_PROCESS_ID}'
+      AND i.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
       AND (${ENTITY_CODE_SQL})
       AND ia.principal_id IS NOT NULL
       AND trim(ia.principal_id) <> ''
@@ -209,6 +211,37 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   PM_TOTAL_SUBTASKS="0"
   PM_PENDING_SUBTASKS="0"
   PM_COMPLETED_SUBTASKS="0"
+  RMC_PORTFOLIO_SCRIPT="$(report_template_repo_root)/services/engagement-pipeline/scripts/count-pm-portfolio-kpis.js"
+  if [[ -f "${RMC_PORTFOLIO_SCRIPT}" ]] && command -v node >/dev/null 2>&1 && PM_PORTFOLIO_JSON="$(
+    PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_TASK_PROCESS_ID="${PM_PROCESS_ID}" \
+    PM_SUBTASK_PROCESS_ID="${PM_SUBTASK_PROCESS_ID:-Sub_Task_Process_A00}" \
+    PM_PROJECT_BOARD_ID="${PM_PROJECT_BOARD_ID:-Project_Management_A01}" \
+    ENTITY_FILTER="${ENTITY_FILTER:-}" \
+    node "${RMC_PORTFOLIO_SCRIPT}" 2>/dev/null
+  )" && jq -e . >/dev/null 2>&1 <<< "${PM_PORTFOLIO_JSON}"; then
+    log "RIL_RMC live PM portfolio: projects=$(jq -r '.total_projects' <<< "${PM_PORTFOLIO_JSON}") tasks=$(jq -r '.total_tasks' <<< "${PM_PORTFOLIO_JSON}") individual=$(jq -r '.individual_tasks' <<< "${PM_PORTFOLIO_JSON}") subtasks=$(jq -r '.total_subtasks' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_PROJECTS="$(jq -r '.total_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_OPEN_PROJECTS="$(jq -r '.open_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_PROJECTS="$(jq -r '.completed_projects // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL="$(jq -r '.total_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING="$(jq -r '.pending_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED="$(jq -r '.completed_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_LINKED_TASKS="$(jq -r '.linked_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL="$(jq -r '.individual_tasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_PENDING="$(jq -r '.individual_pending // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_INDIVIDUAL_COMPLETED="$(jq -r '.individual_completed // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_TOTAL_SUBTASKS="$(jq -r '.total_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_PENDING_SUBTASKS="$(jq -r '.pending_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+    PM_COMPLETED_SUBTASKS="$(jq -r '.completed_subtasks // 0' <<< "${PM_PORTFOLIO_JSON}")"
+  else
+    log "RIL_RMC live PM portfolio unavailable — using snapshot task totals"
+  fi
+  if report_live_today_kpis "${PM_PROCESS_ID}" "${PM_APP_ID}" "${ENTITY_FILTER:-}"; then
+    log "RIL_RMC live today KPIs: opened=${REPORT_LIVE_OPENED_TODAY:-?} closed=${REPORT_LIVE_CLOSED_TODAY:-?}"
+    PM_OPENED_TODAY="$(report_prefer_live_today "${PM_OPENED_TODAY}" "${REPORT_LIVE_OPENED_TODAY}")"
+    PM_CLOSED_TODAY="$(report_prefer_live_today "${PM_CLOSED_TODAY}" "${REPORT_LIVE_CLOSED_TODAY}")"
+  fi
   GENERATED_AT_DISPLAY="$(TZ='Asia/Kolkata' date +'%Y-%m-%d %H:%M IST')"
   TEMPLATE_SRC="$(mktemp)"
   VARS_JSON="$(mktemp)"

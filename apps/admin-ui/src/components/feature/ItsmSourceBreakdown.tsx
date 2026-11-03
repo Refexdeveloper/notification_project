@@ -94,13 +94,13 @@ export default function ItsmSourceBreakdown({
         <SourcePanel
           title="All tickets — by source"
           subtitle="All tickets"
-          accent="#2B5AED"
+          accent="#0F6B7A"
           rows={all}
         />
         <SourcePanel
           title="Today open tickets — by source"
           subtitle="Opened today by source"
-          accent="#F97316"
+          accent="#F58A2A"
           rows={today}
         />
       </div>

@@ -29,7 +29,6 @@ describe('travel column packs', () => {
       'company_name',
       'amount',
       'process_id',
-      'current_step',
       'status',
       'created_at',
     ]);
@@ -52,16 +51,18 @@ describe('travel column packs', () => {
       'to_city',
       'travel_mode',
       'amount',
-      'reference_fare',
       'policy_deviation_cost',
-      'deviation_pct',
       'sla',
       'fare_trend',
-      'current_step',
       'status',
       'created_at',
     ]);
-    expect(isTravelCoreColumn('reference_fare', 'booking')).toBe(true);
+    expect(isTravelCoreColumn('reference_fare', 'booking')).toBe(false);
+    expect(isTravelCoreColumn('deviation_pct', 'booking')).toBe(false);
+    expect(isTravelCoreColumn('current_step', 'booking')).toBe(false);
+    expect(isTravelCoreColumn('current_step', 'advance')).toBe(false);
+    expect(isTravelCoreColumn('current_step', 'expense')).toBe(false);
+    expect(isTravelCoreColumn('policy_deviation_cost', 'booking')).toBe(true);
     expect(isTravelCoreColumn('policy_deviation_cost', 'advance')).toBe(false);
     expect(travelColumnsForPack(null).map((c) => c.id)).not.toContain('reference_fare');
     expect(isTravelCoreColumn('from_city', 'booking')).toBe(true);
@@ -174,12 +175,12 @@ describe('travelExpandTiles', () => {
     }, { includeFareDetails: true });
     const filled = tiles.filter((t) => t.value);
     expect(filled.map((t) => t.label)).toEqual(expect.arrayContaining([
-      'Reference fare',
       'Policy deviation cost',
-      'Deviation %',
       'SLA',
       'Fare trend',
     ]));
+    expect(filled.some((t) => t.label === 'Reference fare' || t.label === 'Deviation %')).toBe(false);
+    expect(filled.filter((t) => t.label === 'Fare trend')).toHaveLength(1);
     expect(filled.find((t) => t.label === 'Fare trend')?.value).toBe('▲45%');
     expect(travelExpandTiles({
       id: '1',
@@ -216,7 +217,7 @@ describe('travel booking fare columns', () => {
     const rows = annotateTravelBookingFareRows([
       { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 5605, created_at: '2026-01-01' },
       { id: '2', travel_mode: 'Flight', from_city: 'Chennai (MAA)', to_city: 'Pune', amount: 5822, created_at: '2026-02-01' },
-      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466, created_at: '2026-03-01', departure_date: '2026-03-13' },
+      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune', amount: 8466, created_at: '2026-03-01', departure_date: '2026-03-13', status: 'closed' },
       { id: '4', travel_mode: 'Bus', from_city: 'Chennai', to_city: 'Pune', amount: 2000 },
     ]);
     expect(rows[2].reference_fare).toBe(5822);
@@ -247,6 +248,47 @@ describe('travel booking fare columns', () => {
     expect(fareTrendFilterLabel('Down', -0.004)).toBe('■0%');
     expect(rows[3].reference_fare).toBeNull();
     expect(rows[3].policy_deviation_cost).toBeNull();
+    expect(rows[3].deviation_pct).toBeNull();
+    expect(rows[3].fare_trend).toBeNull();
+    expect(rows[3].sla).toBeNull();
+  });
+
+  it('keeps fare columns blank for other travel modes and still shows SLA when dates exist', () => {
+    const rows = annotateTravelBookingFareRows([
+      {
+        id: 'bus',
+        travel_mode: 'Bus',
+        from_city: 'Chennai',
+        to_city: 'Pune',
+        amount: 1800,
+        created_at: '2026-03-01',
+        departure_date: '2026-03-13',
+      },
+      {
+        id: 'hotel',
+        travel_mode: 'Hotel',
+        amount: 4000,
+        created_at: '2026-03-01',
+        departure_date: '2026-03-02',
+      },
+      {
+        id: 'cab',
+        travel_mode: 'Cab',
+        amount: 900,
+      },
+    ]);
+    for (const row of rows) {
+      expect(row.reference_fare).toBeNull();
+      expect(row.policy_deviation_cost).toBeNull();
+      expect(row.deviation_pct).toBeNull();
+      expect(row.fare_trend).toBeNull();
+    }
+    expect(rows[0].sla).toBe('Not breached · 12d');
+    expect(rows[1].sla).toBe('Not breached · 1d');
+    expect(rows[2].sla).toBeNull();
+    const tiles = travelExpandTiles(rows[1], { includeFareDetails: true });
+    expect(tiles.some((tile) => tile.label === 'SLA' && tile.value === 'Not breached · 1d')).toBe(true);
+    expect(tiles.some((tile) => (tile.label === 'Fare trend' || tile.label === 'Reference fare') && tile.value)).toBe(false);
   });
 
   it('does not let advance or expense rows change booking fare medians', () => {
@@ -261,14 +303,37 @@ describe('travel booking fare columns', () => {
     expect(rows[3].fare_trend).toBeUndefined();
   });
 
-  it('leaves fare columns empty when a route has fewer than 3 flights', () => {
+  it('shows policy deviation on a closed flight even when the route has only one booking', () => {
     const rows = annotateTravelBookingFareRows([
-      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 8000 },
-      { id: '2', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 9000 },
+      { id: '1', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Mumbai', amount: 7891, status: 'closed', status_raw: 'Completed' },
+      { id: '2', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 8000, status: 'open' },
+      { id: '3', travel_mode: 'Air', from_city: 'Chennai', to_city: 'Kolkata', amount: 9000, status: 'Completed' },
     ]);
-    expect(rows[0].reference_fare).toBeNull();
-    expect(rows[0].policy_deviation_cost).toBeNull();
-    expect(rows[0].deviation_pct).toBeNull();
-    expect(rows[0].fare_trend).toBeNull();
+    expect(rows[0].policy_deviation_cost).toBe(0);
+    expect(rows[0].fare_trend).toBe('Flat');
+    expect(rows[1].policy_deviation_cost).toBeNull();
+    expect(rows[1].fare_trend).toBeNull();
+    expect(rows[2].policy_deviation_cost).toBe(500);
+    expect(rows[2].fare_trend).toBe('Up');
+  });
+
+  it('shows policy deviation cost and fare trend only when the booking is closed', () => {
+    const base = { travel_mode: 'Air', from_city: 'Chennai', to_city: 'Pune' };
+    const rows = annotateTravelBookingFareRows([
+      { ...base, id: '1', amount: 5605, created_at: '2026-01-01', status: 'closed' },
+      { ...base, id: '2', amount: 5822, created_at: '2026-02-01', status: 'Closed' },
+      { ...base, id: '3', amount: 8466, created_at: '2026-03-01', status: 'open' },
+      { ...base, id: '4', amount: 9000, created_at: '2026-03-02', status: 'rejected' },
+      { ...base, id: '5', amount: 7000, created_at: '2026-03-03' },
+    ]);
+    expect(rows[1].policy_deviation_cost).not.toBeNull();
+    expect(rows[1].fare_trend).toBe('Up');
+    for (const row of rows.slice(2)) {
+      expect(row.policy_deviation_cost).toBeNull();
+      expect(row.fare_trend).toBeNull();
+      expect(row.reference_fare).not.toBeNull();
+    }
+    const openTiles = travelExpandTiles(rows[2], { includeFareDetails: true });
+    expect(openTiles.some((t) => (t.label === 'Policy deviation cost' || t.label === 'Fare trend') && t.value)).toBe(false);
   });
 });

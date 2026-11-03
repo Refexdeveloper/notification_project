@@ -26,19 +26,11 @@ interface LayoutProps {
   headerActions?: React.ReactNode;
 }
 
-const SIDEBAR_KEY = 'ne_sidebar_collapsed';
-const SIDEBAR_EXPANDED = 264;
-const SIDEBAR_COLLAPSED = 72;
 const MOBILE_MQ = '(max-width: 767px)';
 
 export default function Layout({ children, breadcrumbs, title, embedAppTitle, embed: embedProp, headerActions }: LayoutProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem(SIDEBAR_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
+  const [sidebarHover, setSidebarHover] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(false);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia(MOBILE_MQ).matches;
@@ -87,15 +79,7 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
       setMobileNavOpen((v) => !v);
       return;
     }
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(SIDEBAR_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+    setSidebarPinned((prev) => !prev);
   }, [isMobile]);
 
   useEffect(() => {
@@ -110,14 +94,14 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
 
   if (!embed && !isAuthenticated) return null;
 
-  const desktopMargin = embed ? 0 : sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
+  const sidebarOpen = sidebarPinned || sidebarHover;
 
   return (
     <div className="min-h-screen app-canvas">
       {!embed ? (
         <>
           <div className="hidden md:block">
-            <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+            <Sidebar collapsed={!sidebarOpen} onToggle={toggleSidebar} onHoverChange={setSidebarHover} />
           </div>
 
           <AnimatePresence>
@@ -150,14 +134,14 @@ export default function Layout({ children, breadcrumbs, title, embedAppTitle, em
       <motion.div
         className="min-h-screen"
         initial={false}
-        animate={{ marginLeft: isMobile || embed ? 0 : desktopMargin }}
+        animate={{ marginLeft: isMobile || embed ? 0 : 72 }}
         transition={{ duration: duration.base, ease: easeOutExpo }}
       >
         <Header
           breadcrumbs={embed ? [] : breadcrumbs}
           title={embed ? embedAppTitle || title || 'Engagement overview' : title}
           onMenuClick={embed ? undefined : toggleSidebar}
-          menuOpen={embed ? false : isMobile ? mobileNavOpen : !sidebarCollapsed}
+          menuOpen={embed ? false : isMobile ? mobileNavOpen : sidebarOpen}
           embed={embed}
           actions={embed ? undefined : headerActions}
         />

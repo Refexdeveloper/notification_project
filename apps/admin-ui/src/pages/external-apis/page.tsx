@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
+import { ChevronDown, RefreshCw, ShieldAlert } from 'lucide-react';
 import Layout from '@/components/feature/Layout';
 import { Button } from '@/components/ui/Button';
 import { GlassCard } from '@/components/ui/GlassCard';
@@ -15,6 +15,19 @@ type ApiLog = {
   path: string;
   latency: string;
   message: string;
+  protocol?: string;
+  requestSize?: string;
+  responseSize?: string;
+  remoteIp?: string;
+  userAgent?: string;
+  revision?: string;
+  trace?: string;
+  requestBody?: string;
+  responseBody?: string;
+  mailFrom?: string;
+  mailTo?: string;
+  mailCc?: string;
+  replyTo?: string;
 };
 
 function formatWhen(value: string) {
@@ -37,6 +50,85 @@ function statusClass(status: number | null) {
   return 'text-emerald-700';
 }
 
+function sizeLabel(value?: string) {
+  const text = String(value || '').trim();
+  if (!text) return '—';
+  const bytes = Number(text);
+  if (!Number.isFinite(bytes)) return text;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function LogDetails({ row }: { row: ApiLog }) {
+  const facts = [
+    ['Protocol', row.protocol || '—'],
+    ['Request size', sizeLabel(row.requestSize)],
+    ['Response size', sizeLabel(row.responseSize)],
+    ['Severity', row.severity || '—'],
+    ['Caller IP', row.remoteIp || '—'],
+    ['Revision', row.revision || '—'],
+    ['Trace', row.trace || '—'],
+  ];
+  const addresses = [
+    ['From', row.mailFrom],
+    ['To', row.mailTo],
+    ['Cc', row.mailCc],
+    ['Reply-To', row.replyTo],
+  ];
+  return (
+    <div className="space-y-3 bg-slate-50 px-3 py-3 text-xs">
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {addresses.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">{label}</dt>
+            <dd className="mt-0.5 break-all font-mono text-foreground-800">{value || '—'}</dd>
+          </div>
+        ))}
+      </dl>
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {facts.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">{label}</dt>
+            <dd className="mt-0.5 break-all font-mono text-foreground-800">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {row.userAgent ? (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">User agent</p>
+          <p className="mt-0.5 break-words text-foreground-700">{row.userAgent}</p>
+        </div>
+      ) : null}
+      {addresses.every(([, value]) => !value) ? (
+        <p className="text-foreground-500">This call was stored before From, To, Cc, and Reply-To were recorded. A comment sent after this update shows the addresses here.</p>
+      ) : null}
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Request body</p>
+        {row.requestBody ? (
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-100">{row.requestBody}</pre>
+        ) : (
+          <p className="mt-1 text-foreground-500">Cloud Run did not store a request body for this call. The request size above is what it recorded.</p>
+        )}
+      </div>
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Response</p>
+        {row.responseBody ? (
+          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 px-3 py-2 text-[11px] leading-relaxed text-slate-100">{row.responseBody}</pre>
+        ) : (
+          <p className="mt-1 text-foreground-500">Cloud Run did not store a response body. Status {row.status ?? '—'} and the response size are the recorded result.</p>
+        )}
+      </div>
+      {row.message ? (
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Log message</p>
+          <p className="mt-0.5 break-words text-foreground-700">{row.message}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ExternalApisPage() {
   const backendMode = isBackendApiMode();
   const { isAdmin } = useAuth();
@@ -44,6 +136,7 @@ export default function ExternalApisPage() {
   const [logs, setLogs] = useState<ApiLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState('');
+  const [openLogKey, setOpenLogKey] = useState('');
   const selected = EXTERNAL_GCP_APIS.find((api) => api.id === selectedId) || EXTERNAL_GCP_APIS[0];
 
   useEffect(() => {
@@ -65,6 +158,10 @@ export default function ExternalApisPage() {
       cancelled = true;
     };
   }, [backendMode, isAdmin, selected?.id]);
+
+  useEffect(() => {
+    setOpenLogKey('');
+  }, [selected?.id]);
 
   const reloadLogs = () => {
     if (!selected) return;
@@ -150,9 +247,10 @@ export default function ExternalApisPage() {
             {logs.length > 0 && (
               <>
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[720px] text-left text-xs">
+                  <table className="w-full min-w-[760px] text-left text-xs">
                     <thead className="text-[11px] uppercase tracking-wide text-foreground-500">
                       <tr>
+                        <th className="w-10 px-2 py-2 font-semibold"><span className="sr-only">Details</span></th>
                         <th className="px-2 py-2 font-semibold">Time</th>
                         <th className="px-2 py-2 font-semibold">Method</th>
                         <th className="px-2 py-2 font-semibold">Status</th>
@@ -162,30 +260,72 @@ export default function ExternalApisPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {logs.map((row, index) => (
-                        <tr key={`${row.timestamp}-${index}`} className="border-t border-slate-100">
-                          <td className="whitespace-nowrap px-2 py-2 text-foreground-700">{formatWhen(row.timestamp)}</td>
-                          <td className="px-2 py-2 font-mono">{row.method || '—'}</td>
-                          <td className={`px-2 py-2 font-semibold ${statusClass(row.status)}`}>{row.status ?? '—'}</td>
-                          <td className="px-2 py-2 font-mono">{row.path || '—'}</td>
-                          <td className="whitespace-nowrap px-2 py-2">{row.latency || '—'}</td>
-                          <td className="max-w-[280px] truncate px-2 py-2 text-foreground-600">{row.message || '—'}</td>
-                        </tr>
-                      ))}
+                      {logs.map((row, index) => {
+                        const key = `${row.timestamp}-${index}`;
+                        const open = openLogKey === key;
+                        return (
+                          <Fragment key={key}>
+                            <tr className="border-t border-slate-100">
+                              <td className="px-2 py-2">
+                                <button
+                                  type="button"
+                                  aria-expanded={open}
+                                  aria-label={open ? 'Hide log details' : 'Show log details'}
+                                  onClick={() => setOpenLogKey(open ? '' : key)}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-foreground-700 hover:bg-slate-50"
+                                >
+                                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+                                </button>
+                              </td>
+                              <td className="whitespace-nowrap px-2 py-2 text-foreground-700">{formatWhen(row.timestamp)}</td>
+                              <td className="px-2 py-2 font-mono">{row.method || '—'}</td>
+                              <td className={`px-2 py-2 font-semibold ${statusClass(row.status)}`}>{row.status ?? '—'}</td>
+                              <td className="px-2 py-2 font-mono">{row.path || '—'}</td>
+                              <td className="whitespace-nowrap px-2 py-2">{row.latency || '—'}</td>
+                              <td className="max-w-[280px] truncate px-2 py-2 text-foreground-600">{row.message || '—'}</td>
+                            </tr>
+                            {open ? (
+                              <tr className="border-t border-slate-100">
+                                <td colSpan={7} className="p-0">
+                                  <LogDetails row={row} />
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
                 <div className="space-y-2 md:hidden">
-                  {logs.map((row, index) => (
-                    <div key={`${row.timestamp}-m-${index}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono font-semibold">{row.method || '—'} {row.path || ''}</span>
-                        <span className={`font-semibold ${statusClass(row.status)}`}>{row.status ?? '—'}</span>
+                  {logs.map((row, index) => {
+                    const key = `${row.timestamp}-m-${index}`;
+                    const open = openLogKey === key;
+                    return (
+                      <div key={key} className="overflow-hidden rounded-lg border border-slate-200 text-xs">
+                        <div className="flex items-start gap-2 px-3 py-2">
+                          <button
+                            type="button"
+                            aria-expanded={open}
+                            aria-label={open ? 'Hide log details' : 'Show log details'}
+                            onClick={() => setOpenLogKey(open ? '' : key)}
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-foreground-700"
+                          >
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="break-all font-mono font-semibold">{row.method || '—'} {row.path || ''}</span>
+                              <span className={`shrink-0 font-semibold ${statusClass(row.status)}`}>{row.status ?? '—'}</span>
+                            </div>
+                            <p className="mt-1 text-foreground-500">{formatWhen(row.timestamp)}{row.latency ? ` · ${row.latency}` : ''}</p>
+                            {row.message ? <p className="mt-1 break-words text-foreground-700">{row.message}</p> : null}
+                          </div>
+                        </div>
+                        {open ? <LogDetails row={row} /> : null}
                       </div>
-                      <p className="mt-1 text-foreground-500">{formatWhen(row.timestamp)}{row.latency ? ` · ${row.latency}` : ''}</p>
-                      {row.message ? <p className="mt-1 break-words text-foreground-700">{row.message}</p> : null}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             )}

@@ -77,6 +77,56 @@ function recordInEntityCodeScope(raw, scope) {
   return true;
 }
 
+/**
+ * Project Management tasks carry RMC on the project, not the entity code:
+ * project code PRJ-RIL_RMC-… or a project name such as "Kalyan RMC Plant".
+ * Sub-tasks carry it on their Task_ID link (Project / Subtaxk_id).
+ * Underscore counts as a separator so RIL_RMC matches; free-text task
+ * names and details are not read.
+ * Keep aligned with report_pm_rmc_scope_predicate in report-template-lib.sh.
+ */
+const RMC_TOKEN = /(^|[^a-z0-9])rmc([^a-z0-9]|$)/i;
+
+function projectTextCandidates(raw) {
+  const out = [];
+  if (!raw || typeof raw !== 'object') return out;
+  const push = (value) => {
+    if (typeof value === 'string' || typeof value === 'number') {
+      const text = String(value).trim();
+      if (text) out.push(text);
+    }
+  };
+  push(raw.Project_ID_Hidden);
+  push(raw.Project_ID_Details);
+  push(raw.Project_Name);
+  push(raw.Project);
+  if (raw.Project_ID && typeof raw.Project_ID === 'object') {
+    push(raw.Project_ID.Project_ID);
+    push(raw.Project_ID.Project_Name);
+    push(raw.Project_ID.Name);
+  } else {
+    push(raw.Project_ID);
+  }
+  if (raw.Task_ID && typeof raw.Task_ID === 'object') {
+    push(raw.Task_ID.Project);
+    push(raw.Task_ID.Subtaxk_id);
+  }
+  return out;
+}
+
+function isRmcProjectRecord(raw) {
+  return projectTextCandidates(raw).some((value) => RMC_TOKEN.test(value));
+}
+
+/**
+ * Project Management scope. ril_rmc = entity code RIL_RMC or an RMC project.
+ * common keeps the entity-code-only rule so the common report is unchanged.
+ */
+function recordInPmRmcScope(raw, scope) {
+  if (scope === 'ril_rmc') return isRilRmcRecord(raw) || isRmcProjectRecord(raw);
+  return recordInEntityCodeScope(raw, scope);
+}
+
 function entityCodeScopeFromFilter(filter, { split = false } = {}) {
   const value = String(filter || '').trim().toLowerCase();
   if (value === 'ril_rmc') return 'ril_rmc';
@@ -89,6 +139,8 @@ module.exports = {
   CODE_KEYS,
   entityCodeCandidates,
   isRilRmcRecord,
+  isRmcProjectRecord,
   recordInEntityCodeScope,
+  recordInPmRmcScope,
   entityCodeScopeFromFilter,
 };

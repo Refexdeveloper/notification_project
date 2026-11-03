@@ -72,6 +72,31 @@ function rowDateKey(value: unknown): string {
   return raw.slice(0, 10);
 }
 
+function pushSearchPart(parts: string[], value: unknown) {
+  if (value == null || value === '') return;
+  const kind = typeof value;
+  if (kind === 'string' || kind === 'number' || kind === 'boolean') {
+    parts.push(String(value));
+    return;
+  }
+  if (kind !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => pushSearchPart(parts, item));
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const name = record.Name || record.name || record.Email || record.email || record.label || record.primary;
+  if (name != null && name !== '') parts.push(String(name));
+  if (record.sub != null && record.sub !== '') parts.push(String(record.sub));
+}
+
+function recordSearchText(row: AppRecordRow, extras: unknown[] = []) {
+  const parts: string[] = [];
+  Object.values(row).forEach((value) => pushSearchPart(parts, value));
+  extras.forEach((value) => pushSearchPart(parts, value));
+  return parts.join(' ').toLowerCase();
+}
+
 type Props = {
   inventory: AppRecordRow[];
   columns?: AppRecordColumn[];
@@ -92,8 +117,11 @@ type Props = {
   activityDates?: boolean;
   filterAnimating?: boolean;
   inventoryLoading?: boolean;
+  /** Display-only text match. Does not change KPI counts. */
+  textQuery?: string;
+  onTextQueryChange?: (value: string) => void;
   /** Rows after header + MIS column filters, without KPI status — parent recounts cards. */
-  onColumnScopedRowsChange?: (payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[] }) => void;
+  onColumnScopedRowsChange?: (payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[]; active: boolean }) => void;
 };
 
 export default function EmbedAppRecordsTable({
@@ -116,6 +144,8 @@ export default function EmbedAppRecordsTable({
   activityDates = false,
   filterAnimating = false,
   inventoryLoading = false,
+  textQuery = '',
+  onTextQueryChange,
   onColumnScopedRowsChange,
 }: Props) {
   const [page, setPage] = useState(0);
@@ -130,6 +160,10 @@ export default function EmbedAppRecordsTable({
     setDateFilters({});
   }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
 
+  useEffect(() => {
+    setPage(0);
+  }, [textQuery]);
+
   const fareReadyInventory = useMemo(
     () => (travelMode ? annotateTravelBookingFareRows(inventory) : inventory),
     [inventory, travelMode],
@@ -138,16 +172,16 @@ export default function EmbedAppRecordsTable({
   const scoped = useMemo(
     () => {
       const rows = filterAppRecords(fareReadyInventory, {
-        entity,
-        company,
-        status,
-        assigned,
+      entity,
+      company,
+      status,
+      assigned,
         assignedId,
-        dateFrom,
-        dateTo,
+      dateFrom,
+      dateTo,
         todayKind,
-        itsmCompanyMode,
-        travelMode,
+      itsmCompanyMode,
+      travelMode,
         leadWebsiteMode,
         activityDates,
       });
@@ -166,7 +200,7 @@ export default function EmbedAppRecordsTable({
     ? columnsProp
     : itsmCompanyMode
       ? ITSM_CEO_RECORD_COLUMNS
-      : [
+    : [
         { id: 'request_id', label: 'Request ID' },
         { id: 'subject', label: 'Subject' },
         { id: 'assigned_to', label: 'Assigned to' },
@@ -293,16 +327,37 @@ export default function EmbedAppRecordsTable({
     [headerNoStatus, columnFilters, dateFilters, columns, itsmCompanyMode],
   );
 
-  useEffect(() => {
-    onColumnScopedRowsChange?.({ kpiRows: columnScopedForKpis, sourceRows: columnScopedForSource });
-  }, [columnScopedForKpis, columnScopedForSource, onColumnScopedRowsChange]);
+  const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
+    || Object.values(dateFilters).some((range) => range.from || range.to);
 
-  const summary = useMemo(() => summarizeAppRecords(filtered), [filtered]);
+  useEffect(() => {
+    onColumnScopedRowsChange?.({
+      kpiRows: columnScopedForKpis,
+      sourceRows: columnScopedForSource,
+      active: filtersActive,
+    });
+  }, [columnScopedForKpis, columnScopedForSource, filtersActive, onColumnScopedRowsChange]);
+
+  const searchBlobs = useMemo(
+    () => filtered.map((row) => recordSearchText(row, [
+      travelMode ? travelSlaLabel(row) : '',
+      itsmCompanyMode ? itsmSlaDisplay(row) : null,
+    ])),
+    [filtered, travelMode, itsmCompanyMode],
+  );
+
+  const searched = useMemo(() => {
+    const q = String(textQuery || '').trim().toLowerCase();
+    if (!q) return filtered;
+    return filtered.filter((_, index) => searchBlobs[index]?.includes(q));
+  }, [filtered, searchBlobs, textQuery]);
+
+  const summary = useMemo(() => summarizeAppRecords(searched), [searched]);
 
   const pageItems = useMemo(() => {
     const off = page * pageSize;
-    return filtered.slice(off, off + pageSize);
-  }, [filtered, page]);
+    return searched.slice(off, off + pageSize);
+  }, [searched, page]);
 
   const visibleColumns = useMemo(() => {
     if (itsmCompanyMode) return columns;
@@ -334,8 +389,6 @@ export default function EmbedAppRecordsTable({
   }, [columns, emsMode, itsmCompanyMode, pageItems, travelMode, travelPackKind]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
-    || Object.values(dateFilters).some((range) => range.from || range.to);
 
   const clearColumnFilters = () => {
     setPage(0);
@@ -366,6 +419,48 @@ export default function EmbedAppRecordsTable({
   );
   const showExpandColumn = expandEnabled && pageItems.some((row) => rowCanExpand(row));
 
+  const renderColumnFilter = (col: AppRecordColumn) => (
+    isDateRecordColumn(col.id) ? (
+      <RecordsColumnDateFilter
+        label={col.label}
+        from={dateFilters[col.id]?.from || ''}
+        to={dateFilters[col.id]?.to || ''}
+        onFromChange={(next) => {
+          setPage(0);
+          setDateFilters((prev) => ({
+            ...prev,
+            [col.id]: { from: next, to: prev[col.id]?.to || '' },
+          }));
+        }}
+        onToChange={(next) => {
+          setPage(0);
+          setDateFilters((prev) => ({
+            ...prev,
+            [col.id]: { from: prev[col.id]?.from || '', to: next },
+          }));
+        }}
+        onClear={() => {
+          setPage(0);
+          setDateFilters((prev) => {
+            const next = { ...prev };
+            delete next[col.id];
+            return next;
+          });
+        }}
+      />
+    ) : (
+      <RecordsColumnHeaderFilter
+        label={col.label}
+        value={columnFilters[col.id] || ''}
+        options={columnFilterOptions[col.id] || []}
+        onChange={(next) => {
+          setPage(0);
+          setColumnFilters((prev) => ({ ...prev, [col.id]: next }));
+        }}
+      />
+    )
+  );
+
   return (
     <div className="ne-list-panel relative p-5">
       {showLoader && pageItems.length ? (
@@ -380,22 +475,43 @@ export default function EmbedAppRecordsTable({
           </div>
           <h3 className={NE_TYPE.sectionTitle}>Records</h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
           {filtersActive ? (
             <button
               type="button"
               onClick={clearColumnFilters}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-700"
+              className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
               Clear filters
             </button>
           ) : null}
-          <span className="text-xs font-semibold tabular-nums text-slate-500">
-            {Number(summary.total || 0).toLocaleString('en-IN')} rows
-            {dataSource === 'live_cache' ? ' · cached' : ''}
-          </span>
+          {onTextQueryChange ? (
+            <label className="relative block min-w-0 w-full max-w-[360px]">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M20 20l-3.5-3.5" />
+                </svg>
+        </span>
+              <input
+                type="search"
+                value={textQuery}
+                onChange={(event) => onTextQueryChange(event.target.value)}
+                placeholder="Search records..."
+                className="h-9 w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#0F6B7A]"
+              />
+            </label>
+          ) : null}
         </div>
+      </div>
+
+      <div className="mb-3 flex gap-3 overflow-x-auto pb-1 lg:hidden">
+        {visibleColumns.map((col) => (
+          <div key={col.id} className="shrink-0 text-xs font-semibold text-slate-600">
+            {renderColumnFilter(col)}
+          </div>
+        ))}
       </div>
 
       {showLoader && !pageItems.length ? (
@@ -473,45 +589,7 @@ export default function EmbedAppRecordsTable({
                   {showExpandColumn ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
                   {visibleColumns.map((col) => (
                     <th key={col.id} className={`${NE_TYPE.tableHeadCell} font-semibold`}>
-                      {isDateRecordColumn(col.id) ? (
-                        <RecordsColumnDateFilter
-                          label={col.label}
-                          from={dateFilters[col.id]?.from || ''}
-                          to={dateFilters[col.id]?.to || ''}
-                          onFromChange={(next) => {
-                            setPage(0);
-                            setDateFilters((prev) => ({
-                              ...prev,
-                              [col.id]: { from: next, to: prev[col.id]?.to || '' },
-                            }));
-                          }}
-                          onToChange={(next) => {
-                            setPage(0);
-                            setDateFilters((prev) => ({
-                              ...prev,
-                              [col.id]: { from: prev[col.id]?.from || '', to: next },
-                            }));
-                          }}
-                          onClear={() => {
-                            setPage(0);
-                            setDateFilters((prev) => {
-                              const next = { ...prev };
-                              delete next[col.id];
-                              return next;
-                            });
-                          }}
-                        />
-                      ) : (
-                        <RecordsColumnHeaderFilter
-                          label={col.label}
-                          value={columnFilters[col.id] || ''}
-                          options={columnFilterOptions[col.id] || []}
-                          onChange={(next) => {
-                            setPage(0);
-                            setColumnFilters((prev) => ({ ...prev, [col.id]: next }));
-                          }}
-                        />
-                      )}
+                      {renderColumnFilter(col)}
                     </th>
                   ))}
                 </tr>
@@ -586,9 +664,9 @@ export default function EmbedAppRecordsTable({
                         return (
                           <td key={col.id} className="px-5 py-2.5">
                             <div className="flex flex-col items-start gap-0.5">
-                              <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
-                              >
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
+                            >
                                 {displayDashText(raw || row.status_raw, '—')}
                               </span>
                               {reopen ? (

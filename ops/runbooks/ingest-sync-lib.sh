@@ -32,6 +32,13 @@ ingest_force_full_for_schedule() {
       ingest_log "Schedule ${SCHEDULE_ID}: RMC Expense incremental/skip (Travel_Expense_A00 403s on full pull)"
       return 0
     fi
+    # Full PM detail pull takes ~14 min and the runner stops at 890 s. RMC PM KPIs
+    # come from live Kissflow lists; the snapshot only feeds the user table.
+    if [[ "${app_id}" == "Project_Management_Tracker_A00" && "${entity_key}" == "rilrmc" ]]; then
+      export FULL_INGEST=false
+      ingest_log "Schedule ${SCHEDULE_ID}: RMC PM incremental (watermark delta + carry-forward)"
+      return 0
+    fi
     export FULL_INGEST=true
     ingest_log "Schedule ${SCHEDULE_ID}: forcing FULL_INGEST=true (today KPIs require complete snapshot)"
   fi

@@ -24,7 +24,7 @@ const {
   emptySourceBuckets,
   bumpSource,
 } = require(path.join(__dirname, 'itsm-ticket-source.js'));
-const { recordInEntityCodeScope } = require(path.join(__dirname, 'entity-code'));
+const { recordInEntityCodeScope, recordInPmRmcScope } = require(path.join(__dirname, 'entity-code'));
 
 const TZ = 'Asia/Kolkata';
 const PAGE_SIZE = 100;
@@ -98,6 +98,7 @@ const ENTITY_CODE_SPLIT_APPS = new Set([
 function entityMatches(raw) {
   if (ENTITY_CODE_SPLIT_APPS.has(String(applicationId || ''))) {
     const scope = String(entityFilter || '').trim().toLowerCase() === 'ril_rmc' ? 'ril_rmc' : 'common';
+    if (String(applicationId) === 'Project_Management_Tracker_A00') return recordInPmRmcScope(raw, scope);
     return recordInEntityCodeScope(raw, scope);
   }
   if (!entityFilter || entityFilter === 'all' || entityFilter === '*') return true;

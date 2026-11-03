@@ -9,6 +9,7 @@ import { duration, easeOutExpo } from '@/lib/motion';
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  onHoverChange?: (hover: boolean) => void;
 }
 
 function SidebarToggleButton({
@@ -31,7 +32,7 @@ function SidebarToggleButton({
   );
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, onHoverChange }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [hovered, setHovered] = useState<string | null>(null);
@@ -48,10 +49,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   return (
     <motion.aside
-      className="fixed left-0 top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[#D7E6F4]/90 bg-white/90 backdrop-blur-md"
+      className={`ne-side fixed left-0 top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[#D7E6F4]/90 bg-white/95 backdrop-blur-md ${
+        collapsed ? '' : 'shadow-[8px_0_28px_rgba(15,23,42,0.08)]'
+      }`}
       initial={false}
       animate={{ width: collapsed ? 72 : 264 }}
       transition={{ duration: duration.base, ease: easeOutExpo }}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
     >
       <div
         className={`flex items-center h-14 shrink-0 border-b border-[#EEF2F7] ${

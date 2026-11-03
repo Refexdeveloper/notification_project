@@ -13,7 +13,6 @@ const TRAVEL_SHARED_COLUMNS: AppRecordColumn[] = [
 ];
 
 const TRAVEL_TAIL_COLUMNS: AppRecordColumn[] = [
-  { id: 'current_step', label: 'Current step' },
   { id: 'status', label: 'Status' },
   { id: 'created_at', label: 'Created by' },
 ];
@@ -28,9 +27,7 @@ export const TRAVEL_DASH_COLUMNS: AppRecordColumn[] = [
 
 /** Shown only after Travel Booking KPI click. */
 export const TRAVEL_BOOKING_FARE_COLUMNS: AppRecordColumn[] = [
-  { id: 'reference_fare', label: 'Reference fare' },
   { id: 'policy_deviation_cost', label: 'Policy deviation cost' },
-  { id: 'deviation_pct', label: 'Deviation %' },
   { id: 'sla', label: 'SLA' },
   { id: 'fare_trend', label: 'Fare trend' },
 ];
@@ -71,8 +68,8 @@ export function travelColumnsForPack(pack: TravelPackKind | null | undefined): A
 
 const TRAVEL_ALWAYS_COLUMNS = new Set(TRAVEL_DASH_COLUMNS.map((col) => col.id));
 const TRAVEL_REQUEST_ALWAYS = new Set(TRAVEL_REQUEST_COLUMNS.map((col) => col.id));
-const TRAVEL_ADVANCE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'amount', 'current_step', 'status', 'created_at']);
-const TRAVEL_EXPENSE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'raised_amount', 'amount', 'current_step', 'status', 'created_at']);
+const TRAVEL_ADVANCE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'amount', 'status', 'created_at']);
+const TRAVEL_EXPENSE_ALWAYS = new Set(['request_id', 'requested_by', 'assigned_to', 'company_name', 'raised_amount', 'amount', 'status', 'created_at']);
 
 export function isTravelBookingRow(row: AppRecordRow): boolean {
   const process = String(row.process_id || row.subject || '').toLowerCase();
@@ -107,9 +104,11 @@ export function prettyTravelTripType(value: unknown): string {
   return raw;
 }
 
-const TRAVEL_FARE_MIN_SAMPLES = 3;
+/** One flight on a route is enough. Closed rows still show ₹0 / flat when they are the only sample. */
+const TRAVEL_FARE_MIN_SAMPLES = 1;
 
-function isFlightTravelMode(travelMode: unknown): boolean {
+/** Flight and Air only. Hotel, cab, bus, train, and blank modes are not flights. */
+export function isFlightTravelMode(travelMode: unknown): boolean {
   const text = String(travelMode || '').trim().toLowerCase();
   if (!text) return false;
   if (text.includes('flight')) return true;
@@ -270,15 +269,27 @@ export function annotateTravelBookingFareRows(rows: AppRecordRow[]): AppRecordRo
     const previous = index > 0 ? history[index - 1] : null;
     const compare = previous ? amount - previous.amount : deviation;
     const fareTrend = compare > 0 ? 'Up' : compare < 0 ? 'Down' : 'Flat';
+    const closed = isTravelClosedRow(row);
     return {
       ...row,
       reference_fare: referenceFare,
-      policy_deviation_cost: deviation,
+      policy_deviation_cost: closed ? deviation : null,
       deviation_pct: referenceFare === 0 ? null : deviation / referenceFare,
       sla,
-      fare_trend: fareTrend,
+      fare_trend: closed ? fareTrend : null,
     };
   });
+}
+
+const TRAVEL_CLOSED_STATUS = new Set(['closed', 'completed', 'done', 'approved', 'paid', 'settled']);
+
+/** Policy deviation cost and Fare trend are shown only once a booking is closed. */
+export function isTravelClosedRow(row: AppRecordRow): boolean {
+  const status = String(row?.status || '').trim().toLowerCase();
+  if (status === 'open' || status === 'rejected' || status === 'draft') return false;
+  if (TRAVEL_CLOSED_STATUS.has(status)) return true;
+  const raw = String(row?.status_raw || '').trim().toLowerCase();
+  return !status && TRAVEL_CLOSED_STATUS.has(raw);
 }
 
 export function travelRouteSummary(row: AppRecordRow): TravelRouteSummary | null {
@@ -312,11 +323,14 @@ export function travelExpandTiles(
 ): Array<{ label: string; value: string }> {
   const days = Number(row.travel_days);
   const hideRoute = Boolean(opts.hideRouteFields);
+  const flightFare = Boolean(opts.includeFareDetails) && isFlightTravelMode(row.travel_mode);
   const fareTiles = opts.includeFareDetails
     ? [
-      tile('Reference fare', row.reference_fare == null || row.reference_fare === '' ? '' : formatInr(Number(row.reference_fare))),
-      tile('Policy deviation cost', row.policy_deviation_cost == null || row.policy_deviation_cost === '' ? '' : formatInr(Number(row.policy_deviation_cost))),
-      tile('Deviation %', formatDeviationPct(row.deviation_pct)),
+      ...(flightFare
+        ? [
+          tile('Policy deviation cost', row.policy_deviation_cost == null || row.policy_deviation_cost === '' ? '' : formatInr(Number(row.policy_deviation_cost))),
+        ]
+        : []),
       tile('SLA', travelSlaLabel(row)),
       tile('Fare trend', fareTrendFilterLabel(row.fare_trend, row.deviation_pct)),
     ]

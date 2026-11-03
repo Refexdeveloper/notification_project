@@ -1450,12 +1450,12 @@ function assigneeMetaFromRaw(raw, { itsm = false } = {}) {
     : [
       raw?._current_assigned_to,
       raw?.Column_Q7Ygw5jzjd,
-      raw?.Assigned_To,
-      raw?.Assignee,
-      raw?.assigned_to,
-      raw?.AssignedTo,
-      raw?.Owner,
-    ];
+    raw?.Assigned_To,
+    raw?.Assignee,
+    raw?.assigned_to,
+    raw?.AssignedTo,
+    raw?.Owner,
+  ];
   for (const field of fields) {
     if (field == null) continue;
     const assignee_id = personIdFromRaw(field);
@@ -1959,12 +1959,12 @@ function buildLiveRecordRows(allItems, applicationId) {
         );
     const requestId = (
       pm
-        ? (isTask
+      ? (isTask
           ? pickString(raw, ['Task_ID_Formulated', 'Task_ID', 'Sub_Task_ID', 'Task_Id', '_request_number', 'Request_ID', '_id'])
           : pickString(raw, ['Project_ID_Formulated', 'Project_ID', 'Project_Id', '_request_number', 'Request_ID', '_id']))
-        : travel
+      : travel
           ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Travel_Request_ID_1', 'Advance_Request_ID', 'Request_No', '_request_number'])
-          : lead
+        : lead
             ? pickString(raw, ['Lead_ID', 'Lead_Id', 'Lead_Number', '_request_number', '_id'])
             : solar
               ? pickString(raw, [
@@ -1978,9 +1978,9 @@ function buildLiveRecordRows(allItems, applicationId) {
                 'Request_Id',
                 '_id',
               ])
-              : ems
-                ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
-                : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
+          : ems
+            ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
+            : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
     ) || String(raw?._id || '') || '—';
     const created =
       (typeof raw?._created_at === 'string' && raw._created_at)
@@ -1994,7 +1994,7 @@ function buildLiveRecordRows(allItems, applicationId) {
         ? (pickTravelExpenseType(raw) || pickString(raw, ['Expense_Type', 'Expense_Category', 'Category']) || '—')
       : travel
         ? travelDetails.expense_type
-        : undefined;
+      : undefined;
     const tripType = travelDetails.trip_type;
     const fromCity = travelDetails.from_city || emsDetails.from_city;
     const toCity = travelDetails.to_city || emsDetails.to_city;
@@ -2013,7 +2013,7 @@ function buildLiveRecordRows(allItems, applicationId) {
               ? (pickString(raw, ['Title', 'Subject', 'Expense_Title', 'Name', 'Description']) || '—')
               : itsm
                 ? (pickString(raw, ITSM_SUMMARY_KEYS) || pickCurrentStep(raw) || processId || '—')
-                : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
+              : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
     const closedBy = itsm ? (closer.closed_by || undefined) : undefined;
     const entityText = entityTextFromRaw(raw);
     const companyText = companyTextFromRaw(raw, applicationId);
@@ -2033,7 +2033,7 @@ function buildLiveRecordRows(allItems, applicationId) {
       : (
         resolveCompanyIdFromText(companyText)
         || resolveCompanyIdFromText(entityText)
-        || resolveCompanyIdFromText(entityKey)
+      || resolveCompanyIdFromText(entityKey)
         || null
       );
     const entityDisplay =
@@ -2266,7 +2266,7 @@ function recordsPayloadFromCache({
   offset,
 }) {
   const itsm = isItsmApp(applicationId);
-  const all = enrichRecordsWithAssigneeCompany(
+      const all = enrichRecordsWithAssigneeCompany(
     overlayTravelPlacesFromItems(
       overlayLeadWebsiteFromItems(
         dedupeRecords((rows || []).filter((row) => !isDraftRow(row))),
@@ -2278,41 +2278,41 @@ function recordsPayloadFromCache({
     ),
     cache.items || [],
     { skipAssigneeStamp: itsm },
-  );
-  const filtered = dedupeRecords(filterRecordRows(all, {
-    status,
-    entity,
-    search,
-    assigned,
-    requester,
-    dateFrom,
-    dateTo,
-    itsmCompanyMode: itsm,
-  }));
-  filtered.sort((a, b) => {
-    const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-    return tb - ta;
-  });
-  const summaryAll = summarizeRows(all);
-  const summary = summarizeRows(filtered);
+      );
+      const filtered = dedupeRecords(filterRecordRows(all, {
+        status,
+        entity,
+        search,
+        assigned,
+        requester,
+        dateFrom,
+        dateTo,
+        itsmCompanyMode: itsm,
+      }));
+      filtered.sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tb - ta;
+      });
+      const summaryAll = summarizeRows(all);
+      const summary = summarizeRows(filtered);
   const counts = entityCountsFromRows(all);
   const base = {
-    application_id: applicationId,
-    environment,
-    data_source: 'live_cache',
-    generated_at: cache.fetched_at || null,
-    summary,
-    inventory_summary: summaryAll,
-    filter_options: {
+          application_id: applicationId,
+          environment,
+          data_source: 'live_cache',
+          generated_at: cache.fetched_at || null,
+          summary,
+          inventory_summary: summaryAll,
+          filter_options: {
       entities: entityOptionsForApp(applicationId, counts),
-      assignees: uniqueNames(all, 'assigned_to'),
-      requesters: uniqueNames(all, 'requested_by'),
-      show_assigned: !isSolarApp(applicationId),
-      show_requester: true,
+            assignees: uniqueNames(all, 'assigned_to'),
+            requesters: uniqueNames(all, 'requested_by'),
+            show_assigned: !isSolarApp(applicationId),
+            show_requester: true,
       show_entity: true,
-    },
-    columns: columnsForApp(applicationId),
+          },
+          columns: columnsForApp(applicationId),
   };
   if (inventory) {
     return {
@@ -2324,7 +2324,7 @@ function recordsPayloadFromCache({
     };
   }
   const page = paginateRows(filtered, limit, offset);
-  return {
+      return {
     ...base,
     total: page.total,
     limit: page.lim,
@@ -2334,7 +2334,7 @@ function recordsPayloadFromCache({
 }
 
 async function loadKissflowRecords(pool, {
-  environment,
+        environment,
   applicationId,
   entity = 'all',
   status = 'all',
@@ -2801,8 +2801,8 @@ SELECT
           const companyText = lookupCompany && !isEntityBucketLabel(lookupCompany)
             ? lookupCompany
             : REFEX_DEFAULT_COMPANY_NAME;
-          return serializeRecordItem({
-            ...it,
+        return serializeRecordItem({
+          ...it,
             id: String(it.instance_id || it.request_id),
             entity: entityDisplay,
             entity_key: entityKey,

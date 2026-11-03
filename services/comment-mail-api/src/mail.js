@@ -3,6 +3,7 @@
 const nodemailer = require('nodemailer');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+const DROPPED_COMMENT_CC = new Set(['mohamedaasik.m@refex.co.in']);
 const MAX_HTML_BYTES = 200 * 1024;
 const MAX_RECIPIENTS = 8;
 
@@ -23,7 +24,7 @@ function asEmailList(value) {
 
 function parseSendRequest(body = {}) {
   const to = asEmailList(body.to);
-  const cc = asEmailList(body.cc).filter((email) => !to.includes(email));
+  const cc = asEmailList(body.cc).filter((email) => !to.includes(email) && !DROPPED_COMMENT_CC.has(email));
   const subject = String(body.subject || '').trim();
   const html = String(body.html || '').trim();
   const displayFrom = normalizeEmail(body.from) || 'itsupport@extrovis.com';
@@ -46,7 +47,9 @@ function parseSendRequest(body = {}) {
   if (!EMAIL_RE.test(displayFrom)) {
     return { error: 'from must be a valid email' };
   }
-  return { to, cc, subject, html, displayFrom };
+  const requestedReply = asEmailList(body.replyTo || body.reply_to);
+  const replyTo = requestedReply.length ? requestedReply.join(', ') : displayFrom;
+  return { to, cc, subject, html, displayFrom, replyTo };
 }
 
 function fromDisplayName(email) {
@@ -67,7 +70,7 @@ function smtpConfig() {
   };
 }
 
-async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
+async function sendHtmlMail({ to, cc, subject, html, displayFrom, replyTo }) {
   const cfg = smtpConfig();
   if (!cfg.user || !cfg.pass) {
     const err = new Error('SMTP is not configured');
@@ -84,16 +87,18 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
 
   const displayName = fromDisplayName(displayFrom);
   const recipients = [...to, ...cc];
+  const replyList = asEmailList(replyTo);
+  const reply = replyList.length ? replyList : [displayFrom];
   const mail = {
     from: `"${displayName}" <${displayFrom}>`,
     sender: cfg.user,
-    replyTo: displayFrom,
-    to: to.join(', '),
+    replyTo: reply,
+    to,
     subject,
     html,
     envelope: { from: displayFrom, to: recipients },
   };
-  if (cc.length) mail.cc = cc.join(', ');
+  if (cc.length) mail.cc = cc;
 
   try {
     return await transporter.sendMail(mail);
@@ -101,7 +106,7 @@ async function sendHtmlMail({ to, cc, subject, html, displayFrom }) {
     if (normalizeEmail(displayFrom) === normalizeEmail(cfg.user)) throw firstErr;
     // Keep the entity address in the header. Only the SMTP envelope falls back.
     mail.from = `"${displayName}" <${displayFrom}>`;
-    mail.replyTo = displayFrom;
+    mail.replyTo = reply;
     mail.envelope = { from: cfg.user, to: recipients };
     return await transporter.sendMail(mail);
   }

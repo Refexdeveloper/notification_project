@@ -12,7 +12,7 @@
  * Optional: PM_TASK_PROCESS_ID, PM_SUBTASK_PROCESS_ID, PM_PROJECT_BOARD_ID
  */
 const https = require('https');
-const { recordInEntityCodeScope } = require('./entity-code');
+const { recordInPmRmcScope } = require('./entity-code');
 
 const host = (process.env.KISSFLOW_HOST || 'refexgroup.kissflow.com').replace(/^https?:\/\//, '');
 const accountId = process.env.KISSFLOW_ACCOUNT_ID || '';
@@ -163,8 +163,8 @@ async function main() {
     fetchProcessItems(SUBTASK_PROCESS).catch(() => []),
     fetchProjectBoardCount(),
   ]);
-  const tasks = taskRows.filter((row) => recordInEntityCodeScope(row, ENTITY_SCOPE));
-  const subtasks = subtaskRows.filter((row) => recordInEntityCodeScope(row, ENTITY_SCOPE));
+  const tasks = taskRows.filter((row) => recordInPmRmcScope(row, ENTITY_SCOPE));
+  const subtasks = subtaskRows.filter((row) => recordInPmRmcScope(row, ENTITY_SCOPE));
 
   const linked = [];
   const individual = [];

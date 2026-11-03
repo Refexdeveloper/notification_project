@@ -423,6 +423,29 @@ report_entity_code_predicate() {
   esac
 }
 
+# Project Management scope. ril_rmc = entity code RIL_RMC or an RMC project
+# (project code PRJ-RIL_RMC-… or a name such as "Kalyan RMC Plant"; sub-tasks via Task_ID).
+# Other modes are the plain entity-code rule, so the common PM report is unchanged.
+# Keep aligned with recordInPmRmcScope in services/engagement-pipeline/scripts/entity-code.js.
+report_pm_rmc_scope_predicate() {
+  local alias="${1:-i}"
+  local mode
+  mode="$(printf '%s' "${2:-off}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${mode}" != "ril_rmc" ]]; then
+    report_entity_code_predicate "${alias}" "${mode}"
+    return 0
+  fi
+  local p="${alias}.source_payload"
+  local project_text="concat_ws(' ',"
+  project_text+=" ${p}->>'Project_ID_Hidden', ${p}->>'Project_ID_Details', ${p}->>'Project_Name', ${p}->>'Project',"
+  project_text+=" ${p}->'Project_ID'->>'Project_ID', ${p}->'Project_ID'->>'Project_Name', ${p}->'Project_ID'->>'Name',"
+  project_text+=" ${p}->'Task_ID'->>'Project', ${p}->'Task_ID'->>'Subtaxk_id')"
+  printf '(%s OR %s ~* %s)' \
+    "$(report_entity_code_predicate "${alias}" ril_rmc)" \
+    "${project_text}" \
+    "'(^|[^a-z0-9])rmc([^a-z0-9]|$)'"
+}
+
 report_template_seed_for_app() {
   case "${1:-}" in
     IT_Service_Management_A00)

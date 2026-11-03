@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, neKpiBalancedGridClass, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NeP2pBackdrop, neKpiBalancedGridClass, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
 import NeFinanceProcessCard from '@/components/feature/NeFinanceProcessCard';
 import ItsmSourceBreakdown from '@/components/feature/ItsmSourceBreakdown';
 import { neAppHeroTitle, resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
@@ -534,6 +534,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [entity, setEntity] = useState('all');
   const [company, setCompany] = useState('all');
   const [userFilter, setUserFilter] = useState('all');
+  const [tableSearch, setTableSearch] = useState('');
   const [period, setPeriod] = useState<DatePresetId>('fy');
   const [calendarYear, setCalendarYear] = useState(() => currentIstYear());
   const [calendarMonth, setCalendarMonth] = useState(() => currentIstMonth());
@@ -544,6 +545,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [solarPackFocus, setSolarPackFocus] = useState<{ key: SolarPackKind; metric: SolarPackMetric } | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
   const [misScopedRecords, setMisScopedRecords] = useState<AppRecordRow[] | null>(null);
+  const [columnFiltersActive, setColumnFiltersActive] = useState(false);
   const [sourceScopedRecords, setSourceScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [userPage, setUserPage] = useState(0);
   const [usersOpen, setUsersOpen] = useState(false);
@@ -738,6 +740,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     inventoryGenRef.current += 1;
     setMisScopedRecords(null);
     setSourceScopedRecords(null);
+    setColumnFiltersActive(false);
     const environment = (app.environment as 'production' | 'development') || 'production';
     const seed = seedAppInventory(appId, environment);
     if (seed?.items.length) {
@@ -766,6 +769,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setKpiFocus(null);
     setMisScopedRecords(null);
     setSourceScopedRecords(null);
+    setColumnFiltersActive(false);
   }, [entity, company, userFilter, period, resolvedDates.from, resolvedDates.to]);
 
   const handleEntityChange = useCallback(
@@ -932,8 +936,22 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     useClientInventory,
   ]);
 
+  const packSliceActive = Boolean(
+    (travelMode && travelPackFocus) || (isSolarLayout && solarPackFocus),
+  );
+  const ticketKpiRows = (
+    misScopedRecords
+    && (itsmCompanyMode || (!packSliceActive && columnFiltersActive))
+  ) ? misScopedRecords : kpiRecords;
+  const ticketSourceRows = itsmCompanyMode && sourceScopedRecords ? sourceScopedRecords : ticketKpiRows;
+  const handleColumnScopedRows = useCallback((payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[]; active: boolean }) => {
+    setColumnFiltersActive(payload.active);
+    setMisScopedRecords(payload.kpiRows);
+    setSourceScopedRecords(payload.sourceRows);
+  }, []);
+
   const amountTotals = useMemo(() => {
-    const all = kpiRecords;
+    const all = ticketKpiRows;
     const booking = all.filter((r) => /travel_management|travel request|travel booking/i.test(String(r.process_id || r.subject || '')));
     const advance = all.filter((r) => /advance/i.test(String(r.process_id || r.subject || '')));
     const claimed = all.filter((r) => /expense_management|amount claimed|travel expense/i.test(String(r.process_id || r.subject || '')));
@@ -946,18 +964,12 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       advance: sumRecordAmount(advance),
       claimed: sumRecordAmount(claimed),
     };
-  }, [kpiRecords]);
-
-  const ticketKpiRows = itsmCompanyMode && misScopedRecords ? misScopedRecords : kpiRecords;
-  const ticketSourceRows = itsmCompanyMode && sourceScopedRecords ? sourceScopedRecords : ticketKpiRows;
-  const handleColumnScopedRows = useCallback((payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[] }) => {
-    setMisScopedRecords(payload.kpiRows);
-    setSourceScopedRecords(payload.sourceRows);
-  }, []);
+  }, [ticketKpiRows]);
 
   useEffect(() => {
     setMisScopedRecords(null);
     setSourceScopedRecords(null);
+    setColumnFiltersActive(false);
     setTravelPackFocus(null);
     setSolarPackFocus(null);
   }, [entity, company, userFilter, period, dateFrom, dateTo]);
@@ -1143,12 +1155,12 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   const p2pDocRows = useMemo((): P2pDocRow[] => {
     if (!isP2pLayout) return [];
-    if (useClientKpis && kpiRecords.length) {
+    if (useClientKpis && ticketKpiRows.length) {
       const buckets: Record<'PO' | 'PR', P2pDocRow> = {
         PO: { key: 'purchase_orders', title: 'Purchase Order', short: 'PO', total: 0, open: 0, closed: 0, rejected: 0 },
         PR: { key: 'purchase_requests', title: 'Purchase Requisition', short: 'PR', total: 0, open: 0, closed: 0, rejected: 0 },
       };
-      for (const r of kpiRecords) {
+      for (const r of ticketKpiRows) {
         const short = p2pDocShort({ key: String(r.process_id || ''), title: String(r.subject || '') });
         const b = buckets[short];
         b.total += 1;
@@ -1178,7 +1190,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       ];
     }
     return rows.filter((row) => row.short === 'PO');
-  }, [data?.by_process, isP2pLayout, kpiRecords, useClientKpis]);
+  }, [data?.by_process, isP2pLayout, ticketKpiRows, useClientKpis]);
 
   const handleKpiClick = useCallback((focus: RecordKpiFocus) => {
     setTravelPackFocus(null);
@@ -1276,14 +1288,14 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     if (!isPmLayout) return data?.portfolio;
     const api = data?.portfolio;
     if (!useClientKpis) return api;
-    const counted = countPmPortfolio(kpiRecords);
+    const counted = countPmPortfolio(ticketKpiRows);
     const countedSpan = counted.tasks_total + counted.subtasks_total;
     if (countedSpan > 0) return counted;
     return api;
-  }, [data?.portfolio, isPmLayout, kpiRecords, useClientKpis]);
+  }, [data?.portfolio, isPmLayout, ticketKpiRows, useClientKpis]);
 
   const solarPackCounts = useMemo(() => {
-    if (useClientInventory) return solarPackCountsFromRecords(kpiRecords);
+    if (useClientInventory) return solarPackCountsFromRecords(ticketKpiRows);
     const cats = data?.by_category || [];
     const pick = (name: 'Operation' | 'Finance') => {
       const hit = cats.find((row) => String(row.name || '').toLowerCase() === name.toLowerCase());
@@ -1294,7 +1306,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       };
     };
     return { operation: pick('Operation'), finance: pick('Finance') };
-  }, [data?.by_category, kpiRecords, useClientInventory]);
+  }, [data?.by_category, ticketKpiRows, useClientInventory]);
 
   if (!isBackendApiMode()) {
     return (
@@ -1390,8 +1402,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const showDashboardLoader = !hasUsefulPaint && (loading || inventoryLoading);
 
   return (
-    <div className={`relative rounded-3xl ${NE_DASH_CLASS}${travelMode || isEmsLayout || isSolarLayout ? ' ne-dash-finance' : ''}`}>
-      <div className={NE_DASH_STACK_CLASS}>
+    <div className={`relative rounded-3xl ne-scene-${appKind} ${NE_DASH_CLASS}${travelMode || isEmsLayout || isSolarLayout ? ' ne-dash-finance' : ''}`}>
+      <NeP2pBackdrop kind={appKind} />
+      <div className={`relative z-[1] ${NE_DASH_STACK_CLASS}`}>
         <EmbedDashboardHero
           headline={neAppHeroTitle(appKind, app.displayName || app.name)}
           description={heroDescription}
@@ -1587,7 +1600,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                 </div>
                 {TRAVEL_PROCESS_SECTIONS.map((section) => {
-                  const rows = kpiRecords.filter((r) => section.match.test(String(r.process_id || r.subject || '')));
+                  const rows = ticketKpiRows.filter((r) => section.match.test(String(r.process_id || r.subject || '')));
                   const snap = useClientInventory ? null : travelProcessSnapshot(section, data?.by_process);
                   const total = useClientInventory ? rows.length : snap?.total || 0;
                   const open = useClientInventory ? countByStatus(rows, 'open') : snap?.open || 0;
@@ -2081,7 +2094,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               activityDates={activityDates}
               filterAnimating={false}
               inventoryLoading={inventoryLoading}
-              onColumnScopedRowsChange={itsmCompanyMode ? handleColumnScopedRows : undefined}
+              textQuery={tableSearch}
+              onTextQueryChange={setTableSearch}
+              onColumnScopedRowsChange={handleColumnScopedRows}
             />
 
             <DashboardCard

@@ -36,7 +36,7 @@ import {
   withEmbedParams,
 } from '@/lib/embedMode';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, neKpiBalancedGridClass } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_EXEC_KPI_THEMES, NeP2pBackdrop, neKpiBalancedGridClass } from '@/components/feature/EmbedKpiCard';
 import { neAppHeroTitle, resolveNeAppKind } from '@/lib/neKpiIcons';
 import { NE_DASH_CLASS, NE_DASH_STACK_CLASS, NE_INK_SOFT, NE_TYPE } from '@/lib/neDashType';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
@@ -615,13 +615,14 @@ export default function DashboardPage() {
 
   return (
     <Layout breadcrumbs={[{ label: 'Dashboard' }]} embed={embed} embedAppTitle={embedAppTitle}>
-      <div className={`relative min-h-[240px] rounded-3xl border border-slate-100 bg-transparent shadow-none ${NE_DASH_CLASS}`}>
+      <div className={`relative min-h-[240px] rounded-3xl border border-slate-100 bg-transparent shadow-none ne-scene-consolidated ${NE_DASH_CLASS}`}>
+        <NeP2pBackdrop kind="consolidated" />
         <DashboardLoadingOverlay
           show={loading && applications.length === 0}
           mode="fixed"
           label="Loading dashboard…"
         />
-        <div className={`relative px-0 py-0 md:px-0 ${NE_DASH_STACK_CLASS}`}>
+        <div className={`relative z-[1] px-0 py-0 md:px-0 ${NE_DASH_STACK_CLASS}`}>
 
           <div className={NE_DASH_STACK_CLASS}>
               <EmbedDashboardHero

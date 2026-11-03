@@ -3,6 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const { parseSendRequest, sendHtmlMail } = require('./mail');
+const { buildMailLog } = require('./mailLog');
 
 const port = Number(process.env.PORT || 8080);
 const apiKey = String(process.env.COMMENT_MAIL_API_KEY || '').trim();
@@ -45,6 +46,7 @@ app.post('/v1/send', async (req, res) => {
   }
   try {
     const info = await sendHtmlMail(parsed);
+    console.log(JSON.stringify(buildMailLog(req, parsed, 'comment-mail sent')));
     return res.json({
       ok: true,
       to: parsed.to,
@@ -54,12 +56,9 @@ app.post('/v1/send', async (req, res) => {
     });
   } catch (err) {
     const code = err?.code === 'SMTP_NOT_CONFIGURED' ? 503 : 502;
-    console.error(JSON.stringify({
-      msg: 'comment-mail send failed',
-      error: err?.message || String(err),
-      to: parsed.to,
-      cc: parsed.cc,
-    }));
+    const failed = buildMailLog(req, parsed, 'comment-mail send failed', 'ERROR');
+    failed.error = err?.message || String(err);
+    console.error(JSON.stringify(failed));
     return res.status(code).json({ ok: false, error: 'Failed to send email' });
   }
 });
