@@ -105,6 +105,69 @@ describe('itsmSlaDisplay', () => {
     expect(itsmSlaDisplay({ id: '2', form_status: 'On Hold', sla_minutes: 60 }).primary).toBe('Hold');
   });
 
+  it('Closed Ticket Status forces Stage Closed even when Stages still InProgress', () => {
+    expect(itsmStageLabel({
+      id: 'closed-1',
+      status: 'closed',
+      form_status: 'InProgress',
+    })).toBe('Closed');
+    expect(itsmStageLabel({
+      id: 'rejected-1',
+      status: 'rejected',
+      form_status: 'Open',
+    })).toBe('Closed');
+  });
+
+  it('Refex Open→InProgress stage clocks SLA; literal Open without process Holds', () => {
+    // Backend maps blank Stages + Open status → InProgress (IT-SR-Refex-FY026-0532).
+    expect(itsmStageLabel({
+      id: 'refex-1',
+      request_id: 'IT-SR-Refex-FY026-0532',
+      form_status: 'InProgress',
+      status: 'open',
+    })).toBe('InProgress');
+    expect(itsmSlaDisplay({
+      id: 'refex-1',
+      request_id: 'IT-SR-Refex-FY026-0532',
+      entity: 'Refex',
+      status: 'open',
+      form_status: 'InProgress',
+      process_stages: '',
+      closure_minutes: 120,
+      created_at: '2026-10-06T06:00:00Z',
+      modified_at: '2026-10-06T06:00:00Z',
+    }, new Date('2026-10-06T07:00:00Z')).primary).toBe('On track');
+    expect(itsmSlaDisplay({
+      id: 'refex-open-stage',
+      entity: 'Refex',
+      status: 'open',
+      form_status: 'Open',
+      process_stages: '',
+      sla_minutes: 60,
+    }).primary).toBe('Hold');
+  });
+
+  it('Extrovis PickUp never Holds; non-InProgress owned work Holds', () => {
+    expect(itsmSlaDisplay({
+      id: 'ext-pickup',
+      entity: 'Extrovis',
+      request_id: 'IT-SR-Extrovis-FY026-0001',
+      status: 'open',
+      form_status: 'Open',
+      current_step: 'PickUp',
+      sla_minutes: 60,
+      created_at: '2026-10-06T06:00:00Z',
+    }, new Date('2026-10-06T06:30:00Z')).primary).toBe('On track');
+    expect(itsmSlaDisplay({
+      id: 'ext-hold',
+      entity: 'Extrovis',
+      status: 'open',
+      form_status: 'OnHold',
+      current_step: 'IT Agent Solution',
+      sla_minutes: 60,
+    }).primary).toBe('Hold');
+  });
+
   it('never paints No SLA and prefers Closure Time', () => {
     expect(itsmSlaDisplay({ id: '3', status: 'open' }).primary).toBe('On track');
     expect(itsmSlaDisplay({
@@ -113,12 +176,20 @@ describe('itsmSlaDisplay', () => {
       form_status: 'Pending Approval',
       created_at: '2026-10-06T06:00:00Z',
     }, new Date('2026-10-06T06:30:00Z')).primary).toBe('On track');
+    expect(itsmSlaDisplay({
+      id: '4b',
+      status: 'open',
+      form_status: 'Pending with Vendor',
+      sla_minutes: 60,
+    }).primary).toBe('Hold');
     const preferClosure = itsmSlaDisplay({
       id: '5',
       status: 'open',
+      form_status: 'InProgress',
       sla_minutes: 30,
       closure_minutes: 180,
       created_at: '2026-10-06T06:00:00Z',
+      modified_at: '2026-10-06T06:00:00Z',
     }, new Date('2026-10-06T07:00:00Z'));
     expect(preferClosure.primary).toBe('On track');
     expect(preferClosure.sub).toMatch(/left/);

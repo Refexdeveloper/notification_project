@@ -174,10 +174,13 @@ export default function ScheduleReportIdentityFields({
           >
             <option value="all">All tickets on this process</option>
             <option value="Extrovis">Entity = Extrovis</option>
+            <option value="Kavispharma">Entity = Kavis Pharma</option>
+            <option value="Modepro">Entity = Modepro</option>
             <option value="Refex">Entity = Refex</option>
           </select>
           <p className="text-[11px] text-foreground-400 mt-1">
-            Refex ITSM (<code>Live_IT_Service_Request_A00</code>) always counts every ticket on the process, even if Entity is blank.
+            Extrovis process shares Kavis / Modepro tickets — pick one entity per schedule.
+            Refex ITSM (<code>Live_IT_Service_Request_A00</code>) counts every ticket on that process when Entity is blank.
           </p>
         </div>
       )}

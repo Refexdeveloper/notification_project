@@ -28,6 +28,8 @@ async function getAccessToken() {
 const SCHEDULE_CLOUD_JOB_NAMES = {
   '55555555-5555-4555-8555-555555555555': 'sch-refex-itsm-daily',
   '18e6c3a0-df09-473e-9c52-8993b7b1ea9b': 'ne-schedule-18e6c3a0-df09-473e-9c52-8993b7b1ea9b',
+  'd2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2': 'ne-schedule-d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2',
+  'c922425f-3ac2-4236-92ec-001b36b07a11': 'ne-schedule-c922425f-3ac2-4236-92ec-001b36b07a11',
   '99999999-9999-4999-8999-999999999999': 'sch-refex-pm-daily',
   '409a2a2b-499c-4222-9750-4bfe13a741cc': 'ne-schedule-409a2a2b-499c-4222-9750-4bfe13a741cc',
   'e7a22909-59b9-422a-84fc-95ad5a49b8d6': 'ne-schedule-e7a22909-59b9-422a-84fc-95ad5a49b8d6',
@@ -68,6 +70,10 @@ function resolveLegacySchedulerId(applicationId, entityFilter) {
   }
   if (app === 'IT_Service_Management_A00') {
     if (entity === 'extrovis') return 'ne-schedule-18e6c3a0-df09-473e-9c52-8993b7b1ea9b';
+    if (entity === 'kavispharma' || entity === 'kavis') {
+      return 'ne-schedule-d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2';
+    }
+    if (entity === 'modepro') return 'ne-schedule-c922425f-3ac2-4236-92ec-001b36b07a11';
     if (!entity) return 'sch-refex-itsm-daily';
     return null;
   }

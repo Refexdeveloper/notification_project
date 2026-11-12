@@ -339,15 +339,25 @@ function overlayFromCache(row, signIn, today) {
     (!row.snapshot_at || new Date(cache.fetched_at) > new Date(row.snapshot_at));
 
   const useCache = Boolean(derived) && (cacheFresh || cacheNewer || Boolean(cache?.fetched_at));
-  const totalUsers = useCache && derived.total_users != null
-    ? Number(derived.total_users)
-    : Number(signIn.total_users ?? row.total_users ?? 0);
-  const signInToday = useCache && derived.active_today != null
-    ? Number(derived.active_today)
-    : Number(signIn.sign_in_today || 0);
-  const everLoggedIn = useCache && derived.total_users != null
-    ? Math.max(0, totalUsers - Number(derived.never_logged_in || 0))
-    : Number(signIn.ever_logged_in || 0);
+  // Same app roster as each app dashboard (Users / Signed in today / Adoption). Cache
+  // totals count a wider user list, so they are only a fallback when the roster is empty.
+  const rosterUsers = Number(signIn.total_users || 0);
+  const useRoster = rosterUsers > 0;
+  const totalUsers = useRoster
+    ? rosterUsers
+    : useCache && derived.total_users != null
+      ? Number(derived.total_users)
+      : Number(row.total_users ?? 0);
+  const signInToday = useRoster
+    ? Math.min(Number(signIn.sign_in_today || 0), totalUsers)
+    : useCache && derived.active_today != null
+      ? Math.min(Number(derived.active_today), totalUsers)
+      : 0;
+  const everLoggedIn = useRoster
+    ? Math.min(Number(signIn.ever_logged_in || 0), totalUsers)
+    : useCache && derived.total_users != null
+      ? Math.max(0, totalUsers - Number(derived.never_logged_in || 0))
+      : 0;
 
   const openTickets = useCache
     ? Number(derived.open || 0)

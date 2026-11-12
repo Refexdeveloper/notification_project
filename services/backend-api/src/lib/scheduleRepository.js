@@ -15,6 +15,7 @@ async function createSchedule(client, {
   fromEmail,
   recipientsTo,
   recipientsCc,
+  recipientsBcc,
   subject,
   websiteFilter,
   userGroupFilter,
@@ -86,6 +87,13 @@ async function createSchedule(client, {
     await client.query(
       `INSERT INTO engagement_reporting.report_recipient (report_schedule_id, recipient_email, recipient_type)
        VALUES ($1::uuid, $2, 'CC')`,
+      [scheduleId, email],
+    );
+  }
+  for (const email of recipientsBcc || []) {
+    await client.query(
+      `INSERT INTO engagement_reporting.report_recipient (report_schedule_id, recipient_email, recipient_type)
+       VALUES ($1::uuid, $2, 'BCC')`,
       [scheduleId, email],
     );
   }

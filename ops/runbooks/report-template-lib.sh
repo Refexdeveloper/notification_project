@@ -241,6 +241,38 @@ report_live_today_kpis() {
   return 0
 }
 
+# ITSM SLA Breached Open · Closed from the live Kissflow process report — same rule as the
+# aasik_ITSM IT Admin dashboard. Sets REPORT_LIVE_SLA_OPEN / _CLOSED and
+# REPORT_LIVE_SLA_BY_USER_JSON ({kissflow_user_id: open_breached_count}).
+# Args: process_id, entity_filter (optional).
+report_live_itsm_sla() {
+  local process_id="${1:-}"
+  local entity_filter="${2:-}"
+  REPORT_LIVE_SLA_OPEN=""
+  REPORT_LIVE_SLA_CLOSED=""
+  REPORT_LIVE_SLA_BY_USER_JSON=""
+  [[ -n "${process_id}" ]] || return 1
+  local script="${REPO_ROOT:-}/services/engagement-pipeline/scripts/count-itsm-sla-kpis.js"
+  if [[ ! -f "${script}" ]]; then
+    script="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/services/engagement-pipeline/scripts/count-itsm-sla-kpis.js"
+  fi
+  [[ -f "${script}" ]] || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  local json
+  if ! json="$(
+    PROCESS_ID="${process_id}" \
+    ENTITY_FILTER="${entity_filter}" \
+    node "${script}" 2>/dev/null
+  )"; then
+    return 1
+  fi
+  REPORT_LIVE_SLA_OPEN="$(jq -r '.sla_breached_open // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_SLA_CLOSED="$(jq -r '.sla_breached_closed // empty' <<< "${json}" 2>/dev/null || true)"
+  REPORT_LIVE_SLA_BY_USER_JSON="$(jq -c '.by_user // {}' <<< "${json}" 2>/dev/null || true)"
+  [[ "${REPORT_LIVE_SLA_OPEN}" =~ ^[0-9]+$ && "${REPORT_LIVE_SLA_CLOSED}" =~ ^[0-9]+$ ]] || return 1
+  return 0
+}
+
 # Prefer live overlay when present; keep SQL value as fallback.
 report_prefer_live_today() {
   local sql_val="${1:-0}"
@@ -449,9 +481,14 @@ report_pm_rmc_scope_predicate() {
 report_template_seed_for_app() {
   case "${1:-}" in
     IT_Service_Management_A00)
-      # Extrovis process uses the Extrovis seed (no User Sign-in Overview).
+      # Extrovis-family process: pick entity-specific seed when ENTITY_FILTER is set.
       if [[ "${ITSM_PROCESS_ID:-${PROCESS_ID:-}}" == *[Ee]xtrovis* ]]; then
-        printf '%s' 'db/seeds/itsm-extrovis-engagement-template.html'
+        _itsm_entity="$(printf '%s' "${ENTITY_FILTER:-${ENTITY_NAME:-}}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+        case "${_itsm_entity}" in
+          *kavis*) printf '%s' 'db/seeds/itsm-kavispharma-engagement-template.html' ;;
+          *modepro*) printf '%s' 'db/seeds/itsm-modepro-engagement-template.html' ;;
+          *) printf '%s' 'db/seeds/itsm-extrovis-engagement-template.html' ;;
+        esac
       else
         printf '%s' 'db/seeds/itsm-engagement-template.html'
       fi

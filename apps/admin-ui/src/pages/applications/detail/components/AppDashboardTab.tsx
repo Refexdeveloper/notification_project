@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
-import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NeP2pBackdrop, neKpiBalancedGridClass, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
+import EmbedKpiCard, { EMBED_ADOPTION_THEME, EMBED_KPI_THEMES, NE_KPI_FIVE_ROW_CLASS, NeP2pBackdrop, neKpiBalancedGridClass, neKpiSectionGridClass } from '@/components/feature/EmbedKpiCard';
 import NeFinanceProcessCard from '@/components/feature/NeFinanceProcessCard';
 import ItsmSourceBreakdown from '@/components/feature/ItsmSourceBreakdown';
 import { neAppHeroTitle, resolveNeAppKind, type NeAppKind } from '@/lib/neKpiIcons';
@@ -64,6 +64,19 @@ import { DASHBOARD_VERSION } from '@/lib/dashboardVersion';
 import { itsmSourceFromFilteredRecords } from '@/lib/itsmSourceBreakdown';
 import { displayDashCount, displayWhen } from '@/lib/dashboardEmpty';
 import { compactMisName, looksLikeKissflowUserId, normalizeItsmPersonLabel, personDedupeKey } from '@/lib/personName';
+import AdoptionReportTable from '@/components/feature/AdoptionReportTable';
+import {
+  adoptionKpisFromUsers,
+  filterAdoptionUsersByUser,
+  scopeAdoptionUsers,
+  type AdoptionFocus,
+} from '@/lib/adoptionReport';
+import {
+  buildTravelRequesterDepartments,
+  filterTravelRowsByDepartment,
+  isTravelSlaBreached,
+  travelDepartmentOptions,
+} from '@/lib/travelDepartmentSla';
 import {
   buildEntityBucketOptions,
   buildRefexCompanyOptions,
@@ -429,7 +442,7 @@ function sumRecordAmount(rows: Array<{ amount?: number | null; status?: string }
   }, 0);
 }
 
-type TravelPackMetric = 'total' | 'open' | 'closed' | 'amount';
+type TravelPackMetric = 'total' | 'open' | 'closed' | 'amount' | 'sla';
 type SolarPackKind = 'operation' | 'finance';
 type SolarPackMetric = 'open' | 'closed' | 'rejected';
 
@@ -533,6 +546,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const embedReturnTo = readEmbedReturnUrl(searchParams);
   const [entity, setEntity] = useState('all');
   const [company, setCompany] = useState('all');
+  const [department, setDepartment] = useState('all');
   const [userFilter, setUserFilter] = useState('all');
   const [tableSearch, setTableSearch] = useState('');
   const [period, setPeriod] = useState<DatePresetId>('fy');
@@ -549,7 +563,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [sourceScopedRecords, setSourceScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [userPage, setUserPage] = useState(0);
   const [usersOpen, setUsersOpen] = useState(false);
+  const [adoptionOpen, setAdoptionOpen] = useState(false);
+  const [adoptionFocus, setAdoptionFocus] = useState<AdoptionFocus>('all');
   const misSectionRef = useRef<HTMLDivElement>(null);
+  const adoptionSectionRef = useRef<HTMLDivElement>(null);
   const refreshGenRef = useRef(0);
   const [loading, setLoading] = useState(() => {
     const environment = (app.environment as 'production' | 'development') || 'production';
@@ -602,12 +619,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
         setError('');
       }
 
+      let painted: ReturnType<typeof readAppDashboardCacheSoft> = null;
       try {
         const baseKey = appDashboardQueryKey({
           environment,
           period: 'all',
         });
-        const painted = readAppDashboardCache(appId, baseKey, { allowStale: true })
+        painted = readAppDashboardCache(appId, baseKey, { allowStale: true })
           ?? readAppDashboardCacheSoft(appId);
         if (painted) {
           setData(painted);
@@ -785,6 +803,14 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
 
   const handleCompanyChange = useCallback((next: string) => {
     setCompany(next);
+    setDepartment('all');
+    setUserFilter('all');
+    setRecordsStatus('all');
+    setKpiFocus(null);
+  }, []);
+
+  const handleDepartmentChange = useCallback((next: string) => {
+    setDepartment(next);
     setUserFilter('all');
     setRecordsStatus('all');
     setKpiFocus(null);
@@ -793,6 +819,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const clearFilters = useCallback(() => {
     setEntity('all');
     setCompany('all');
+    setDepartment('all');
     setUserFilter('all');
     setPeriod('fy');
     setDateFrom('');
@@ -849,19 +876,43 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     [itsmCompanyMode, recordInventory, userRoster],
   );
 
+  const travelRequesterDepartments = useMemo(
+    () => ((travelMode || isEmsLayout)
+      ? buildTravelRequesterDepartments(stampedInventory)
+      : new Map<string, string>()),
+    [isEmsLayout, stampedInventory, travelMode],
+  );
+
   const tableInventory = useMemo(() => {
     let base = stampedInventory.length ? stampedInventory : recordInventory;
+    if ((travelMode || isEmsLayout) && department !== 'all') {
+      base = filterTravelRowsByDepartment(base, department, travelRequesterDepartments);
+    }
     if (travelMode && travelPackFocus) {
       const section = TRAVEL_PROCESS_SECTIONS.find((row) => row.kind === travelPackFocus.key);
       if (section) {
         base = base.filter((row) => section.match.test(String(row.process_id || row.subject || '')));
+      }
+      if (travelPackFocus.metric === 'sla') {
+        const nowMs = Date.now();
+        base = base.filter((row) => isTravelSlaBreached(row, nowMs));
       }
     }
     if (isSolarLayout && solarPackFocus) {
       base = base.filter((row) => solarRowMatchesPack(row, solarPackFocus.key, solarPackFocus.metric));
     }
     return base;
-  }, [isSolarLayout, recordInventory, solarPackFocus, stampedInventory, travelMode, travelPackFocus]);
+  }, [
+    department,
+    isEmsLayout,
+    isSolarLayout,
+    recordInventory,
+    solarPackFocus,
+    stampedInventory,
+    travelMode,
+    travelPackFocus,
+    travelRequesterDepartments,
+  ]);
 
   const assignedFilterName = useMemo(() => {
     if (userFilter === 'all') return undefined;
@@ -911,7 +962,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     });
   }, [entity, itsmCompanyMode, periodScopedInventory, travelMode]);
 
-  const scopeRecords = useMemo(() => {
+  const companyScopedRecords = useMemo(() => {
     if (!useClientInventory) return [] as AppRecordRow[];
     return filterAppRecords(filterInventory, {
       company,
@@ -920,6 +971,18 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       leadWebsiteMode: leadMode,
     });
   }, [company, filterInventory, itsmCompanyMode, leadMode, travelMode, useClientInventory]);
+
+  const travelDepartmentFilterOptions = useMemo(
+    () => ((travelMode || isEmsLayout)
+      ? travelDepartmentOptions(companyScopedRecords, travelRequesterDepartments)
+      : []),
+    [companyScopedRecords, isEmsLayout, travelMode, travelRequesterDepartments],
+  );
+
+  const scopeRecords = useMemo(() => {
+    if ((!travelMode && !isEmsLayout) || department === 'all') return companyScopedRecords;
+    return filterTravelRowsByDepartment(companyScopedRecords, department, travelRequesterDepartments);
+  }, [companyScopedRecords, department, isEmsLayout, travelMode, travelRequesterDepartments]);
 
   const kpiRecords = useMemo(() => {
     if (!useClientInventory) return [] as AppRecordRow[];
@@ -1013,10 +1076,42 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     userRoster,
   ]);
 
-  const workUsers = useMemo(
-    () => overlayRosterSignIn(identityRoster, userRoster),
-    [identityRoster, userRoster],
-  );
+  /**
+   * Users card + Adoption report = Kissflow app roster, scoped by Company (and ticket
+   * assignees in that company) and by User filter. ITSM ticket-only assignees outside
+   * the roster stay out. Apps without a roster (P2P) use the sign-in user list.
+   */
+  const adoptionUsers = useMemo(() => {
+    let base = appRoster.length ? overlayRosterSignIn(appRoster, userRoster) : (data?.users || []);
+    if (company !== 'all') {
+      const ticketUsers = useClientInventory
+        ? buildMisUsersFromRecords(scopeRecords, userRoster, { ownerMode: misOwnerMode })
+        : [];
+      const ticketKeys = ticketUsers.flatMap((u) => [
+        String(u.user_id || '').trim().toLowerCase(),
+        personDedupeKey(u.user_name),
+        String(u.email || '').trim().toLowerCase(),
+      ].filter(Boolean));
+      base = scopeAdoptionUsers(base, {
+        company,
+        itsmCompanyMode,
+        leadWebsiteMode: leadMode,
+        ticketKeys,
+      });
+    }
+    return filterAdoptionUsersByUser(base, userFilter);
+  }, [
+    appRoster,
+    company,
+    data?.users,
+    itsmCompanyMode,
+    leadMode,
+    misOwnerMode,
+    scopeRecords,
+    useClientInventory,
+    userFilter,
+    userRoster,
+  ]);
 
   const userFilterPeople = useMemo(() => {
     // Same eligibility as the MIS Users table. Use scopeRecords (Entity /
@@ -1146,12 +1241,30 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const showCompanyFilter = true;
 
   const scopedIdle = dropdownFiltersActive && useClientKpis && kpiTotal === 0;
+  // Recompute Adoption / Users / Signed-in KPIs whenever Company or User narrows the roster.
+  const adoptionFiltersActive = company !== 'all' || userFilter !== 'all';
+  const scopedAdoptionKpis = useMemo(
+    () => (adoptionFiltersActive || scopedIdle ? adoptionKpisFromUsers(adoptionUsers) : null),
+    [adoptionUsers, adoptionFiltersActive, scopedIdle],
+  );
   const adoptionOverall = scopedIdle
     ? 0
-    : Number(data?.metrics.sign_in_rate_overall ?? data?.metrics.user_adoption_pct ?? 0);
-  const adoptionToday = scopedIdle ? 0 : Number(data?.metrics.sign_in_rate_today || 0);
-  const signedInToday = scopedIdle ? 0 : Number(data?.metrics.signed_in_today || 0);
-  const usersCardCount = workUsers.length || Number(data?.metrics.total_users || 0);
+    : (scopedAdoptionKpis
+      ? scopedAdoptionKpis.adoptionOverall
+      : Number(data?.metrics.sign_in_rate_overall ?? data?.metrics.user_adoption_pct ?? 0));
+  const adoptionToday = scopedIdle
+    ? 0
+    : (scopedAdoptionKpis
+      ? scopedAdoptionKpis.adoptionToday
+      : Number(data?.metrics.sign_in_rate_today || 0));
+  const signedInToday = scopedIdle
+    ? 0
+    : (scopedAdoptionKpis
+      ? scopedAdoptionKpis.signedInToday
+      : Number(data?.metrics.signed_in_today || 0));
+  const usersCardCount = scopedAdoptionKpis
+    ? scopedAdoptionKpis.usersCard
+    : (adoptionUsers.length || Number(data?.metrics.total_users || 0));
 
   const p2pDocRows = useMemo((): P2pDocRow[] => {
     if (!isP2pLayout) return [];
@@ -1222,6 +1335,15 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     });
     window.requestAnimationFrame(() => {
       misSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
+  /** Adoption / Users / Signed in today cards → open the Adoption report on that slice. */
+  const handleAdoptionCardClick = useCallback((focus: AdoptionFocus) => {
+    setAdoptionFocus(focus);
+    setAdoptionOpen(true);
+    window.requestAnimationFrame(() => {
+      adoptionSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, []);
 
@@ -1338,6 +1460,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       company={company}
       onCompanyChange={showCompanyDropdown ? handleCompanyChange : undefined}
       companyOptions={showCompanyDropdown ? companyOptions : undefined}
+      department={department}
+      onDepartmentChange={(travelMode || isEmsLayout) && travelDepartmentFilterOptions.length ? handleDepartmentChange : undefined}
+      departmentOptions={
+        (travelMode || isEmsLayout) && travelDepartmentFilterOptions.length
+          ? travelDepartmentFilterOptions.map((opt) => ({ id: opt.value, label: opt.label, count: opt.count }))
+          : undefined
+      }
       companyLabel={leadMode ? 'Website' : 'Company'}
       user={userFilter}
       onUserChange={setUserFilter}
@@ -1566,6 +1695,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Adoption · overall"
+                    onClick={() => handleAdoptionCardClick('ever')}
+                    active={adoptionOpen && adoptionFocus === 'ever'}
                     value={adoptionOverall}
                     suffix="%"
                     sub="Ever signed in ÷ app users"
@@ -1575,6 +1706,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Users"
+                    onClick={() => handleAdoptionCardClick('all')}
+                    active={adoptionOpen && adoptionFocus === 'all'}
                     value={usersCardCount}
                     icon={Users}
                     themes={EMBED_KPI_THEMES}
@@ -1583,6 +1716,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Signed in today"
+                    onClick={() => handleAdoptionCardClick('today')}
+                    active={adoptionOpen && adoptionFocus === 'today'}
                     value={signedInToday}
                     icon={UserCheck}
                     themes={EMBED_KPI_THEMES}
@@ -1591,6 +1726,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Adoption today"
+                    onClick={() => handleAdoptionCardClick('today')}
+                    active={adoptionOpen && adoptionFocus === 'today'}
                     value={adoptionToday}
                     suffix="%"
                     icon={Sparkles}
@@ -1609,6 +1746,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     travelPackFocus?.key === section.kind && travelPackFocus?.metric === metric
                   );
                   if (section.kind === 'booking') {
+                    const slaNowMs = Date.now();
+                    const bookingSlaBreached = rows.filter((row) => isTravelSlaBreached(row, slaNowMs)).length;
                     return (
                       <NeFinanceProcessCard
                         key={section.kind}
@@ -1617,11 +1756,21 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                         icon={section.icon}
                         appKind={appKind}
                         styleIndex={section.styleIndex}
+                        gridClass={useClientInventory ? NE_KPI_FIVE_ROW_CLASS : undefined}
                         metrics={[
                           { label: 'Total', value: total, hint: requestsSub(total), active: packActive('total'), onClick: () => handleTravelPackClick('booking', 'total') },
                           { label: 'Open', value: open, active: packActive('open'), onClick: () => handleTravelPackClick('booking', 'open') },
                           { label: 'Closed', value: closed, active: packActive('closed'), onClick: () => handleTravelPackClick('booking', 'closed') },
                           { label: 'Booked', value: useClientInventory ? amountTotals.booking : (snap?.amount || 0), format: 'inr', hint: requestsSub(total), active: packActive('amount'), onClick: () => handleTravelPackClick('booking', 'amount') },
+                          ...(useClientInventory
+                            ? [{
+                              label: 'SLA Breached',
+                              value: bookingSlaBreached,
+                              hint: 'Past the Kissflow SLA deadline',
+                              active: packActive('sla'),
+                              onClick: () => handleTravelPackClick('booking', 'sla'),
+                            }]
+                            : []),
                         ]}
                       />
                     );
@@ -1778,6 +1927,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Adoption · overall"
+                    onClick={() => handleAdoptionCardClick('ever')}
+                    active={adoptionOpen && adoptionFocus === 'ever'}
                     value={adoptionOverall}
                     suffix="%"
                     sub="Ever signed in ÷ app users"
@@ -1787,6 +1938,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Users"
+                    onClick={() => handleAdoptionCardClick('all')}
+                    active={adoptionOpen && adoptionFocus === 'all'}
                     value={usersCardCount}
                     icon={Users}
                     themes={EMBED_KPI_THEMES}
@@ -1795,6 +1948,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Signed in today"
+                    onClick={() => handleAdoptionCardClick('today')}
+                    active={adoptionOpen && adoptionFocus === 'today'}
                     value={signedInToday}
                     icon={UserCheck}
                     themes={EMBED_KPI_THEMES}
@@ -1803,6 +1958,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   />
                   <EmbedKpiCard
                     label="Adoption today"
+                    onClick={() => handleAdoptionCardClick('today')}
+                    active={adoptionOpen && adoptionFocus === 'today'}
                     value={adoptionToday}
                     suffix="%"
                     icon={Sparkles}
@@ -1895,6 +2052,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 {!isP2pLayout ? (
                   <EmbedKpiCard
                     label="Adoption · overall"
+                    onClick={() => handleAdoptionCardClick('ever')}
+                    active={adoptionOpen && adoptionFocus === 'ever'}
                     value={adoptionOverall}
                     suffix="%"
                     sub="Ever signed in ÷ app users"
@@ -1914,6 +2073,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 )}
                 <EmbedKpiCard
                   label="Users"
+                  onClick={() => handleAdoptionCardClick('all')}
+                  active={adoptionOpen && adoptionFocus === 'all'}
                   value={usersCardCount}
                   icon={Users}
                   themes={EMBED_KPI_THEMES}
@@ -1922,6 +2083,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 />
                 <EmbedKpiCard
                   label="Signed in today"
+                  onClick={() => handleAdoptionCardClick('today')}
+                  active={adoptionOpen && adoptionFocus === 'today'}
                   value={signedInToday}
                   icon={UserCheck}
                   themes={EMBED_KPI_THEMES}
@@ -1930,6 +2093,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 />
                 <EmbedKpiCard
                   label="Adoption today"
+                  onClick={() => handleAdoptionCardClick('today')}
+                  active={adoptionOpen && adoptionFocus === 'today'}
                   value={adoptionToday}
                   suffix="%"
                   icon={Sparkles}
@@ -2006,6 +2171,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               {!isP2pLayout ? (
                 <EmbedKpiCard
                   label="Adoption · overall"
+                  onClick={() => handleAdoptionCardClick('ever')}
+                  active={adoptionOpen && adoptionFocus === 'ever'}
                   value={adoptionOverall}
                   suffix="%"
                   sub="Ever signed in ÷ app users"
@@ -2025,6 +2192,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               )}
               <EmbedKpiCard
                 label="Users"
+                onClick={() => handleAdoptionCardClick('all')}
+                active={adoptionOpen && adoptionFocus === 'all'}
                 value={usersCardCount}
                 icon={Users}
                 themes={EMBED_KPI_THEMES}
@@ -2033,6 +2202,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               />
               <EmbedKpiCard
                 label="Signed in today"
+                onClick={() => handleAdoptionCardClick('today')}
+                active={adoptionOpen && adoptionFocus === 'today'}
                 value={signedInToday}
                 icon={UserCheck}
                 themes={EMBED_KPI_THEMES}
@@ -2041,6 +2212,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               />
               <EmbedKpiCard
                 label="Adoption today"
+                onClick={() => handleAdoptionCardClick('today')}
+                active={adoptionOpen && adoptionFocus === 'today'}
                 value={adoptionToday}
                 suffix="%"
                 icon={Sparkles}
@@ -2216,6 +2389,29 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 </div>
               ) : null}
             </DashboardCard>
+
+            <div ref={adoptionSectionRef} className="scroll-mt-4">
+              <DashboardCard
+                embed
+                collapsible
+                open={adoptionOpen}
+                onToggle={() => setAdoptionOpen((prev) => !prev)}
+                title="Adoption report"
+                right={
+                  <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+                    <UserCheck className="h-3.5 w-3.5" />
+                    {adoptionUsers.length}
+                  </span>
+                }
+              >
+                <AdoptionReportTable
+                  users={adoptionUsers}
+                  focus={adoptionFocus}
+                  onFocusChange={setAdoptionFocus}
+                  formatWhen={formatWhen}
+                />
+              </DashboardCard>
+            </div>
             </div>
           </div>
         )}

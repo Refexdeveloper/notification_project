@@ -85,6 +85,7 @@ export default function BackendScheduleEditor({
   const [fromEmail, setFromEmail] = useState(schedule.fromEmail || '');
   const [recipientsText, setRecipientsText] = useState(schedule.recipients.join(', '));
   const [ccText, setCcText] = useState(schedule.cc.join(', '));
+  const [bccText, setBccText] = useState((schedule.bcc || []).join(', '));
   const [cadence, setCadence] = useState<ScheduleCadenceState>(() => scheduleToCadenceState(schedule));
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -109,10 +110,11 @@ export default function BackendScheduleEditor({
     setFromEmail(schedule.fromEmail || '');
     setRecipientsText(schedule.recipients.join(', '));
     setCcText(schedule.cc.join(', '));
+    setBccText((schedule.bcc || []).join(', '));
     setCadence(scheduleToCadenceState(schedule));
     setError('');
     setSuccess('');
-  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.entityFilter, schedule.subject, schedule.templateName, schedule.name]);
+  }, [schedule.id, schedule.fromEmail, schedule.recipients, schedule.cc, schedule.bcc, schedule.cadence, schedule.timezone, schedule.templateId, schedule.processId, schedule.websiteFilter, schedule.userGroupFilter, schedule.entityFilter, schedule.subject, schedule.templateName, schedule.name]);
 
   const toRecipients = useMemo(() => parseEmailList(recipientsText), [recipientsText]);
   const normalizedFrom = normalizeFromEmail(fromEmail);
@@ -131,6 +133,7 @@ export default function BackendScheduleEditor({
       from_email: normalizedFrom,
       recipients_to: parseEmailList(recipientsText),
       recipients_cc: parseEmailList(ccText),
+      recipients_bcc: parseEmailList(bccText),
       cron_expression: cadenceStateToCron(cadence),
       timezone: cadence.timezone || DEFAULT_TIMEZONE,
       template_id: reportIdentity.templateId,
@@ -310,7 +313,7 @@ export default function BackendScheduleEditor({
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-        From, To, and Cc are stored in PostgreSQL. Click <strong>Save schedule</strong> after editing.
+        From, To, Cc and Bcc are stored in PostgreSQL. Click <strong>Save schedule</strong> after editing.
         Activate requires a Workspace-authorized From address plus at least one To recipient; Cloud Scheduler syncs automatically on save/activate.
       </div>
 
@@ -355,6 +358,20 @@ export default function BackendScheduleEditor({
           className="field-input !h-auto py-2.5 resize-none font-mono text-xs w-full"
           placeholder="ops@company.com"
         />
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold text-foreground-700 mb-1.5">Bcc (optional)</label>
+        <textarea
+          value={bccText}
+          onChange={(e) => setBccText(e.target.value)}
+          rows={2}
+          className="field-input !h-auto py-2.5 resize-none font-mono text-xs w-full"
+          placeholder="audit@company.com"
+        />
+        <p className="text-[11px] text-foreground-500 mt-1">
+          Bcc recipients get the email but are hidden from To / Cc. Test email never goes to Bcc.
+        </p>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap pt-1">

@@ -27,6 +27,8 @@ export interface ReportScheduler {
   recipients: string[];
   /** Optional CC */
   cc: string[];
+  /** Optional BCC (backend schedules; never shown in the email header) */
+  bcc?: string[];
   /** Sender address for scheduled reports (backend / PostgreSQL mode) */
   fromEmail?: string;
   /** Kissflow process used to build report data */

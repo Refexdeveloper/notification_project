@@ -6,11 +6,13 @@ import {
   TRAVEL_EXPENSE_COLUMNS,
   TRAVEL_REQUEST_COLUMNS,
   annotateTravelBookingFareRows,
+  annotateTravelExpenseAmountRows,
   fareTrendFilterLabel,
   formatFareTrendPct,
   formatOverMedianPct,
   isTravelBookingRow,
   isTravelCoreColumn,
+  normalizeTravelExpenseAmounts,
   travelSlaDisplay,
   travelColumnsForPack,
   travelExpandTiles,
@@ -74,6 +76,33 @@ describe('travel column packs', () => {
     expect(TRAVEL_EXPENSE_COLUMNS.map((c) => c.id)).toContain('raised_amount');
     expect(TRAVEL_EXPENSE_COLUMNS.findIndex((c) => c.id === 'raised_amount'))
       .toBeLessThan(TRAVEL_EXPENSE_COLUMNS.findIndex((c) => c.id === 'amount'));
+  });
+});
+
+describe('normalizeTravelExpenseAmounts', () => {
+  it('blocks claim without raised and clamps claim above raised', () => {
+    expect(normalizeTravelExpenseAmounts(undefined, 500)).toEqual({
+      raised_amount: undefined, claimed_amount: undefined, amount: undefined,
+    });
+    expect(normalizeTravelExpenseAmounts(3911, 2391)).toEqual({
+      raised_amount: 3911, claimed_amount: 2391, amount: 2391,
+    });
+    expect(normalizeTravelExpenseAmounts(2000, 5000)).toEqual({
+      raised_amount: 2000, claimed_amount: 2000, amount: 2000,
+    });
+  });
+
+  it('annotates expense rows only', () => {
+    const rows = annotateTravelExpenseAmountRows([
+      { id: '1', process_id: 'Travel expense', raised_amount: 1000, claimed_amount: 2500, amount: 2500 },
+      { id: '2', process_id: 'Travel request', amount: 5000 },
+      { id: '3', process_id: 'Travel expense', claimed_amount: 400, amount: 400 },
+    ]);
+    expect(rows[0].amount).toBe(1000);
+    expect(rows[0].claimed_amount).toBe(1000);
+    expect(rows[1].amount).toBe(5000);
+    expect(rows[2].amount).toBeUndefined();
+    expect(rows[2].raised_amount).toBeUndefined();
   });
 });
 

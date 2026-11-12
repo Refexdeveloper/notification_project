@@ -72,8 +72,11 @@ export function applicationDetailTabsForEmbed(applicationId?: string): AppDetail
   return APP_DETAIL_TABS.filter((tab) => ids.has(tab.id));
 }
 
+/** Backend-only sidebar routes (PostgreSQL); prototype mode keeps its own Schedules page. */
+const BACKEND_ONLY_NAV_IDS = new Set(['schedules']);
+
 export function sidebarNavigationItems(): NavItem[] {
-  if (!isBackendApiMode()) return navigationItems;
+  if (!isBackendApiMode()) return navigationItems.filter((item) => !BACKEND_ONLY_NAV_IDS.has(item.id));
   return navigationItems.filter((item) => !PROTOTYPE_NAV_IDS.has(item.id));
 }
 

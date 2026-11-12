@@ -50,6 +50,9 @@ export function neKpiBalancedGridClass(count: number) {
   return `${NE_KPI_GRID_BASE} grid-cols-2 ${lg}`;
 }
 
+/** Five cards in one desktop row (Travel Booking); mobile stays 2-up. */
+export const NE_KPI_FIVE_ROW_CLASS = `${NE_KPI_GRID_BASE} grid-cols-2 lg:grid-cols-5`;
+
 /** Six primary KPIs in two rows of three on xl; mobile stays 2-up. */
 export const NE_KPI_PRIMARY_ROW_CLASS = neKpiBalancedGridClass(6);
 
@@ -146,11 +149,12 @@ export const EMBED_EXEC_KPI_THEMES: EmbedKpiTheme[] = [
   },
 ];
 
+/** Scene tones aligned with CEO `/techhelpdesk` `/travel` `/expense` `/solar` shells. */
 const DASH_SCENE: Record<NeAppKind, { soft: string; deep: string; ink: string }> = {
   consolidated: { soft: '#d5e3f8', deep: '#8eafdf', ink: '#ffffff' },
   itsm: { soft: '#7ecfe4', deep: '#3eb4d0', ink: '#ffffff' },
-  travel: { soft: '#c5e4ff', deep: '#7eb6ef', ink: '#ffffff' },
-  expense: { soft: '#ffe0bf', deep: '#f0b27a', ink: '#fff7ef' },
+  travel: { soft: '#7ecfe4', deep: '#3eb4d0', ink: '#ffffff' },
+  expense: { soft: '#7ecfe4', deep: '#3eb4d0', ink: '#ffffff' },
   solar: { soft: '#ffe7a3', deep: '#f6c453', ink: '#fffdf6' },
   p2p: { soft: '#c9efe8', deep: '#7dcec2', ink: '#ffffff' },
   pm: { soft: '#ddd4fb', deep: '#b7a6ef', ink: '#ffffff' },
@@ -158,38 +162,73 @@ const DASH_SCENE: Record<NeAppKind, { soft: string; deep: string; ink: string }>
   default: { soft: '#d7dee8', deep: '#aeb8c6', ink: '#ffffff' },
 };
 
-/** Decorative wash for one application. Does not cover names or cards. */
+const HELPDESK_DOTS: Array<[number, number]> = [
+  [78, 28], [92, 28], [106, 28], [120, 28],
+  [78, 42], [92, 42], [106, 42], [120, 42],
+  [1288, 24], [1302, 24], [1316, 24], [1330, 24],
+  [1288, 38], [1302, 38], [1316, 38], [1330, 38],
+];
+
+/** Decorative wash — same art as CEO HelpdeskP2pBackdrop / AppSceneBackdrop. */
 export function NeP2pBackdrop({ kind = 'consolidated' }: { kind?: NeAppKind }) {
   const tone = DASH_SCENE[kind] || DASH_SCENE.default;
+  const helpdeskScene = kind === 'itsm' || kind === 'travel' || kind === 'expense';
   return (
     <div className={`ne-p2p-art ne-scene-art-${kind}`} aria-hidden>
     <svg className="h-full w-full" viewBox="0 0 1440 360" preserveAspectRatio="none">
-      <circle cx="120" cy="70" r="42" fill={tone.ink} opacity="0.7" />
-      <circle cx="1288" cy="84" r="64" fill={tone.soft} opacity="0.7" />
       {kind === 'itsm' ? (
         <>
-          <path className="ne-p2p-wave" d="M-40 168 C 180 70, 360 230, 620 130 S 980 40, 1180 120 S 1360 190, 1480 110 V 300 H -40 Z" fill={tone.soft} opacity="0.8" />
-          <path className="ne-p2p-wave ne-p2p-wave-2" d="M-40 205 C 220 120, 420 250, 700 170 S 1040 90, 1260 160 S 1400 210, 1480 170 V 320 H -40 Z" fill={tone.deep} opacity="0.45" />
+          <circle cx="150" cy="64" r="46" fill="#ffffff" opacity="0.75" />
+          <circle cx="1290" cy="78" r="70" fill="#b7e7f4" opacity="0.55" />
+          <circle cx="1124" cy="36" r="14" fill="#ffffff" opacity="0.9" />
+          <path className="ne-p2p-wave" d="M-40 168 C 180 70, 360 230, 620 130 S 980 40, 1180 120 S 1360 190, 1480 110 V 300 H -40 Z" fill="#7ecfe4" opacity="0.72" />
+          <path className="ne-p2p-wave ne-p2p-wave-2" d="M-40 205 C 220 120, 420 250, 700 170 S 1040 90, 1260 160 S 1400 210, 1480 170 V 320 H -40 Z" fill="#3eb4d0" opacity="0.4" />
+          {HELPDESK_DOTS.map(([x, y]) => (
+            <circle key={`${x}-${y}`} cx={x} cy={y} r="2.1" fill="#7ec4d8" />
+          ))}
+          <g className="ne-p2p-badge">
+            <rect x="1210" y="108" width="150" height="78" rx="16" fill="#ffffff" opacity="0.95" />
+            <rect x="1228" y="126" width="62" height="8" rx="4" fill="#d7eef4" />
+            <rect x="1228" y="144" width="96" height="6" rx="3" fill="#e7f1f4" />
+            <rect x="1228" y="158" width="74" height="6" rx="3" fill="#e7f1f4" />
+            <circle cx="1330" cy="156" r="14" fill="#14b87a" />
+            <path d="M1323 156l4 4 8-9" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          </g>
         </>
       ) : null}
       {kind === 'travel' || kind === 'expense' ? (
         <>
+          <circle cx="1180" cy="70" r="46" fill={tone.ink} opacity="0.75" />
+          <circle cx="1320" cy="110" r="64" fill={tone.soft} opacity="0.45" />
           <path className="ne-p2p-wave" d="M-40 168 C 180 70, 360 230, 620 130 S 980 40, 1180 120 S 1360 190, 1480 110 V 300 H -40 Z" fill="#7ecfe4" opacity="0.55" />
           <path className="ne-p2p-wave ne-p2p-wave-2" d="M-40 205 C 220 120, 420 250, 700 170 S 1040 90, 1260 160 S 1400 210, 1480 170 V 320 H -40 Z" fill="#3eb4d0" opacity="0.28" />
         </>
       ) : null}
       {kind === 'solar' ? (
-        <circle cx="1240" cy="78" r="36" fill={tone.deep} opacity="0.85" />
+        <>
+          {/* CEO AppSceneBackdrop solar: same teal waves as helpdesk + sun */}
+          <circle cx="1180" cy="70" r="46" fill="#ffffff" opacity="0.75" />
+          <circle cx="1320" cy="110" r="64" fill="#7ecfe4" opacity="0.45" />
+          <path className="ne-p2p-wave" d="M-40 168 C 180 70, 360 230, 620 130 S 980 40, 1180 120 S 1360 190, 1480 110 V 300 H -40 Z" fill="#7ecfe4" opacity="0.55" />
+          <path className="ne-p2p-wave ne-p2p-wave-2" d="M-40 205 C 220 120, 420 250, 700 170 S 1040 90, 1260 160 S 1400 210, 1480 170 V 320 H -40 Z" fill="#3eb4d0" opacity="0.28" />
+          <circle cx="1240" cy="78" r="36" fill="#f6c453" opacity="0.9" />
+        </>
       ) : null}
       {kind === 'pm' ? (
         <>
+          <circle cx="120" cy="70" r="42" fill={tone.ink} opacity="0.7" />
+          <circle cx="1288" cy="84" r="64" fill={tone.soft} opacity="0.7" />
           <rect x="1188" y="90" width="18" height="70" rx="4" fill={tone.deep} opacity="0.7" />
           <rect x="1216" y="58" width="18" height="102" rx="4" fill={tone.deep} opacity="0.5" />
           <rect x="1244" y="74" width="18" height="86" rx="4" fill={tone.deep} opacity="0.8" />
         </>
       ) : null}
-      {kind === 'p2p' || kind === 'lead' || kind === 'consolidated' || kind === 'default' ? (
-        <path className="ne-p2p-wave" d="M-20 210 C 240 150, 480 250, 760 190 S 1180 120, 1480 200 V 340 H -20 Z" fill={tone.soft} opacity="0.55" />
+      {!helpdeskScene && kind !== 'solar' && kind !== 'pm' ? (
+        <>
+          <circle cx="120" cy="70" r="42" fill={tone.ink} opacity="0.7" />
+          <circle cx="1288" cy="84" r="64" fill={tone.soft} opacity="0.7" />
+          <path className="ne-p2p-wave" d="M-20 210 C 240 150, 480 250, 760 190 S 1180 120, 1480 200 V 340 H -20 Z" fill={tone.soft} opacity="0.55" />
+        </>
       ) : null}
     </svg>
     {kind === 'travel' ? (
@@ -200,7 +239,7 @@ export function NeP2pBackdrop({ kind = 'consolidated' }: { kind?: NeAppKind }) {
         <g transform="translate(120 62) scale(1.5)" fill="#3eb4d0" opacity="0.4">
           <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" />
         </g>
-        <g transform="translate(190 12) scale(1.7)" fill="#0F6B7A" opacity="0.45">
+        <g transform="translate(190 12) scale(1.7)" fill="#3eb4d0" opacity="0.5">
           <path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" />
         </g>
       </svg>
@@ -208,16 +247,16 @@ export function NeP2pBackdrop({ kind = 'consolidated' }: { kind?: NeAppKind }) {
     {kind === 'expense' ? (
       <svg viewBox="0 0 280 140" preserveAspectRatio="xMaxYMin meet" className="pointer-events-none absolute right-2 top-2 h-[140px] w-[min(280px,42vw)]">
         <g opacity="0.9">
-          <circle cx="54" cy="48" r="22" fill="#ffffff" />
-          <text x="54" y="56" textAnchor="middle" fontSize="22" fontWeight="700" fill="#3eb4d0">₹</text>
-          <rect x="96" y="28" width="36" height="48" rx="6" fill="#ffffff" />
-          <rect x="104" y="40" width="20" height="4" rx="2" fill="#7ecfe4" />
-          <rect x="104" y="50" width="14" height="4" rx="2" fill="#7ecfe4" />
-          <rect x="104" y="60" width="16" height="4" rx="2" fill="#7ecfe4" />
+          <circle cx="40" cy="48" r="24" fill="#ffffff" />
+          <text x="40" y="56" textAnchor="middle" fontSize="22" fontWeight="700" fill="#3eb4d0">₹</text>
+          <rect x="80" y="28" width="42" height="54" rx="6" fill="#ffffff" />
+          <rect x="90" y="40" width="24" height="4.5" rx="2" fill="#7ecfe4" />
+          <rect x="90" y="50" width="18" height="4.5" rx="2" fill="#7ecfe4" />
+          <rect x="90" y="60" width="21" height="4.5" rx="2" fill="#7ecfe4" />
         </g>
         <g opacity="0.5">
           <circle cx="200" cy="88" r="16" fill="#ffffff" />
-          <text x="200" y="94" textAnchor="middle" fontSize="16" fontWeight="700" fill="#0F6B7A">₹</text>
+          <text x="200" y="94" textAnchor="middle" fontSize="16" fontWeight="700" fill="#3eb4d0">₹</text>
         </g>
       </svg>
     ) : null}

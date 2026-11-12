@@ -52,6 +52,14 @@ describe('processLabels travel usage', () => {
     expect(entityFilterForTemplate({ name: 'RMC - Lead Management - Report' }, 'Lead_tracker_1_A00')).toBe('RIL_RMC');
     expect(entityFilterForTemplate({ name: 'Lead Tracker · Modepro website report' }, 'Lead_tracker_1_A00')).toBe('');
   });
+
+  it('scopes Extrovis-process ITSM templates to Extrovis / Kavis / Modepro', () => {
+    const ext = 'Live_IT_Service_Request_Extrovis_A00';
+    expect(defaultEntityFilterForProcess(ext)).toBe('Extrovis');
+    expect(entityFilterForTemplate({ name: 'Extrovis ITSM Report' }, ext)).toBe('Extrovis');
+    expect(entityFilterForTemplate({ name: 'Kavis Pharma ITSM report' }, ext)).toBe('Kavispharma');
+    expect(entityFilterForTemplate({ name: 'Modepro ITSM report' }, ext)).toBe('Modepro');
+  });
 });
 
 describe('Tech Helpdesk display name', () => {

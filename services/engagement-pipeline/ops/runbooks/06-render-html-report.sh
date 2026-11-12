@@ -72,9 +72,41 @@ if [[ "${ENTITY_FILTER}" == "all" || "${ENTITY_FILTER}" == "*" ]]; then
   ENTITY_FILTER=""
 fi
 ENTITY_FILTER_SQL="$(printf '%s' "${ENTITY_FILTER}" | sed "s/'/''/g")"
+# Tokenize filter for Extrovis-family entities (Kavis / Modepro / Extrovis aliases).
+ENTITY_FILTER_TOKEN="$(printf '%s' "${ENTITY_FILTER}" | tr '[:upper:]' '[:lower:]' | tr -d ' _-')"
+case "${ENTITY_FILTER_TOKEN}" in
+  *kavis*) ENTITY_MATCH_TOKEN='kavis' ;;
+  *modepro*) ENTITY_MATCH_TOKEN='modepro' ;;
+  *extrovis*) ENTITY_MATCH_TOKEN='extrovis' ;;
+  *pharmapack*|pharma*pack*) ENTITY_MATCH_TOKEN='pharma' ;;
+  *) ENTITY_MATCH_TOKEN="${ENTITY_FILTER_TOKEN}" ;;
+esac
+ENTITY_MATCH_TOKEN_SQL="$(printf '%s' "${ENTITY_MATCH_TOKEN}" | sed "s/'/''/g")"
+# Normalize Entity text for contains-match (aasik normalizeEntityKey style).
+ENTITY_TOKEN_EXPR_I="regexp_replace(lower(trim(coalesce(i.entity, ''))), '[^a-z0-9]', '', 'g')"
+ENTITY_PAYLOAD_TOKEN_EXPR_I="regexp_replace(lower(trim(coalesce(
+  CASE WHEN jsonb_typeof(i.source_payload->'Entity') = 'object'
+    THEN coalesce(i.source_payload->'Entity'->>'Name', i.source_payload->'Entity'->>'Value', i.source_payload->'Entity'->>'v', '')
+    ELSE coalesce(i.source_payload->>'Entity', '')
+  END, ''))), '[^a-z0-9]', '', 'g')"
+ENTITY_TOKEN_EXPR_BARE="regexp_replace(lower(trim(coalesce(entity, ''))), '[^a-z0-9]', '', 'g')"
+ENTITY_PAYLOAD_TOKEN_EXPR_BARE="regexp_replace(lower(trim(coalesce(
+  CASE WHEN jsonb_typeof(source_payload->'Entity') = 'object'
+    THEN coalesce(source_payload->'Entity'->>'Name', source_payload->'Entity'->>'Value', source_payload->'Entity'->>'v', '')
+    ELSE coalesce(source_payload->>'Entity', '')
+  END, ''))), '[^a-z0-9]', '', 'g')"
 # Refex scope: match Entity=Refex OR blank/null Entity (Kissflow often leaves Entity empty).
+# Extrovis / Kavis / Modepro: token contains match so "Kavis Pharma" matches Kavispharma.
 ENTITY_SCOPE_SQL="(
   '${ENTITY_FILTER_SQL}' = ''
+  OR (
+    '${ENTITY_MATCH_TOKEN_SQL}' <> ''
+    AND '${ENTITY_MATCH_TOKEN_SQL}' <> 'refex'
+    AND (
+      ${ENTITY_TOKEN_EXPR_I} LIKE '%${ENTITY_MATCH_TOKEN_SQL}%'
+      OR ${ENTITY_PAYLOAD_TOKEN_EXPR_I} LIKE '%${ENTITY_MATCH_TOKEN_SQL}%'
+    )
+  )
   OR lower(trim(coalesce(i.entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
   OR (
     '${ENTITY_FILTER_SQL}' <> ''
@@ -108,6 +140,14 @@ ENTITY_SCOPE_SQL="(
 )"
 ENTITY_SCOPE_SQL_BARE="(
   '${ENTITY_FILTER_SQL}' = ''
+  OR (
+    '${ENTITY_MATCH_TOKEN_SQL}' <> ''
+    AND '${ENTITY_MATCH_TOKEN_SQL}' <> 'refex'
+    AND (
+      ${ENTITY_TOKEN_EXPR_BARE} LIKE '%${ENTITY_MATCH_TOKEN_SQL}%'
+      OR ${ENTITY_PAYLOAD_TOKEN_EXPR_BARE} LIKE '%${ENTITY_MATCH_TOKEN_SQL}%'
+    )
+  )
   OR lower(trim(coalesce(entity, ''))) = lower(trim('${ENTITY_FILTER_SQL}'))
   OR (
     '${ENTITY_FILTER_SQL}' <> ''
@@ -588,6 +628,7 @@ sla_by_user AS (
 )${USER_TABLE_ROSTER_CTE}
 SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   SELECT
+    ${USER_TABLE_ID_SQL} AS user_id,
     resolved.user_name,
     ${REPORT_USER_LAST_SIGN_IN_IST_SQL} AS last_sign_in,
     COALESCE(u.ever_logged_in, false) AS ever_logged_in,
@@ -617,6 +658,18 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
 
 [[ -n "${SUMMARY_JSON}" ]] || stop "Failed to retrieve summary metrics."
 [[ -n "${USERS_JSON}" ]] || stop "Failed to retrieve user breakdown."
+
+# SLA Breached = aasik_ITSM IT Admin rule on the live Kissflow report (SQL created→now is fallback only).
+# Per-user SLA column = open breached tickets on the user's current assignment, same live rule.
+LIVE_SLA_OK="false"
+if report_live_itsm_sla "${ITSM_PROCESS_ID}" "${ENTITY_FILTER}"; then
+  LIVE_SLA_OK="true"
+  sla_by_user_json="${REPORT_LIVE_SLA_BY_USER_JSON}"
+  [[ -n "${sla_by_user_json}" ]] || sla_by_user_json='{}'
+  USERS_JSON="$(jq -c --argjson by "${sla_by_user_json}" '
+    map(.sla_breached_count = ($by[(.user_id // "") | tostring] // 0))
+  ' <<< "${USERS_JSON}")"
+fi
 
 log "Rendering HTML report"
 
@@ -695,6 +748,13 @@ fi
 
 SLA_BREACHED_OPEN="$(jq -r '.sla_breached_open' <<< "${SUMMARY_JSON}")"
 SLA_BREACHED_CLOSED="$(jq -r '.sla_breached_closed' <<< "${SUMMARY_JSON}")"
+if [[ "${LIVE_SLA_OK}" == "true" ]]; then
+  log "Live Kissflow SLA (aasik Admin rule): open=${REPORT_LIVE_SLA_OPEN} closed=${REPORT_LIVE_SLA_CLOSED} (sql open=${SLA_BREACHED_OPEN} closed=${SLA_BREACHED_CLOSED})"
+  SLA_BREACHED_OPEN="${REPORT_LIVE_SLA_OPEN}"
+  SLA_BREACHED_CLOSED="${REPORT_LIVE_SLA_CLOSED}"
+else
+  log "Live Kissflow SLA overlay unavailable — using PostgreSQL snapshot SLA counts"
+fi
 SLA_BREACHED_TOTAL="$(( SLA_BREACHED_OPEN + SLA_BREACHED_CLOSED ))"
 
 SOURCE_EMAIL_ALL="$(jq -r '.source_all.Email // 0' <<< "${SUMMARY_JSON}")"

@@ -25,7 +25,11 @@ import {
   detectTemplateAppKind,
   type PreviewContext,
 } from '@/lib/templatePreview';
-import { ensureItsmSourcePlaceholders, preferExtrovisStarter } from '@/lib/itsmTemplateLayout';
+import {
+  ensureItsmSourcePlaceholders,
+  itsmEntityStarterLabel,
+  resolveItsmEntityStarterId,
+} from '@/lib/itsmTemplateLayout';
 import { isPmPortfolioHtml } from '@/lib/pmPortfolioSetup';
 import { resolveLeadCompany } from '@/services/leadReport';
 import { isBackendApiMode } from '@/services/backendApi';
@@ -287,12 +291,11 @@ export default function TemplateDetailPage() {
       setLoadError('Missing application context. Open the template from an application tab.');
       return;
     }
-    const starterId = preferExtrovisStarter(name) ? 'itsm-extrovis' : 'itsm';
+    const starterId = resolveItsmEntityStarterId(name);
+    const starterLabel = itsmEntityStarterLabel(starterId);
     if (
       !window.confirm(
-        `Replace this template HTML with the latest ${
-          starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'
-        } layout (includes Ticket source panels)?`,
+        `Replace this template HTML with the latest ${starterLabel} layout (includes Ticket source panels)?`,
       )
     ) {
       return;
@@ -311,9 +314,9 @@ export default function TemplateDetailPage() {
     const updated = await updateTemplateOnBackend(appForSave, id, {
       html: nextHtml,
       description:
-        starterId === 'itsm-extrovis'
-          ? 'Extrovis ITSM report — tickets only (no user sign-in overview)'
-          : description || 'ITSM engagement report with ticket source breakdown',
+        starterId === 'itsm'
+          ? description || 'ITSM engagement report with ticket source breakdown'
+          : `${starterLabel} ITSM report — tickets only (no user sign-in overview)`,
       status: status === 'published' ? 'published' : undefined,
     });
     setLayoutBusy(false);
@@ -322,7 +325,7 @@ export default function TemplateDetailPage() {
       return;
     }
     setSaveMsg(
-      `Applied ${starterId === 'itsm-extrovis' ? 'Extrovis' : 'Refex ITSM'} layout with Ticket source. Preview updated — Publish if still draft.`,
+      `Applied ${starterLabel} layout with Ticket source. Preview updated — Publish if still draft.`,
     );
     setMode('preview');
   }, [backendMode, id, backendApp, appRouteId, name, description, status]);
@@ -812,9 +815,7 @@ export default function TemplateDetailPage() {
             >
               {layoutBusy
                 ? 'Updating…'
-                : preferExtrovisStarter(name)
-                  ? 'Apply Extrovis layout'
-                  : 'Apply Refex ITSM layout'}
+                : `Apply ${itsmEntityStarterLabel(resolveItsmEntityStarterId(name))} layout`}
             </Button>
           )}
           {backendMode && appKind === 'pm' && (

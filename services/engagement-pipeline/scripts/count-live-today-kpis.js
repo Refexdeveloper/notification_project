@@ -25,6 +25,7 @@ const {
   bumpSource,
 } = require(path.join(__dirname, 'itsm-ticket-source.js'));
 const { recordInEntityCodeScope, recordInPmRmcScope } = require(path.join(__dirname, 'entity-code'));
+const { itsmEntityMatchesFilter } = require(path.join(__dirname, 'itsm-entity-scope.js'));
 
 const TZ = 'Asia/Kolkata';
 const PAGE_SIZE = 100;
@@ -105,6 +106,10 @@ function entityMatches(raw) {
   const entity = pickEntity(raw);
   // Classic Refex report: include blank Entity (many live tickets omit the field).
   if (!entity && entityFilter.toLowerCase() === 'refex') return true;
+  // Extrovis process entities (Extrovis / Kavis / Modepro) — token match like aasik.
+  if (String(applicationId || '') === ITSM_APP_ID || /it_service|extrovis/i.test(String(processId || ''))) {
+    return itsmEntityMatchesFilter(entity, entityFilter);
+  }
   return entity.toLowerCase() === entityFilter.toLowerCase();
 }
 

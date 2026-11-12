@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { pickAmountFromRaw, buildLiveRecordRows, serializeRecordItem, overlayTravelPlacesFromItems, travelPlaceFieldsFromRaw, travelDetailFieldsFromRaw, emsDetailFieldsFromRaw, emsSplitsFromRaw } = require('./appRecords');
+const { pickAmountFromRaw, buildLiveRecordRows, serializeRecordItem, overlayTravelPlacesFromItems, travelPlaceFieldsFromRaw, travelDetailFieldsFromRaw, emsDetailFieldsFromRaw, emsSplitsFromRaw, normalizeTravelExpenseAmounts } = require('./appRecords');
 
 test('pickAmountFromRaw reads travel advance Final_amount', () => {
   assert.equal(pickAmountFromRaw({ Final_amount: 3000 }), 3000);
@@ -51,6 +51,53 @@ test('travel records keep from/to/departure/trip on the API row', () => {
   assert.equal(api.to_city, 'New Delhi (DEL)');
   assert.equal(api.trip_type, 'One Way');
   assert.match(String(api.departure_date), /^2026-10-23/);
+});
+
+test('normalizeTravelExpenseAmounts requires raised and clamps claim', () => {
+  assert.deepEqual(normalizeTravelExpenseAmounts(undefined, 500), {
+    raised_amount: undefined, claimed_amount: undefined, amount: undefined,
+  });
+  assert.deepEqual(normalizeTravelExpenseAmounts(3911, 2391), {
+    raised_amount: 3911, claimed_amount: 2391, amount: 2391,
+  });
+  assert.deepEqual(normalizeTravelExpenseAmounts(2000, 5000), {
+    raised_amount: 2000, claimed_amount: 2000, amount: 2000,
+  });
+});
+
+test('travel expense live rows use claim for amount, not raised', () => {
+  const appId = 'Expense_and_Travel_Management_A00';
+  const rows = buildLiveRecordRows([{
+    _id: 'exp1',
+    _process_id: 'Expense_Management_A00',
+    Request_ID: 'Exp-1',
+    Total_Raised_Amount: 3911,
+    Claimed_Amount: 2391,
+    _status: 'InProgress',
+    _created_at: '2026-10-01T10:00:00Z',
+  }, {
+    _id: 'exp2',
+    _process_id: 'Expense_Management_A00',
+    Request_ID: 'Exp-2',
+    Claimed_Amount: 900,
+    _status: 'InProgress',
+    _created_at: '2026-10-01T10:00:00Z',
+  }, {
+    _id: 'exp3',
+    _process_id: 'Expense_Management_A00',
+    Request_ID: 'Exp-3',
+    Total_Raised_Amount: 1000,
+    Claimed_Amount: 2500,
+    _status: 'InProgress',
+    _created_at: '2026-10-01T10:00:00Z',
+  }], appId);
+  assert.equal(rows[0].raised_amount, 3911);
+  assert.equal(rows[0].claimed_amount, 2391);
+  assert.equal(rows[0].amount, 2391);
+  assert.equal(rows[1].raised_amount, undefined);
+  assert.equal(rows[1].amount, undefined);
+  assert.equal(rows[2].amount, 1000);
+  assert.equal(rows[2].claimed_amount, 1000);
 });
 
 test('travel details skip empty and Kissflow instance linked ids', () => {

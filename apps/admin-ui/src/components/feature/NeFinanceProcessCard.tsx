@@ -19,6 +19,8 @@ type Props = {
   styleIndex?: number;
   metrics: FinancePackMetric[];
   appKind?: NeAppKind;
+  /** Defaults to the 4-up pack grid. */
+  gridClass?: string;
 };
 
 /**
@@ -32,6 +34,7 @@ export default function NeFinanceProcessCard({
   styleIndex = 0,
   metrics,
   appKind,
+  gridClass = NE_KPI_GRID_CLASS,
 }: Props) {
   const theme = EMBED_KPI_THEMES[styleIndex % EMBED_KPI_THEMES.length];
   const packTotal = /^total/i.test(String(metrics[0]?.label || ''))
@@ -54,7 +57,7 @@ export default function NeFinanceProcessCard({
         </div>
       </div>
 
-      <div className={NE_KPI_GRID_CLASS}>
+      <div className={gridClass}>
         {metrics.map((metric, index) => (
           <EmbedKpiCard
             key={metric.label}

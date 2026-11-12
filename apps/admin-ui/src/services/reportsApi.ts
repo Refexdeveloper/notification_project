@@ -48,6 +48,7 @@ export type BackendScheduleRow = {
   status: 'active' | 'paused';
   recipients: string[];
   cc?: string[];
+  bcc?: string[];
   from_email?: string | null;
   website_filter?: string | null;
   user_group_filter?: string | null;
@@ -100,6 +101,7 @@ function mapScheduleRow(row: BackendScheduleRow, app: KissflowApplication): Repo
     timezone,
     recipients: row.recipients,
     cc: row.cc || [],
+    bcc: row.bcc || [],
     fromEmail: row.from_email || '',
     websiteFilter: row.website_filter || undefined,
     userGroupFilter: row.user_group_filter || undefined,
@@ -173,6 +175,7 @@ export type ScheduleUpdatePayload = {
   from_email?: string;
   recipients_to?: string[];
   recipients_cc?: string[];
+  recipients_bcc?: string[];
   is_active?: boolean;
   cron_expression?: string;
   timezone?: string;
@@ -221,6 +224,7 @@ export type ScheduleCreatePayload = {
   from_email?: string;
   recipients_to?: string[];
   recipients_cc?: string[];
+  recipients_bcc?: string[];
   is_active?: boolean;
   process_id?: string;
   subject?: string;

@@ -72,6 +72,23 @@ if ((${#CC_RECIPIENTS[@]} > 0)); then
   done
 fi
 
+# Bcc: envelope recipients only — never written as a header.
+BCC_LIST="${BCC:-}"
+if [[ -n "${BCC_LIST}" ]]; then
+  IFS=',' read -r -a BCC_RECIPIENTS <<< "${BCC_LIST}"
+  for bcc in "${BCC_RECIPIENTS[@]}"; do
+    bcc="${bcc#"${bcc%%[![:space:]]*}"}"
+    bcc="${bcc%"${bcc##*[![:space:]]}"}"
+    [[ -z "${bcc}" ]] && continue
+    already=0
+    bcc_lower="$(printf '%s' "${bcc}" | tr '[:upper:]' '[:lower:]')"
+    for existing in "${RCPT[@]}"; do
+      [[ "$(printf '%s' "${existing}" | tr '[:upper:]' '[:lower:]')" == "${bcc_lower}" ]] && already=1 && break
+    done
+    ((already)) || RCPT+=("${bcc}")
+  done
+fi
+
 TO_HEADER_VALUE="$(IFS=', '; echo "${TO_HEADER[*]}")"
 
 # Legacy ITSM path only when no schedule CC was supplied.

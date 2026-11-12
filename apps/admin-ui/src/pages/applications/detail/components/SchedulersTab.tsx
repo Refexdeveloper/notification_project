@@ -17,6 +17,7 @@ import {
   loadReportStarterHtmlFromBackend,
   loadSchedulesFromBackend,
   loadTemplatesFromBackend,
+  updateScheduleOnBackend,
   updateTemplateOnBackend,
 } from '@/services/reportsApi';
 import BackendScheduleEditor from './BackendScheduleEditor';
@@ -185,51 +186,128 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     return () => window.clearTimeout(timer);
   }, [selectedId]);
 
-  const runExtrovisQuickSetup = async () => {
+  type NonRefexEntitySetup = {
+    entityFilter: 'Extrovis' | 'Kavispharma' | 'Modepro';
+    templateName: string;
+    starterId: 'itsm-extrovis' | 'itsm-kavispharma' | 'itsm-modepro';
+    subject: string;
+    nameMatch: RegExp;
+    entityMatch: RegExp;
+    recipientsTo?: string[];
+    recipientsCc?: string[];
+    recipientsBcc?: string[];
+  };
+
+  const NON_REFEX_ENTITY_SETUPS: NonRefexEntitySetup[] = [
+    {
+      entityFilter: 'Extrovis',
+      templateName: 'Extrovis ITSM Report',
+      starterId: 'itsm-extrovis',
+      subject: 'Extrovis / Kissflow ITSM Report',
+      nameMatch: /extrovis/i,
+      entityMatch: /^extrovis$/i,
+    },
+    {
+      entityFilter: 'Kavispharma',
+      templateName: 'Kavis Pharma ITSM Report',
+      starterId: 'itsm-kavispharma',
+      subject: 'Kavis Pharma / Kissflow ITSM Report',
+      nameMatch: /kavis/i,
+      entityMatch: /kavis/i,
+      recipientsTo: ['jon.hudanich@kavispharma.com', 'vidhya.kumar@kavispharma.com'],
+      recipientsCc: ['itsupport@extrovis.com'],
+      recipientsBcc: [
+        'mohamedaasik.m@refex.co.in',
+        'gowtham.s@refex.co.in',
+        'srivaths.varadharajan@refex.co.in',
+      ],
+    },
+    {
+      entityFilter: 'Modepro',
+      templateName: 'Modepro ITSM Report',
+      starterId: 'itsm-modepro',
+      subject: 'Modepro / Kissflow ITSM Report',
+      nameMatch: /modepro/i,
+      entityMatch: /modepro/i,
+      recipientsTo: ['pradip.kakade@modepro.com'],
+      recipientsCc: ['itsupport@extrovis.com'],
+      recipientsBcc: [
+        'mohamedaasik.m@refex.co.in',
+        'gowtham.s@refex.co.in',
+        'srivaths.varadharajan@refex.co.in',
+      ],
+    },
+  ];
+
+  const runNonRefexEntityQuickSetup = async (setup: NonRefexEntitySetup) => {
     if (!backendMode || !extrovisProcessId) return;
     setQuickSetupBusy(true);
     setQuickSetupMsg('');
     setLoadError(null);
 
-    let templatesRes = await loadTemplatesFromBackend(app);
-    let tpl = templatesRes.templates.find((t) => /extrovis/i.test(t.name));
+    const templatesRes = await loadTemplatesFromBackend(app);
+    let tpl = templatesRes.templates.find((t) => setup.nameMatch.test(t.name));
     let setupNote = '';
+    const label = setup.entityFilter === 'Kavispharma' ? 'Kavis Pharma' : setup.entityFilter;
 
     if (!tpl) {
       const created = await createTemplateOnBackend(app, {
-        name: 'Extrovis ITSM Report',
-        description: 'Extrovis ITSM report — tickets only (no user sign-in overview)',
-        subject: 'Extrovis / Kissflow ITSM Report',
+        name: setup.templateName,
+        description: `${label} ITSM report — tickets only (no user sign-in overview)`,
+        subject: setup.subject,
         status: 'draft',
-        starter_id: 'itsm-extrovis',
+        starter_id: setup.starterId,
       });
       if (!created.ok || !created.template) {
-        setLoadError(created.error || 'Could not create Extrovis template');
+        setLoadError(created.error || `Could not create ${label} template`);
         setQuickSetupBusy(false);
         return;
       }
       tpl = created.template;
-      setupNote = 'Created Extrovis template (no sign-in overview). ';
+      setupNote = `Created ${label} template. `;
     } else {
-      // Refresh layout so older Extrovis templates drop User Sign-in Overview.
-      const starter = await loadReportStarterHtmlFromBackend(app, 'itsm-extrovis');
+      const starter = await loadReportStarterHtmlFromBackend(app, setup.starterId);
       if (starter.ok && starter.item?.html) {
         const updated = await updateTemplateOnBackend(app, tpl.id, {
           html: starter.item.html,
-          description: 'Extrovis ITSM report — tickets only (no user sign-in overview)',
+          description: `${label} ITSM report — tickets only (no user sign-in overview)`,
         });
         if (updated.ok && updated.template) {
           tpl = updated.template;
-          setupNote = 'Updated Extrovis template (removed sign-in overview). ';
+          setupNote = `Updated ${label} template. `;
         }
       }
     }
 
-    const existingExtrovis = list.find((s) => isExtrovisProcess(s.processId));
-    if (existingExtrovis) {
-      setSelectedId(existingExtrovis.id);
+    const existing = list.find(
+      (s) =>
+        isExtrovisProcess(s.processId)
+        && (
+          setup.entityMatch.test(String(s.entityFilter || ''))
+          || (setup.entityFilter === 'Extrovis'
+            && (!s.entityFilter || s.entityFilter === 'all'))
+        ),
+    );
+    if (existing) {
+      if (
+        setup.entityFilter === 'Extrovis'
+        && (!existing.entityFilter || existing.entityFilter === 'all')
+      ) {
+        await updateScheduleOnBackend(app, existing.id, { entity_filter: 'Extrovis' });
+        setupNote += 'Scoped Extrovis schedule to Entity = Extrovis (was all tickets). ';
+      }
+      if (setup.recipientsTo?.length) {
+        await updateScheduleOnBackend(app, existing.id, {
+          entity_filter: setup.entityFilter,
+          recipients_to: setup.recipientsTo,
+          recipients_cc: setup.recipientsCc || [],
+          recipients_bcc: setup.recipientsBcc || [],
+        });
+        setupNote += 'Recipients refreshed. ';
+      }
+      setSelectedId(existing.id);
       setQuickSetupMsg(
-        `${setupNote}Extrovis schedule already exists — open it below, set recipients, and Activate.`,
+        `${setupNote}${label} schedule already exists — open it below, publish if needed, then Activate.`,
       );
       setQuickSetupBusy(false);
       setTick((n) => n + 1);
@@ -237,25 +315,28 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     }
 
     const scheduleRes = await createScheduleOnBackend(app, {
-      name: `${tpl.name} · Extrovis`,
+      name: `${tpl.name} · ${label}`,
       template_id: tpl.id,
       template_name: tpl.name,
       process_id: extrovisProcessId,
-      entity_filter: 'all',
-      subject: tpl.subject || 'Extrovis / Kissflow ITSM Report',
+      entity_filter: setup.entityFilter,
+      subject: tpl.subject || setup.subject,
       cron_expression: '0 9 * * *',
       timezone: 'Asia/Kolkata',
       is_active: false,
+      recipients_to: setup.recipientsTo,
+      recipients_cc: setup.recipientsCc,
+      recipients_bcc: setup.recipientsBcc,
     });
     setQuickSetupBusy(false);
     if (!scheduleRes.ok || !scheduleRes.schedule) {
-      setLoadError(scheduleRes.error || 'Could not create Extrovis schedule');
+      setLoadError(scheduleRes.error || `Could not create ${label} schedule`);
       return;
     }
     setTick((n) => n + 1);
     setSelectedId(scheduleRes.schedule.id);
     setQuickSetupMsg(
-      `${setupNote}Extrovis template + schedule ready. Set From/To recipients below, publish the template if needed, then Activate.`,
+      `${setupNote}${label} template + schedule ready (entity-scoped). Publish the template if needed, then Activate.`,
     );
   };
 
@@ -379,19 +460,25 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     <div>
       {backendMode && extrovisProcessId && (
         <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 space-y-2">
-          <p className="text-sm font-semibold text-emerald-950">Extrovis quick setup</p>
+          <p className="text-sm font-semibold text-emerald-950">Non-Refex Tech Helpdesk entity reports</p>
           <p className="text-xs text-emerald-900/90">
-            Process <span className="font-mono">{processLabel(extrovisProcessId)}</span> is already linked.
-            Create or refresh the Extrovis HTML template (no user sign-in overview) + schedule in one click.
+            Process <span className="font-mono">{processLabel(extrovisProcessId)}</span> hosts Extrovis,
+            Kavis Pharma, and Modepro tickets. Each schedule must filter one entity (Extrovis was wrongly
+            sending all). Kavis / Modepro include the agreed To / CC / BCC.
           </p>
           <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm"
-              disabled={quickSetupBusy}
-              onClick={() => void runExtrovisQuickSetup()}
-            >
-              {quickSetupBusy ? 'Setting up…' : 'Setup Extrovis report'}
-            </Button>
+            {NON_REFEX_ENTITY_SETUPS.map((setup) => (
+              <Button
+                key={setup.entityFilter}
+                size="sm"
+                disabled={quickSetupBusy}
+                onClick={() => void runNonRefexEntityQuickSetup(setup)}
+              >
+                {quickSetupBusy
+                  ? 'Setting up…'
+                  : `Setup ${setup.entityFilter === 'Kavispharma' ? 'Kavis Pharma' : setup.entityFilter}`}
+              </Button>
+            ))}
             {quickSetupMsg && <span className="text-xs text-emerald-800">{quickSetupMsg}</span>}
           </div>
         </div>

@@ -52,6 +52,10 @@ type Props = {
   onCompanyChange?: (company: string) => void;
   companyOptions?: Array<{ id: string; label: string; count?: number }>;
   companyLabel?: string;
+  /** Optional department filter (Travel) — rendered next to Company. */
+  department?: string;
+  onDepartmentChange?: (department: string) => void;
+  departmentOptions?: Array<{ id: string; label: string; count?: number }>;
   /** Optional application filter (main dashboard) — rendered top-right. */
   application?: string;
   onApplicationChange?: (id: string) => void;
@@ -106,6 +110,9 @@ export default function ExecutiveDateFilterBar({
   onCompanyChange,
   companyOptions,
   companyLabel = 'Company',
+  department,
+  onDepartmentChange,
+  departmentOptions,
   application,
   onApplicationChange,
   applicationOptions,
@@ -145,6 +152,8 @@ export default function ExecutiveDateFilterBar({
   const entityValue = entity || 'all';
   const showCompany = Boolean(onCompanyChange && companyOptions && companyOptions.length > 0);
   const companyValue = company || 'all';
+  const showDepartment = Boolean(onDepartmentChange && departmentOptions);
+  const departmentValue = department || 'all';
   const showApplication = Boolean(onApplicationChange && applicationOptions && applicationOptions.length > 0);
   const applicationValue = application || 'all';
   const userValue = user || 'all';
@@ -158,6 +167,11 @@ export default function ExecutiveDateFilterBar({
     if (rows.some((o) => o.id === companyValue)) return rows;
     return [...rows, { id: companyValue, label: companyValue }];
   }, [companyOptions, companyValue]);
+  const departmentSelectOptions = useMemo(() => {
+    const rows = [{ id: 'all', label: 'All Departments' }, ...(departmentOptions || [])];
+    if (rows.some((o) => o.id === departmentValue)) return rows;
+    return [...rows, { id: departmentValue, label: departmentValue }];
+  }, [departmentOptions, departmentValue]);
   const userSelectOptions = useMemo(() => {
     const rows = userOptions || [];
     if (rows.some((o) => o.id === userValue)) return rows;
@@ -296,12 +310,14 @@ export default function ExecutiveDateFilterBar({
 
   const entityLabelText = entitySelectOptions.find((o) => o.id === entityValue)?.label || entityValue;
   const companyLabelText = companySelectOptions.find((o) => o.id === companyValue)?.label || companyValue;
+  const departmentLabelText = departmentSelectOptions.find((o) => o.id === departmentValue)?.label || departmentValue;
   const userLabelText = userSelectOptions.find((o) => o.id === userValue)?.label || userValue;
   const applicationLabelText = applicationOptions?.find((o) => o.id === applicationValue)?.label || applicationValue;
   const periodIsDefault = period === 'all' || period === 'fy';
   const activeFilterCount = [
     showEntity && entityValue !== 'all',
     showCompany && companyValue !== 'all',
+    showDepartment && departmentValue !== 'all',
     showUser && userValue !== 'all',
     showApplication && applicationValue !== 'all',
     !periodIsDefault,
@@ -309,6 +325,7 @@ export default function ExecutiveDateFilterBar({
   const filterChips = [
     showEntity && entityValue !== 'all' ? { key: 'entity', label: entityLabelText, onRemove: () => onEntityChange?.('all') } : null,
     showCompany && companyValue !== 'all' ? { key: 'company', label: companyLabelText, onRemove: () => onCompanyChange?.('all') } : null,
+    showDepartment && departmentValue !== 'all' ? { key: 'department', label: departmentLabelText, onRemove: () => onDepartmentChange?.('all') } : null,
     showUser && userValue !== 'all' ? { key: 'user', label: userLabelText, onRemove: () => onUserChange?.('all') } : null,
     showApplication && applicationValue !== 'all' ? { key: 'app', label: applicationLabelText, onRemove: () => onApplicationChange?.('all') } : null,
     !periodIsDefault ? { key: 'period', label: embedSummary, onRemove: () => onPeriodChange('all') } : null,
@@ -319,6 +336,7 @@ export default function ExecutiveDateFilterBar({
     else {
       onEntityChange?.('all');
       onCompanyChange?.('all');
+      onDepartmentChange?.('all');
       onUserChange?.('all');
       onApplicationChange?.('all');
       onPeriodChange('all');
@@ -435,6 +453,47 @@ export default function ExecutiveDateFilterBar({
                   style={{ borderColor: 'rgba(57, 119, 190, 0.45)' }}
                 >
                   {companySelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              </>
+            )}
+          </label>
+        ) : null}
+
+        {showDepartment ? (
+          <label className={embedLayout ? embedFieldClass : 'relative inline-flex min-w-[12rem] max-w-[16rem] flex-1 flex-col sm:flex-none'}>
+            <span className={filterLabelClass}>Department</span>
+            {embedLayout ? (
+              <span className={embedControlWrapClass}>
+                <Building2 className={embedIconClass} aria-hidden />
+                <select
+                  value={departmentValue}
+                  onChange={(e) => onDepartmentChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={departmentLabelText}
+                >
+                  {departmentSelectOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronsUpDown className={embedChevronClass} />
+              </span>
+            ) : (
+              <>
+                <select
+                  value={departmentValue}
+                  onChange={(e) => onDepartmentChange?.(e.target.value)}
+                  className={filterSelectClass}
+                  title={departmentLabelText}
+                  style={{ borderColor: 'rgba(57, 119, 190, 0.45)' }}
+                >
+                  {departmentSelectOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.label}
                     </option>
@@ -902,6 +961,16 @@ export default function ExecutiveDateFilterBar({
               value={companyValue}
               onChange={(next) => onCompanyChange?.(next)}
               options={companySelectOptions}
+              className={sheetSelectClass}
+            />
+          </NeMobileFilterField>
+        ) : null}
+        {showDepartment ? (
+          <NeMobileFilterField label="Department">
+            <NeSheetSelect
+              value={departmentValue}
+              onChange={(next) => onDepartmentChange?.(next)}
+              options={departmentSelectOptions}
               className={sheetSelectClass}
             />
           </NeMobileFilterField>

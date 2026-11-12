@@ -41,7 +41,7 @@ export default function EmbedDashboardHero({
             {identity.name ? <span className="ne-hi-wave" role="img" aria-label="Hi">👋</span> : null}
           </h1>
           {identity.title ? (
-            <p className={`mt-0.5 ${NE_TYPE.pageSubtitle}`}>{identity.title}</p>
+            <p className={`mt-0.5 break-words ${NE_TYPE.pageSubtitle}`}>{identity.title}</p>
           ) : null}
         </div>
         {actions ? <div className="ne-hero-actions flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div> : null}

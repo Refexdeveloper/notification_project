@@ -283,6 +283,12 @@ ITSM_OPEN="$(jq -r '.open_tickets' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_CLOSED="$(jq -r '.closed_tickets' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_OPEN="$(jq -r '.sla_breached_open' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_SLA_CLOSED="$(jq -r '.sla_breached_closed' <<< "${ITSM_SUMMARY_JSON}")"
+# SLA Breached = aasik_ITSM IT Admin rule on the live Kissflow report (SQL is fallback only).
+if report_live_itsm_sla "${ITSM_PROCESS_ID}" ""; then
+  echo "[combined] Live Kissflow SLA (aasik Admin rule): open=${REPORT_LIVE_SLA_OPEN} closed=${REPORT_LIVE_SLA_CLOSED} (sql open=${ITSM_SLA_OPEN} closed=${ITSM_SLA_CLOSED})"
+  ITSM_SLA_OPEN="${REPORT_LIVE_SLA_OPEN}"
+  ITSM_SLA_CLOSED="${REPORT_LIVE_SLA_CLOSED}"
+fi
 ITSM_SLA_TOTAL="$(( ITSM_SLA_OPEN + ITSM_SLA_CLOSED ))"
 ITSM_OPENED_TODAY="$(jq -r '.opened_today // 0' <<< "${ITSM_SUMMARY_JSON}")"
 ITSM_CLOSED_TODAY="$(jq -r '.closed_today // 0' <<< "${ITSM_SUMMARY_JSON}")"

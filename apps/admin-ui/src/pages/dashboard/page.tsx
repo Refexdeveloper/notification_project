@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -146,6 +146,16 @@ function DashboardCard({
   );
 }
 
+type ConsolidatedKpiFocus =
+  | 'total'
+  | 'users'
+  | 'sign_in_today'
+  | 'adoption_today'
+  | 'open'
+  | 'closed'
+  | 'opened_today'
+  | 'closed_today';
+
 function KpiCard({
   label,
   value,
@@ -154,6 +164,10 @@ function KpiCard({
   hint,
   styleIndex = 0,
   shareOf,
+  active = false,
+  onClick,
+  surface,
+  themes,
 }: {
   label: string;
   value: number;
@@ -162,6 +176,10 @@ function KpiCard({
   hint?: string;
   styleIndex?: number;
   shareOf?: number;
+  active?: boolean;
+  onClick?: () => void;
+  surface?: 'themed' | 'white';
+  themes?: typeof EMBED_EXEC_KPI_THEMES;
 }) {
   return (
     <EmbedKpiCard
@@ -171,9 +189,12 @@ function KpiCard({
       hint={hint}
       suffix={suffix}
       styleIndex={styleIndex}
-      themes={EMBED_EXEC_KPI_THEMES}
+      themes={themes || EMBED_EXEC_KPI_THEMES}
       appKind="consolidated"
       shareOf={shareOf}
+      active={active}
+      onClick={onClick}
+      surface={surface}
     />
   );
 }
@@ -291,6 +312,15 @@ export default function DashboardPage() {
   const [filterLoading, setFilterLoading] = useState(false);
   const [catalogRecords, setCatalogRecords] = useState<AppRecordRow[]>([]);
   const [catalogReady, setCatalogReady] = useState(false);
+  const [kpiFocus, setKpiFocus] = useState<ConsolidatedKpiFocus | null>(null);
+  const appsSectionRef = useRef<HTMLDivElement | null>(null);
+
+  const handleKpiClick = useCallback((focus: ConsolidatedKpiFocus) => {
+    setKpiFocus((prev) => (prev === focus ? null : focus));
+    window.requestAnimationFrame(() => {
+      appsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
 
   useEffect(() => {
     const fromUrl = searchParams.get('app');
@@ -584,9 +614,23 @@ export default function DashboardPage() {
   );
 
   const filteredApps = useMemo(() => {
-    if (selectedAppId === 'all') return displayApplications;
-    return displayApplications.filter((a) => `${a.environment}-${a.application_id}` === selectedAppId);
-  }, [displayApplications, selectedAppId]);
+    const list = selectedAppId === 'all'
+      ? displayApplications
+      : displayApplications.filter((a) => `${a.environment}-${a.application_id}` === selectedAppId);
+    if (!kpiFocus) return list;
+    const metricOf = (app: DashboardApplication): number => {
+      const m = app.metrics;
+      if (kpiFocus === 'total') return appTotalItems(m);
+      if (kpiFocus === 'users') return m.total_users || 0;
+      if (kpiFocus === 'sign_in_today' || kpiFocus === 'adoption_today') return m.sign_in_today || 0;
+      if (kpiFocus === 'open') return m.open_tickets || 0;
+      if (kpiFocus === 'closed') return m.closed_tickets || 0;
+      if (kpiFocus === 'opened_today') return m.opened_today || 0;
+      if (kpiFocus === 'closed_today') return m.closed_today || 0;
+      return 0;
+    };
+    return [...list].sort((a, b) => metricOf(b) - metricOf(a));
+  }, [displayApplications, selectedAppId, kpiFocus]);
 
   const totals = useMemo(() => aggregateMetrics(filteredApps), [filteredApps]);
 
@@ -676,9 +720,23 @@ export default function DashboardPage() {
                       value={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       styleIndex={0}
+                      active={kpiFocus === 'total'}
+                      onClick={() => handleKpiClick('total')}
                     />
-                    <KpiCard label="Total users" value={totals.total_users} styleIndex={1} />
-                    <KpiCard label="Active / signed in today" value={totals.sign_in_today} styleIndex={2} />
+                    <KpiCard
+                      label="Total users"
+                      value={totals.total_users}
+                      styleIndex={1}
+                      active={kpiFocus === 'users'}
+                      onClick={() => handleKpiClick('users')}
+                    />
+                    <KpiCard
+                      label="Active / signed in today"
+                      value={totals.sign_in_today}
+                      styleIndex={2}
+                      active={kpiFocus === 'sign_in_today'}
+                      onClick={() => handleKpiClick('sign_in_today')}
+                    />
                     <EmbedKpiCard
                       label="Adoption today"
                       value={
@@ -691,23 +749,42 @@ export default function DashboardPage() {
                       themes={[EMBED_ADOPTION_THEME]}
                       styleIndex={0}
                       surface="white"
+                      active={kpiFocus === 'adoption_today'}
+                      onClick={() => handleKpiClick('adoption_today')}
                     />
                     <KpiCard
                       label="Open items"
                       value={totals.open_tickets}
                       shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       styleIndex={2}
+                      active={kpiFocus === 'open'}
+                      onClick={() => handleKpiClick('open')}
                     />
                     <KpiCard
                       label="Closed items"
                       value={totals.closed_tickets}
                       shareOf={totals.open_tickets + totals.closed_tickets + totals.rejected}
                       styleIndex={3}
+                      active={kpiFocus === 'closed'}
+                      onClick={() => handleKpiClick('closed')}
                     />
-                    <KpiCard label="Opened today" value={totals.opened_today} styleIndex={0} />
-                    <KpiCard label="Closed today" value={totals.closed_today} styleIndex={2} />
+                    <KpiCard
+                      label="Opened today"
+                      value={totals.opened_today}
+                      styleIndex={0}
+                      active={kpiFocus === 'opened_today'}
+                      onClick={() => handleKpiClick('opened_today')}
+                    />
+                    <KpiCard
+                      label="Closed today"
+                      value={totals.closed_today}
+                      styleIndex={2}
+                      active={kpiFocus === 'closed_today'}
+                      onClick={() => handleKpiClick('closed_today')}
+                    />
                   </div>
 
+                <div ref={appsSectionRef} id="ne-consolidated-apps">
                 <SectionHeader icon={LayoutGrid} title="Application detail" accent="from-blue-500 to-indigo-600" />
 
                 <div
@@ -752,6 +829,7 @@ export default function DashboardPage() {
                       />
                     ))
                   )}
+                </div>
                 </div>
               </div>
           )}

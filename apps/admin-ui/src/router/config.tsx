@@ -9,6 +9,8 @@ import TemplatesPage from "@/pages/templates/page";
 import TemplateDetailPage from "@/pages/templates/detail/page";
 import SchedulersPage from "@/pages/schedulers/page";
 import SchedulerDetailPage from "@/pages/schedulers/detail/page";
+import SchedulesPage from "@/pages/schedules/page";
+import { isBackendApiMode } from "@/services/backendApi";
 import HistoryPage from "@/pages/history/page";
 import LogsPage from "@/pages/logs/page";
 import AuditLogsPage from "@/pages/audit-logs/page";
@@ -58,6 +60,10 @@ const routes: RouteObject[] = [
         <SchedulersPage />
       </PrototypeOnlyGate>
     ),
+  },
+  {
+    path: "/schedules",
+    element: isBackendApiMode() ? <SchedulesPage /> : <Navigate to="/schedulers" replace />,
   },
   {
     path: "/history",

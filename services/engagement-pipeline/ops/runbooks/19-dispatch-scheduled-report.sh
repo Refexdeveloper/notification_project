@@ -54,7 +54,11 @@ SCHEDULE_JSON="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${P
       COALESCE(
         json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'CC'),
         '[]'::json
-      ) AS recipients_cc
+      ) AS recipients_cc,
+      COALESCE(
+        json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'BCC'),
+        '[]'::json
+      ) AS recipients_bcc
     FROM engagement_reporting.report_schedule rs
     JOIN engagement_reporting.report_definition_version rdv
       ON rdv.report_definition_version_id = rs.report_definition_version_id
@@ -74,6 +78,7 @@ TEMPLATE_NAME="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_name // empty
 PROCESS_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.process_id // empty')"
 TO_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_to | join(",")')"
 CC_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.recipients_cc | join(",")')"
+BCC_LIST="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '(.recipients_bcc // []) | join(",")')"
 export TEMPLATE_ID="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.template_id // empty')"
 export TEMPLATE_NAME
 export FROM_EMAIL="$(printf '%s' "${SCHEDULE_JSON}" | jq -r '.from_email // empty')"
@@ -107,11 +112,13 @@ if [[ -n "${TEST_RECIPIENT:-}" ]]; then
   export RECIPIENT="${TEST_RECIPIENT}"
   export TO_LIST="${TEST_RECIPIENT}"
   export CC=""
-  log "Test send: delivering only to ${RECIPIENT} (Cc cleared)"
+  export BCC=""
+  log "Test send: delivering only to ${RECIPIENT} (Cc and Bcc cleared)"
 else
   export TEST_SEND=false
   export RECIPIENT="${TO_LIST}"
   export CC="${CC_LIST}"
+  export BCC="${BCC_LIST}"
 fi
 
 report_cache_key() {

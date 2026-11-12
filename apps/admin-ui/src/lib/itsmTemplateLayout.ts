@@ -35,3 +35,19 @@ export function ensureItsmSourcePlaceholders(html: string): { html: string; chan
 export function preferExtrovisStarter(templateName: string): boolean {
   return /extrovis/i.test(String(templateName || ''));
 }
+
+/** Extrovis-process entity layouts (shared process, separate schedules). */
+export function resolveItsmEntityStarterId(templateName: string): string {
+  const name = String(templateName || '');
+  if (/kavis/i.test(name)) return 'itsm-kavispharma';
+  if (/modepro/i.test(name)) return 'itsm-modepro';
+  if (/extrovis/i.test(name)) return 'itsm-extrovis';
+  return 'itsm';
+}
+
+export function itsmEntityStarterLabel(starterId: string): string {
+  if (starterId === 'itsm-kavispharma') return 'Kavis Pharma';
+  if (starterId === 'itsm-modepro') return 'Modepro';
+  if (starterId === 'itsm-extrovis') return 'Extrovis';
+  return 'Refex ITSM';
+}

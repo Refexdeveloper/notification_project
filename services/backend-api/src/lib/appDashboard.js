@@ -418,6 +418,53 @@ WHERE rn = 1
 ORDER BY user_name
 `;
 
+function istYmd(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+/**
+ * Users / Signed in today / Adoption from one roster, so Signed in today can never
+ * exceed Users and adoption never passes 100%. Sync / cache totals are not changed.
+ * Empty roster → keep the fallback numbers, clamped to the user count.
+ */
+function rosterSignInEngagement(roster, fallback = {}) {
+  const list = Array.isArray(roster) ? roster : [];
+  if (!list.length) {
+    const total = Number(fallback.total_users || 0);
+    const active = Math.min(Number(fallback.active_today || 0), total);
+    const never = Math.min(Number(fallback.never_logged_in || 0), total);
+    return {
+      ...fallback,
+      total_users: total,
+      active_today: active,
+      never_logged_in: never,
+      sign_in_rate_today: total ? Math.round((active / total) * 100) : 0,
+      sign_in_rate_overall: total ? Math.round(((total - never) / total) * 100) : 0,
+    };
+  }
+  const today = istYmd(new Date());
+  let active = 0;
+  let ever = 0;
+  let inactive = 0;
+  for (const u of list) {
+    const last = u?.last_sign_in || null;
+    if (u?.ever_logged_in === true || last) ever += 1;
+    if (last && istYmd(last) === today) active += 1;
+    else if (last) inactive += 1;
+  }
+  const total = list.length;
+  return {
+    total_users: total,
+    active_today: active,
+    never_logged_in: total - ever,
+    inactive,
+    sign_in_rate_overall: Math.round((ever / total) * 100),
+    sign_in_rate_today: Math.round((active / total) * 100),
+  };
+}
+
 async function loadAppRoster(pool, environment, applicationId) {
   try {
     const { rows } = await pool.query(APP_ROSTER_SQL, [environment, applicationId]);
@@ -1186,19 +1233,12 @@ async function buildDashboardFromEngagementCache(pool, ctx) {
     });
   }
 
-  const engagement = {
+  const engagement = rosterSignInEngagement(appUsers, {
     total_users: Number(appUsers.length || totals.total_users || 0),
     active_today: Number(totals.active_today || 0),
     never_logged_in: Number(totals.never_logged_in || 0),
     inactive: Number(totals.inactive || 0),
-    sign_in_rate_overall: 0,
-    sign_in_rate_today: 0,
-  };
-  if (engagement.total_users > 0) {
-    engagement.sign_in_rate_today = Math.round((engagement.active_today / engagement.total_users) * 100);
-    const ever = Math.max(0, engagement.total_users - engagement.never_logged_in);
-    engagement.sign_in_rate_overall = Math.round((ever / engagement.total_users) * 100);
-  }
+  });
   const adoptionPct = engagement.sign_in_rate_overall;
 
   const SOURCE_ORDER = ['Email', 'WhatsApp', 'Mobile', 'Web', 'Other'];
@@ -2778,6 +2818,8 @@ SELECT
   }
   users = sortByClosureRatioDesc(users).slice(0, lead ? 100 : 50);
 
+  const appRoster = await loadAppRoster(pool, environment, applicationId);
+  engagement = rosterSignInEngagement(appRoster, engagement);
   const adoptionPct = Number(engagement.sign_in_rate_overall || 0);
 
   const byProcessRaw = Array.isArray(row.by_process) ? row.by_process : [];
@@ -2946,7 +2988,7 @@ SELECT
       };
     })(),
     users,
-    app_users: await loadAppRoster(pool, environment, applicationId),
+    app_users: appRoster,
     board_filter_note: boardIdFilter
       ? 'Board selected — item KPIs still come from connected processes (boards have no ticket rows in PostgreSQL).'
       : undefined,
@@ -2957,6 +2999,7 @@ SELECT
 
 module.exports = {
   loadApplicationDashboard,
+  rosterSignInEngagement,
   isTravelApplication,
   TRAVEL_APP_ID,
 };

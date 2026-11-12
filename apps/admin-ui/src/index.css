@@ -598,39 +598,55 @@
   width: 100%;
   height: 220px;
   pointer-events: none;
+  overflow: hidden;
 }
 .ne-p2p-wave { transform-box: fill-box; transform-origin: center; animation: ne-p2p-drift 16s ease-in-out infinite alternate; }
 .ne-p2p-wave-2 { animation-duration: 20s; animation-direction: alternate-reverse; }
+.ne-p2p-badge { transform-box: fill-box; transform-origin: center; animation: ne-p2p-float 7s ease-in-out infinite; }
 @keyframes ne-p2p-drift {
   from { transform: translateX(0); }
   to { transform: translateX(-28px); }
 }
-.app-canvas:has(.ne-dash) {
+@keyframes ne-p2p-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+/* Page wash — match CEO /techhelpdesk /travel /expense /solar (embed + main). */
+.app-canvas:has(.ne-dash),
+body.embed-shell .app-canvas:has(.ne-dash) {
   background-color: #f7f8fb;
   background-image: linear-gradient(180deg, #e7eef8 0%, #f4f7fb 42%, #f7f8fb 100%);
+  background-attachment: scroll;
 }
-.app-canvas:has(.ne-dash.ne-scene-itsm) {
+.app-canvas:has(.ne-dash.ne-scene-itsm),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-itsm) {
   background-color: #f3f8fb;
   background-image: linear-gradient(180deg, #d4f4fb 0%, #e9f8fc 38%, #f3f8fb 100%);
 }
 .app-canvas:has(.ne-dash.ne-scene-travel),
-.app-canvas:has(.ne-dash.ne-scene-expense) {
+.app-canvas:has(.ne-dash.ne-scene-expense),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-travel),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-expense) {
   background-color: #f3f8fb;
   background-image: linear-gradient(180deg, #d4f4fb 0%, #e9f8fc 38%, #f3f8fb 100%);
 }
-.app-canvas:has(.ne-dash.ne-scene-solar) {
+.app-canvas:has(.ne-dash.ne-scene-solar),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-solar) {
   background-color: #fbf8f1;
   background-image: linear-gradient(180deg, #fff0c2 0%, #fff8e8 40%, #fbf8f1 100%);
 }
-.app-canvas:has(.ne-dash.ne-scene-p2p) {
+.app-canvas:has(.ne-dash.ne-scene-p2p),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-p2p) {
   background-color: #f4fbfa;
   background-image: linear-gradient(180deg, #d7f3ee 0%, #f1faf8 40%, #f4fbfa 100%);
 }
-.app-canvas:has(.ne-dash.ne-scene-pm) {
+.app-canvas:has(.ne-dash.ne-scene-pm),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-pm) {
   background-color: #f8f7fb;
   background-image: linear-gradient(180deg, #ebe4fb 0%, #f6f4fb 40%, #f8f7fb 100%);
 }
-.app-canvas:has(.ne-dash.ne-scene-lead) {
+.app-canvas:has(.ne-dash.ne-scene-lead),
+body.embed-shell .app-canvas:has(.ne-dash.ne-scene-lead) {
   background-color: #f6fbf7;
   background-image: linear-gradient(180deg, #d9f5e4 0%, #f2fbf5 40%, #f6fbf7 100%);
 }

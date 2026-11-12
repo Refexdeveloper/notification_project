@@ -30,6 +30,7 @@ export const navigationItems: NavItem[] = [
   { id: 'platform-users', label: 'Platform users', hint: 'Portal access & roles', icon: Shield, path: '/platform-users' },
   { id: 'templates', label: 'Report templates', hint: 'HTML emails per app', icon: Mail, path: '/templates' },
   { id: 'schedulers', label: 'Schedules', hint: 'When & who to send', icon: CalendarClock, path: '/schedulers' },
+  { id: 'schedules', label: 'Schedules', hint: 'All HTML report schedules · To, Cc, Bcc', icon: CalendarClock, path: '/schedules' },
   { id: 'history', label: 'Sent history', hint: 'What went out', icon: History, path: '/history' },
   { id: 'email-settings', label: 'Settings', hint: 'SMTP login, app password, and full refresh', icon: KeyRound, path: '/email-settings' },
   { id: 'external-apis', label: 'External APIs', hint: 'GCP APIs used outside Notification Engine, with request logs', icon: Plug, path: '/external-apis' },

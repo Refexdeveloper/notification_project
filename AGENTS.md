@@ -21,6 +21,7 @@ GCP: project `master-diorama-489103-u2`, region `asia-south1`.
 - ITSM Closed / Today Closed / Today Open must match **Admin All** rules in `aasik_ITSM` (`kfITServiceDashboard.js`) — no Me/Team/Closed By. See release note.
 - ITSM **Source** (Email/Mobile/…) must read Kissflow `Source` **and** report Column ids (`Column_BDSZ_sAHys` / `Column_hFjGV8lRrn`); never ship all-zero Email/Mobile when tickets exist. Helper: `itsm-ticket-source.js`.
 - KPI source of truth for process reports: live Kissflow overlay + full ingest on schedules.
+- ITSM **SLA Breached** (Open · Closed + MIS user column) = aasik_ITSM **IT Admin** rule on the live Kissflow report (`count-itsm-sla-kpis.js`, `report_live_itsm_sla`): Open = agent-pipeline Open Tickets, Stages InProgress, now − last modified > Closure_Time (approvals / Hold never count); Closed = Status says breached. SQL created→now is fallback only.
 - Never commit secrets, `ops/tmp/`, or noisy `data/audit/` artifacts.
 
 ## Tests for ITSM HTML data

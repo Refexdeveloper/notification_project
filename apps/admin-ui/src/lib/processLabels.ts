@@ -109,6 +109,12 @@ export function entityFilterForTemplate(
 ): string {
   const hay = `${template?.name || ''} ${template?.subject || ''} ${template?.description || ''}`;
   if (isRilRmcLabel(hay) || (/\brmc\b/i.test(hay) && /lead/i.test(hay))) return RIL_RMC_ENTITY_CODE;
+  // Non-Refex Tech Helpdesk entities share the Extrovis process.
+  if (isExtrovisProcess(processId)) {
+    if (/kavis/i.test(hay)) return 'Kavispharma';
+    if (/modepro/i.test(hay)) return 'Modepro';
+    if (/extrovis/i.test(hay)) return 'Extrovis';
+  }
   return defaultEntityFilterForProcess(processId);
 }
 
@@ -151,7 +157,8 @@ export function formatEntityFilterLabel(filter: string | undefined | null): stri
 
 /** Default entity filter for a schedule based on process. */
 export function defaultEntityFilterForProcess(processId: string): string {
-  if (isExtrovisProcess(processId)) return 'all';
+  // Extrovis process hosts Extrovis + Kavis + Modepro — default to Extrovis entity only.
+  if (isExtrovisProcess(processId)) return 'Extrovis';
   if (processId === 'Live_IT_Service_Request_A00') return 'all';
   if (isTravelProcess(processId)) return 'Venwind';
   return '';

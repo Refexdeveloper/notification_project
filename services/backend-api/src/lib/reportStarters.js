@@ -112,7 +112,7 @@ const STARTER_CATALOG = [
   {
     id: 'itsm-extrovis',
     name: 'Extrovis ITSM report',
-    description: 'Extrovis ticket report — no user sign-in overview (tickets, source, activity, assignees only).',
+    description: 'Extrovis entity tickets only — no user sign-in overview (tickets, source, activity, assignees).',
     seed_path: 'db/seeds/itsm-extrovis-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -131,6 +131,52 @@ const STARTER_CATALOG = [
       'ReportBody',
     ],
     best_for: ['extrovis', 'IT_Service_Management_A00'],
+  },
+  {
+    id: 'itsm-kavispharma',
+    name: 'Kavis Pharma ITSM report',
+    description: 'Kavis Pharma entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview).',
+    seed_path: 'db/seeds/itsm-kavispharma-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalTickets',
+      'OpenTickets',
+      'ClosedTickets',
+      'SlaBreachedTotal',
+      'SlaBreachedOpen',
+      'SlaBreachedClosed',
+      'OpenedToday',
+      'ClosedToday',
+      'SourceBreakdownHtml',
+      'UserTableHtml',
+      'PendingDetailHtml',
+      'ReportBody',
+    ],
+    best_for: ['kavispharma', 'kavis', 'IT_Service_Management_A00'],
+  },
+  {
+    id: 'itsm-modepro',
+    name: 'Modepro ITSM report',
+    description: 'Modepro entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview).',
+    seed_path: 'db/seeds/itsm-modepro-engagement-template.html',
+    placeholders: [
+      'ReportTitle',
+      'ReportDate',
+      'TotalTickets',
+      'OpenTickets',
+      'ClosedTickets',
+      'SlaBreachedTotal',
+      'SlaBreachedOpen',
+      'SlaBreachedClosed',
+      'OpenedToday',
+      'ClosedToday',
+      'SourceBreakdownHtml',
+      'UserTableHtml',
+      'PendingDetailHtml',
+      'ReportBody',
+    ],
+    best_for: ['modepro', 'IT_Service_Management_A00'],
   },
   {
     id: 'pm',
@@ -681,8 +727,13 @@ const STARTER_CATALOG = [
  */
 function suggestStarterId(applicationId = '', context = {}) {
   const id = String(applicationId || '').toLowerCase();
-  if (id.includes('extrovis')) return 'itsm-extrovis';
-  if (id.includes('it_service') || id.includes('itsm')) return 'itsm';
+  // App id first — never map Lead_* Modepro to ITSM Modepro starters.
+  if (id.includes('it_service') || id.includes('itsm')) {
+    if (id.includes('kavis')) return 'itsm-kavispharma';
+    if (id.includes('modepro')) return 'itsm-modepro';
+    if (id.includes('extrovis')) return 'itsm-extrovis';
+    return 'itsm';
+  }
   if (id.includes('project_management') || id.includes('project_sub_task')) return 'pm';
   if (id.includes('solar') || id.includes('technician_reimbursement') || id.includes('reinvestment')) {
     return 'solar-reinvestment';
@@ -704,13 +755,16 @@ function suggestStarterId(applicationId = '', context = {}) {
     .join(' ')
     .toLowerCase();
 
-  if (haystack.includes('extrovis')) return 'itsm-extrovis';
-  if (
+  const isItsmHay =
     haystack.includes('it_service')
     || haystack.includes('itsm')
     || haystack.includes('sla_breach')
-    || (haystack.includes('ticket') && haystack.includes('assigned'))
-  ) {
+    || (haystack.includes('ticket') && haystack.includes('assigned'));
+  // Only when ITSM context — Lead "Modepro website" must stay lead-modepro / lead.
+  if (isItsmHay && haystack.includes('kavis')) return 'itsm-kavispharma';
+  if (isItsmHay && haystack.includes('modepro')) return 'itsm-modepro';
+  if (isItsmHay && haystack.includes('extrovis')) return 'itsm-extrovis';
+  if (isItsmHay) {
     return 'itsm';
   }
   if (

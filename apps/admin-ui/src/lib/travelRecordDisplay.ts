@@ -78,6 +78,47 @@ export function isTravelBookingRow(row: AppRecordRow): boolean {
   return !process;
 }
 
+export function isTravelExpenseRow(row: AppRecordRow): boolean {
+  const process = String(row.process_id || row.subject || '').toLowerCase();
+  return /expense_management|amount claimed|travel expense/.test(process)
+    || (process.includes('expense') && !/advance/.test(process));
+}
+
+/**
+ * Travel Expense MIS: (A) no Claim without Raised; (B) Claim cannot exceed Raised.
+ * Claim column is `amount` (and `claimed_amount`).
+ */
+export function normalizeTravelExpenseAmounts(
+  raised: unknown,
+  claimed: unknown,
+): { raised_amount: number | undefined; claimed_amount: number | undefined; amount: number | undefined } {
+  const raisedN = Number(raised);
+  const claimN = Number(claimed);
+  const raisedOk = Number.isFinite(raisedN) && raisedN > 0 ? raisedN : undefined;
+  if (!raisedOk) {
+    return { raised_amount: undefined, claimed_amount: undefined, amount: undefined };
+  }
+  if (!Number.isFinite(claimN) || claimN <= 0) {
+    return { raised_amount: raisedOk, claimed_amount: undefined, amount: undefined };
+  }
+  const claimOk = claimN > raisedOk ? raisedOk : claimN;
+  return { raised_amount: raisedOk, claimed_amount: claimOk, amount: claimOk };
+}
+
+/** Apply raised/claim rules on Travel Expense rows only (booking/advance untouched). */
+export function annotateTravelExpenseAmountRows(rows: AppRecordRow[]): AppRecordRow[] {
+  return (rows || []).map((row) => {
+    if (!isTravelExpenseRow(row)) return row;
+    const normalized = normalizeTravelExpenseAmounts(row.raised_amount, row.claimed_amount);
+    return {
+      ...row,
+      raised_amount: normalized.raised_amount,
+      claimed_amount: normalized.claimed_amount,
+      amount: normalized.amount,
+    };
+  });
+}
+
 export function isTravelCoreColumn(colId: string, pack?: TravelPackKind | null): boolean {
   if (pack === 'booking') return TRAVEL_REQUEST_ALWAYS.has(colId);
   if (pack === 'advance') return TRAVEL_ADVANCE_ALWAYS.has(colId);

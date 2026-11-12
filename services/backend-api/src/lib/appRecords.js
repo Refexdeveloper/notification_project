@@ -119,16 +119,23 @@ const ITSM_CLOSURE_MINUTES_KEYS = [
 const ITSM_TAT_MINUTES_KEYS = [
   'TAT_Minutes', 'TurnAround_Time_TAT', 'Column_uzB76CIUdv', 'Column_VO-1shRU1Q',
 ];
-const ITSM_FORM_STATUS_KEYS = [
-  'Statu_1',
-  'Column_ps84EEKkEI',
-  'Column_WRiZDgVSqj',
+/** Refex overall-report Stages (display). aasik getRefexReportStagesLabel. */
+const ITSM_REPORT_STAGES_KEYS = ['Column_Bug5EApiHs', 'Stages'];
+/** Process Stages — SLA Hold / InProgress only (never Statu_1). */
+const ITSM_PROCESS_STAGES_KEYS = ['Column_GooYV3HuY1', 'Column_JUGHj6d2Xj', 'Stages'];
+/** Extrovis Stage column = form Status (Statu_1). */
+const ITSM_EXTROVIS_STAGE_KEYS = ['Statu_1', 'Column_ps84EEKkEI', 'Column_WRiZDgVSqj'];
+/** Refex Ticket Status — Open/Closed fallback when Stages is blank. */
+const ITSM_REFEX_STATUS_KEYS = [
   'Column_0GDnNoEuA7',
-  'Column_69zTtmtO92',
-  'Stages',
-  'Column_JUGHj6d2Xj',
-  'Column_GooYV3HuY1',
   'Status',
+  '_status',
+];
+/** SQL preview only — real Stage is computed in extractItsmStageFromPayload. */
+const ITSM_FORM_STATUS_KEYS = [
+  ...ITSM_REPORT_STAGES_KEYS,
+  ...ITSM_PROCESS_STAGES_KEYS,
+  ...ITSM_EXTROVIS_STAGE_KEYS,
 ];
 const ITSM_REOPENED_DATE_KEYS = ['Reopened_On', 'Reopened_Date', 'ReopenedOn', 'Reopened_Date_Time'];
 const ITSM_REOPENED_FLAG_KEYS = ['Reopened_Ticket', 'Reopened', 'Column_C7s_oevsgX', 'Column_U0QcqEXR63'];
@@ -203,6 +210,7 @@ function applyItsmMisExtras(records, extrasById) {
     const subject = summary
       || (description && existingSubject === description ? '' : existingSubject)
       || existingSubject;
+    const formStatus = blankMis(extra.form_status) ? row.form_status : extra.form_status;
     return {
       ...row,
       ticket_type: blankMis(row.ticket_type) ? extra.ticket_type : row.ticket_type,
@@ -216,7 +224,10 @@ function applyItsmMisExtras(records, extrasById) {
       sla_minutes: blankNumericMis(row.sla_minutes) ? extra.sla_minutes : row.sla_minutes,
       closure_minutes: blankNumericMis(row.closure_minutes) ? extra.closure_minutes : row.closure_minutes,
       tat_minutes: blankNumericMis(row.tat_minutes) ? extra.tat_minutes : row.tat_minutes,
-      form_status: blankMis(row.form_status) ? extra.form_status : row.form_status,
+      // Always prefer entity-aware Stage / process Stages from payload (aasik rules).
+      // Closed Ticket Status always wins over a stale InProgress Stages value.
+      form_status: closed ? 'Closed' : formStatus,
+      process_stages: blankMis(extra.process_stages) ? row.process_stages : extra.process_stages,
       reopened_at: row.reopened_at || extra.reopened_at || null,
       // KPI Closed Today uses reopen_entered_at (step move), not _modified_at.
       closed_at: row.closed_at || extra.closed_at || extra.completed_at || null,
@@ -342,7 +353,11 @@ async function loadItsmMisExtrasById(pool, environment, applicationId) {
       sla_minutes: row.sla_minutes || undefined,
       closure_minutes: row.closure_minutes || undefined,
       tat_minutes: row.tat_minutes || undefined,
-      form_status: row.form_status || undefined,
+      form_status: extractItsmStageFromPayload(
+        row.source_payload,
+        row.request_id || '',
+      ) || undefined,
+      process_stages: extractItsmProcessStagesFromPayload(row.source_payload) || undefined,
       reopened_at: row.reopened_at || null,
       closed_at: row.closed_at || fromPayload.completed_at || null,
       agent_closed_at: fromPayload.agent_closed_at || null,
@@ -609,6 +624,31 @@ function pickFirstPositiveAmount(raw, keys) {
   return undefined;
 }
 
+/**
+ * Travel Expense MIS rules:
+ * A) Claim is not possible without a positive Raised amount.
+ * B) Claim must not exceed Raised — clamp display Claim to Raised when higher.
+ * Returns raised/claimed for columns; `amount` is the Claim amount column value.
+ */
+function normalizeTravelExpenseAmounts(raised, claimed) {
+  const raisedN = coerceAmount(raised);
+  const claimN = coerceAmount(claimed);
+  const raisedOk = raisedN != null && raisedN > 0 ? raisedN : undefined;
+  if (!raisedOk) {
+    return { raised_amount: undefined, claimed_amount: undefined, amount: undefined };
+  }
+  if (claimN == null || claimN <= 0) {
+    return { raised_amount: raisedOk, claimed_amount: undefined, amount: undefined };
+  }
+  const claimOk = claimN > raisedOk ? raisedOk : claimN;
+  return { raised_amount: raisedOk, claimed_amount: claimOk, amount: claimOk };
+}
+
+function isTravelExpenseProcessId(processId) {
+  const pid = String(processId || '').toLowerCase();
+  return pid.includes('expense') || pid.includes('amount claimed');
+}
+
 function parseExpenseTypeList(raw) {
   const joined = pickTravelExpenseType(raw) || pickString(raw, ['Expense_Type', 'Expense_Category']);
   if (!joined) return [];
@@ -725,6 +765,8 @@ function travelDetailFieldsFromRaw(raw, requestId) {
     payment_status: pickString(raw, ['Payment_Status_1', 'Payement_Type']) || undefined,
     raised_amount: pickFirstPositiveAmount(raw, EMS_RAISED_KEYS),
     claimed_amount: pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS),
+    department: pickString(raw, ['Department']) || undefined,
+    sla_deadline: pickDateTime(raw, ['SLA_Deadline']) || undefined,
   };
 }
 
@@ -733,6 +775,7 @@ const TRAVEL_DETAIL_KEYS = [
   'return_date', 'travel_days', 'linked_request_id', 'advance_claim_status',
   'expense_type', 'expense_date', 'airline', 'flight_number', 'designation',
   'remarks', 'payment_status', 'raised_amount', 'claimed_amount',
+  'department', 'sla_deadline',
 ];
 
 /** Person Name from jsonb user object — never dump raw JSON text. */
@@ -889,7 +932,7 @@ const ITSM_WORKFLOW_ASSIGNED_KEYS = [
 function serializeRecordItem(it, opts = {}) {
   const itsm = Boolean(opts.itsm);
   const assigned = usableAssignedName(it.assigned_to);
-  return {
+  const row = {
     id: String(it.id || it.instance_id || it.request_id),
     request_id: it.request_id,
     expense_type: it.expense_type,
@@ -934,6 +977,7 @@ function serializeRecordItem(it, opts = {}) {
     remarks: it.remarks || undefined,
     payment_status: it.payment_status || undefined,
     department: it.department || undefined,
+    sla_deadline: it.sla_deadline || undefined,
     expense_by: it.expense_by || undefined,
     restaurant: it.restaurant || undefined,
     vehicle_type: it.vehicle_type || undefined,
@@ -960,7 +1004,19 @@ function serializeRecordItem(it, opts = {}) {
     reopen_entered_at: it.reopen_entered_at || null,
     modified_at: it.modified_at || null,
     form_status: it.form_status || undefined,
+    process_stages: it.process_stages || undefined,
   };
+  if (row.status === 'closed' || row.status === 'rejected' || row.status === 'completed') {
+    row.form_status = 'Closed';
+  }
+  if (isTravelExpenseProcessId(row.process_id) || isTravelExpenseProcessId(row.subject)) {
+    // Claim column never falls back to `amount` (that often held Raised via pickAmount).
+    const normalized = normalizeTravelExpenseAmounts(row.raised_amount, row.claimed_amount);
+    row.raised_amount = normalized.raised_amount;
+    row.claimed_amount = normalized.claimed_amount;
+    row.amount = normalized.amount;
+  }
+  return row;
 }
 
 function recordHasProcessCompany(rec) {
@@ -1689,18 +1745,83 @@ async function fetchKissflowReportItems(environment, processId, reportId, creden
   return all;
 }
 
-function extractItsmStageFromPayload(raw) {
+function looksLikeExtrovisItsm(raw, entityHint = '') {
+  const blob = [
+    entityHint,
+    raw?.Entity,
+    raw?.entity,
+    raw?.Entity_Name,
+    raw?._process_id,
+    raw?.ProcessId,
+    raw?.process_id,
+    pickString(raw || {}, ['Request_ID', 'Request_Id', '_request_number', 'Ticket_ID']),
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  return blob.includes('extrovis');
+}
+
+function mapRefexTicketStatusDisplay(rawStatus) {
+  const text = String(rawStatus || '').trim();
+  if (!text || text === '—' || text === '-') return '';
+  const token = text.toLowerCase().replace(/[\s_-]+/g, '');
+  if (
+    token === 'open'
+    || token === 'inprogress'
+    || token === 'pending'
+    || token === 'assigned'
+    || token === 'draft'
+  ) return 'Open';
+  if (
+    token === 'closed'
+    || token === 'completed'
+    || token === 'complete'
+    || token === 'done'
+  ) return 'Closed';
+  if (token.includes('reject') || token.includes('withdraw') || token.includes('cancel')) {
+    return 'Rejected';
+  }
+  return text;
+}
+
+function pickFirstItsmField(raw, keys) {
   if (!raw || typeof raw !== 'object') return '';
-  for (const key of ITSM_FORM_STATUS_KEYS) {
+  for (const key of keys || []) {
     const value = pickString(raw, [key]);
-    if (!value || /^(yes|no)$/i.test(value)) continue;
+    if (!value || /^(yes|no)$/i.test(value) || value === '—' || value === '-') continue;
     return value;
   }
   return '';
 }
 
+/**
+ * Stage for MIS — same rules as aasik_ITSM:
+ * Refex → report Stages as stored; blank Stages → Open→InProgress / Closed→Closed.
+ * Extrovis → Statu_1 form Status.
+ * Ticket Status Closed / Rejected / Completed always forces Stage Closed
+ * (stored Stages can lag as InProgress after close).
+ */
+function extractItsmStageFromPayload(raw, entityHint = '') {
+  if (!raw || typeof raw !== 'object') return '';
+  const status = mapRefexTicketStatusDisplay(pickFirstItsmField(raw, ITSM_REFEX_STATUS_KEYS));
+  if (status === 'Closed' || status === 'Rejected') return 'Closed';
+  if (looksLikeExtrovisItsm(raw, entityHint)) {
+    return pickFirstItsmField(raw, ITSM_EXTROVIS_STAGE_KEYS);
+  }
+  const stored = pickFirstItsmField(raw, ITSM_REPORT_STAGES_KEYS);
+  if (stored) return stored;
+  if (status === 'Open') return 'InProgress';
+  return '';
+}
+
+/** Process Stages for SLA clock (aasik readProcessStagesField). */
+function extractItsmProcessStagesFromPayload(raw) {
+  return pickFirstItsmField(raw, ITSM_PROCESS_STAGES_KEYS);
+}
+
 function closerExtraFromRaw(raw) {
   const meta = extractItsmCloserMeta(raw);
+  const entityHint = pickString(raw || {}, [
+    'Request_ID', 'Request_Id', '_request_number', 'Ticket_ID', 'Entity', 'entity',
+  ]);
   return {
     closed_by: meta.closed_by || undefined,
     modified_at: meta.modified_at || null,
@@ -1708,7 +1829,8 @@ function closerExtraFromRaw(raw) {
     reopen_entered_at: meta.reopen_entered_at || null,
     completed_at: meta.completed_at || null,
     closed_at: meta.completed_at || null,
-    form_status: extractItsmStageFromPayload(raw) || undefined,
+    form_status: extractItsmStageFromPayload(raw, entityHint) || undefined,
+    process_stages: extractItsmProcessStagesFromPayload(raw) || undefined,
   };
 }
 
@@ -2042,7 +2164,7 @@ function buildLiveRecordRows(allItems, applicationId) {
       || (itsm ? '' : (companyKey ? companyKey.replace(/-/g, ' ') : ''))
       || entityLabel(entityKey);
     const projectKey = pm ? (projectKeyFromRaw(raw) || undefined) : undefined;
-    return {
+    const row = {
       id: String(raw?._id || requestId),
       instance_id: String(raw?._id || requestId),
       process_id: travel ? travelProcessTitle(processId) : processId,
@@ -2080,7 +2202,8 @@ function buildLiveRecordRows(allItems, applicationId) {
       airline: travelDetails.airline,
       flight_number: travelDetails.flight_number,
       designation: travelDetails.designation || emsDetails.designation,
-      department: emsDetails.department,
+      department: emsDetails.department || travelDetails.department,
+      sla_deadline: travelDetails.sla_deadline,
       expense_by: emsDetails.expense_by,
       restaurant: emsDetails.restaurant,
       vehicle_type: emsDetails.vehicle_type,
@@ -2109,10 +2232,26 @@ function buildLiveRecordRows(allItems, applicationId) {
       sla_minutes: itsm ? (pickString(raw, ITSM_SLA_MINUTES_KEYS) || undefined) : undefined,
       closure_minutes: itsm ? (pickString(raw, ITSM_CLOSURE_MINUTES_KEYS) || undefined) : undefined,
       tat_minutes: itsm ? (pickString(raw, ITSM_TAT_MINUTES_KEYS) || undefined) : undefined,
-      form_status: itsm ? (extractItsmStageFromPayload(raw) || undefined) : undefined,
+      form_status: itsm
+        ? (extractItsmStageFromPayload(raw, entityDisplay || entityKey || '') || undefined)
+        : undefined,
+      process_stages: itsm ? (extractItsmProcessStagesFromPayload(raw) || undefined) : undefined,
       reopened_at: itsm ? (pickDateTime(raw, ['Reopened_On', 'Reopened_Date', 'ReopenedOn']) || null) : null,
       source_channel: itsm ? classifyTicketSource(raw) : undefined,
     };
+    // Ticket Status Closed → Stage Closed (stored Stages may still say InProgress).
+    if (itsm && (row.status === 'closed' || row.status === 'rejected' || row.status === 'completed')) {
+      row.form_status = 'Closed';
+    }
+    // Travel Expense: Claim column = claimed_amount (not pickAmount which prefers Raised).
+    if (travel && isTravelExpenseProcessId(processId)) {
+      const claimSource = row.claimed_amount != null ? row.claimed_amount : pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS);
+      const normalized = normalizeTravelExpenseAmounts(row.raised_amount, claimSource);
+      row.raised_amount = normalized.raised_amount;
+      row.claimed_amount = normalized.claimed_amount;
+      row.amount = normalized.amount;
+    }
+    return row;
   });
 }
 
@@ -3062,4 +3201,5 @@ module.exports = {
   isPmApp,
   buildPmPortfolioFromRecords,
   pickAmountFromRaw,
+  normalizeTravelExpenseAmounts,
 };

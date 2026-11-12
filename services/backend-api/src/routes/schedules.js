@@ -194,6 +194,7 @@ function mapScheduleRow(row) {
   const recipients = Array.isArray(row.recipients) ? row.recipients : [];
   const toEmails = recipients.filter((r) => r.type === 'TO').map((r) => String(r.email));
   const ccEmails = recipients.filter((r) => r.type === 'CC').map((r) => String(r.email));
+  const bccEmails = recipients.filter((r) => r.type === 'BCC').map((r) => String(r.email));
   return {
     id: row.id,
     name: row.definition_name,
@@ -212,6 +213,7 @@ function mapScheduleRow(row) {
     status: row.is_active ? 'active' : 'paused',
     recipients: toEmails,
     cc: ccEmails,
+    bcc: bccEmails,
     created_at: row.created_at,
   };
 }
@@ -274,6 +276,7 @@ router.post('/', async (req, res) => {
   const recipientsTo = normalizeEmailList(body.recipients_to || body.recipients);
   const recipientsCc = normalizeEmailList(body.recipients_cc || body.cc);
   const isActive = Boolean(body.is_active);
+  const recipientsBcc = normalizeEmailList(body.recipients_bcc || body.bcc);
 
   if (!name) {
     return fail(res, req.correlationId, 'NAME_REQUIRED', 'Schedule name is required', 400);
@@ -312,6 +315,7 @@ router.post('/', async (req, res) => {
       recipientsTo,
       recipientsCc,
       subject: body.subject || name,
+      recipientsBcc,
       websiteFilter: body.website_filter || null,
       userGroupFilter: body.user_group_filter || null,
       entityFilter: body.entity_filter || null,
@@ -538,6 +542,7 @@ router.patch('/:scheduleId', async (req, res) => {
   const hasRecipientsTo = Object.prototype.hasOwnProperty.call(body, 'recipients_to');
   const hasRecipientsCc = Object.prototype.hasOwnProperty.call(body, 'recipients_cc');
   const hasIsActive = Object.prototype.hasOwnProperty.call(body, 'is_active');
+  const hasRecipientsBcc = Object.prototype.hasOwnProperty.call(body, 'recipients_bcc');
   const hasFromEmail = Object.prototype.hasOwnProperty.call(body, 'from_email');
   const hasCronExpression = Object.prototype.hasOwnProperty.call(body, 'cron_expression');
   const hasTimezone = Object.prototype.hasOwnProperty.call(body, 'timezone');
@@ -553,6 +558,7 @@ router.patch('/:scheduleId', async (req, res) => {
     !hasRecipientsTo &&
     !hasRecipientsCc &&
     !hasIsActive &&
+    !hasRecipientsBcc &&
     !hasFromEmail &&
     !hasCronExpression &&
     !hasTimezone &&
@@ -576,6 +582,7 @@ router.patch('/:scheduleId', async (req, res) => {
   const recipientsTo = hasRecipientsTo ? normalizeEmailList(body.recipients_to) : null;
   const recipientsCc = hasRecipientsCc ? normalizeEmailList(body.recipients_cc) : null;
   const isActive = hasIsActive ? Boolean(body.is_active) : null;
+  const recipientsBcc = hasRecipientsBcc ? normalizeEmailList(body.recipients_bcc) : null;
   const fromEmail = hasFromEmail ? normalizeSingleEmail(body.from_email) : null;
   const cronExpression = hasCronExpression ? String(body.cron_expression || '').trim() : null;
   const timezone = hasTimezone ? normalizeTimezone(body.timezone) : null;
@@ -627,7 +634,7 @@ router.patch('/:scheduleId', async (req, res) => {
       }
     }
 
-    if (hasRecipientsTo || hasRecipientsCc) {
+    if (hasRecipientsTo || hasRecipientsCc || hasRecipientsBcc) {
       const currentRecipients = Array.isArray(ownedRow.recipients) ? ownedRow.recipients : [];
       const nextTo = hasRecipientsTo
         ? recipientsTo
@@ -635,7 +642,9 @@ router.patch('/:scheduleId', async (req, res) => {
       const nextCc = hasRecipientsCc
         ? recipientsCc
         : currentRecipients.filter((r) => r.type === 'CC').map((r) => String(r.email));
-
+      const nextBcc = hasRecipientsBcc
+        ? recipientsBcc
+        : currentRecipients.filter((r) => r.type === 'BCC').map((r) => String(r.email));
       const activating = hasIsActive ? isActive : ownedRow.is_active;
       if (activating && nextTo.length === 0) {
         await client.query('ROLLBACK');
@@ -648,8 +657,10 @@ router.patch('/:scheduleId', async (req, res) => {
         );
       }
 
+      // MANAGER_OF_USER rows are not edited here and must survive a To/Cc/Bcc save.
       await client.query(
-        'DELETE FROM engagement_reporting.report_recipient WHERE report_schedule_id = $1::uuid',
+        `DELETE FROM engagement_reporting.report_recipient
+         WHERE report_schedule_id = $1::uuid AND recipient_type IN ('TO', 'CC', 'BCC')`,
         [scheduleId],
       );
 
@@ -666,6 +677,14 @@ router.patch('/:scheduleId', async (req, res) => {
           `INSERT INTO engagement_reporting.report_recipient
              (report_schedule_id, recipient_email, recipient_type)
            VALUES ($1::uuid, $2, 'CC')`,
+          [scheduleId, email],
+        );
+      }
+      for (const email of nextBcc) {
+        await client.query(
+          `INSERT INTO engagement_reporting.report_recipient
+             (report_schedule_id, recipient_email, recipient_type)
+           VALUES ($1::uuid, $2, 'BCC')`,
           [scheduleId, email],
         );
       }

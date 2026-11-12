@@ -17,6 +17,7 @@ import {
 import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
 import {
   annotateTravelBookingFareRows,
+  annotateTravelExpenseAmountRows,
   fareTrendFilterLabel,
   formatDeviationPct,
   isTravelBookingRow,
@@ -165,7 +166,9 @@ export default function EmbedAppRecordsTable({
   }, [textQuery]);
 
   const fareReadyInventory = useMemo(
-    () => (travelMode ? annotateTravelBookingFareRows(inventory) : inventory),
+    () => (travelMode
+      ? annotateTravelExpenseAmountRows(annotateTravelBookingFareRows(inventory))
+      : inventory),
     [inventory, travelMode],
   );
 

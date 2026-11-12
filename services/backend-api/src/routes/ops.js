@@ -292,6 +292,7 @@ router.post('/travel-live-send', async (req, res) => {
         `SELECT
            COALESCE(json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'TO'), '[]'::json) AS recipients_to,
            COALESCE(json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'CC'), '[]'::json) AS recipients_cc,
+           COALESCE(json_agg(DISTINCT rr.recipient_email) FILTER (WHERE rr.recipient_type = 'BCC'), '[]'::json) AS recipients_bcc,
            MAX(rdv.config->>'from_email') AS from_email
          FROM engagement_reporting.report_schedule rs
          JOIN engagement_reporting.report_definition_version rdv
@@ -312,6 +313,7 @@ router.post('/travel-live-send', async (req, res) => {
         status: 'queued',
         recipients_to: sched.recipients_to || [],
         recipients_cc: sched.recipients_cc || [],
+        recipients_bcc: sched.recipients_bcc || [],
         from_email: sched.from_email || null,
       });
     } catch (err) {

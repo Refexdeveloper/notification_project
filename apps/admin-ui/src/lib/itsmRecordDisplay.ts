@@ -43,8 +43,29 @@ export function itsmHumanName(row: AppRecordRow): string {
   return '';
 }
 
+/** Refex vs Extrovis — same split as aasik_ITSM dashboards. */
+export function isItsmExtrovisRow(row: AppRecordRow): boolean {
+  const blob = [
+    row.entity,
+    row.entity_key,
+    row.request_id,
+    row.process_id,
+    row.company,
+    row.company_name,
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  return blob.includes('extrovis');
+}
+
+/**
+ * Stage label — backend already applies aasik rules
+ * (Refex report Stages + Open→InProgress fallback; Extrovis Statu_1).
+ * Ticket Status Closed / Rejected / Completed → Stage Closed.
+ */
 export function itsmStageLabel(row: AppRecordRow): string {
-  const raw = String(row.form_status || '').trim();
+  const status = String(row.status || '').toLowerCase();
+  if (status === 'closed' || status === 'rejected' || status === 'completed') return 'Closed';
+  const raw = String(row.form_status || row.stages || '').trim();
+  if (!raw) return '';
   const token = raw.toLowerCase().replace(/[\s_-]+/g, '');
   if (token === 'completed' || token === 'complete') return 'Closed';
   if (token === 'inprogress') return 'InProgress';
@@ -164,14 +185,73 @@ function headSlaBudgetMinutes(row: AppRecordRow): number {
   return expected && expected > 0 ? expected : 0;
 }
 
+function stageToken(value: unknown): string {
+  return String(value || '').toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function isExtrovisPickupStep(row: AppRecordRow): boolean {
+  const step = String(row.current_step || '').toLowerCase();
+  return step.includes('pickup') || step.includes('pick up') || step.includes('pick-up');
+}
+
+/**
+ * aasik isRefexSlaStageInProgress / isExtrovisLiveSlaStage.
+ * Refex: process Stages wins; else display Stage (Open→InProgress already applied).
+ * Extrovis: process Stages or Statu_1 InProgress.
+ */
+function isItsmSlaStageInProgress(row: AppRecordRow): boolean {
+  const process = stageToken(row.process_stages);
+  if (isItsmExtrovisRow(row)) {
+    if (process === 'inprogress') return true;
+    return stageToken(row.form_status || row.stages) === 'inprogress';
+  }
+  if (process) return process === 'inprogress';
+  return stageToken(row.form_status || row.stages || itsmStageLabel(row)) === 'inprogress';
+}
+
+/** aasik isSlaHoldRow — entity-aware. */
+function isItsmSlaHoldRow(row: AppRecordRow): boolean {
+  const status = String(row.status || '').toLowerCase();
+  const closed = status === 'closed' || status === 'rejected' || status === 'completed';
+  if (closed) return false;
+  const form = stageToken(row.form_status || row.stages);
+  const process = stageToken(row.process_stages);
+  if (form === 'onhold' || form === 'hold') return true;
+  if (isItsmExtrovisRow(row)) {
+    // Extrovis PickUp uses created+TAT — never Hold.
+    if (isExtrovisPickupStep(row)) return false;
+    return !isItsmSlaStageInProgress(row);
+  }
+  // Refex: Pending Approval keeps the clock; other non-InProgress stages Hold.
+  // Empty Stages on an open ticket still run the clock (aasik / prior NE rule).
+  if (isPendingApprovalSlaRow(row)) return false;
+  if (isItsmSlaStageInProgress(row)) return false;
+  if (!process && !form) return false;
+  return true;
+}
+
+/**
+ * SLA badge — aasik_ITSM Refex vs Extrovis rules (embed / main / CEO).
+ */
 export function itsmSlaDisplay(row: AppRecordRow, now = new Date()): { primary: string; sub: string | null; state: 'breached' | 'ok' | 'hold' | 'none' } {
-  const form = String(row.form_status || '').toLowerCase().replace(/[\s_-]+/g, '');
-  if (form === 'onhold' || form === 'hold') {
+  const status = String(row.status || '').toLowerCase();
+  const closed = status === 'closed' || status === 'rejected' || status === 'completed';
+
+  if (isItsmSlaHoldRow(row)) {
     return { primary: 'Hold', sub: null, state: 'hold' };
   }
+
   const budget = headSlaBudgetMinutes(row);
   const closedAt = itsmClosedAtDisplay(row) || now;
-  const elapsed = minutesBetween(row.created_at, String(row.status || '').toLowerCase() === 'closed' ? closedAt : now);
+  // Extrovis PickUp clocks from created; otherwise last modified (aasik).
+  const clockStart = !closed
+    ? (
+      isItsmExtrovisRow(row) && isExtrovisPickupStep(row)
+        ? (row.created_at || row.modified_at)
+        : (row.modified_at || row.created_at)
+    )
+    : row.created_at;
+  const elapsed = minutesBetween(clockStart, closed ? closedAt : now);
   const flag = String(row.sla_breached || '').toLowerCase();
   const breached = flag === 'true' || flag === 'yes' || flag === '1' || flag === 'breached'
     || (budget > 0 && elapsed != null && elapsed > budget);
@@ -183,7 +263,7 @@ export function itsmSlaDisplay(row: AppRecordRow, now = new Date()): { primary: 
       state: 'breached',
     };
   }
-  if (String(row.status || '').toLowerCase() === 'closed' || String(row.status || '').toLowerCase() === 'rejected') {
+  if (closed) {
     return {
       primary: 'Not Breached',
       sub: elapsed != null && budget > 0
