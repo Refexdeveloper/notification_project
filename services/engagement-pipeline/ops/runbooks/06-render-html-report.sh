@@ -606,9 +606,10 @@ else
 fi
 
 # Domain schedules: the ticket-join user SQL hits the 60s cap and the table goes out empty.
-# Roster is Kissflow users on this company's email domain. Per-user open/closed stay on the live SLA overlay.
+# Roster is IT Agent app-role members on this company's email domain, not every user at that domain.
+# Per-user open/closed stay on the live SLA overlay.
 if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
-  log "User table: @${ENTITY_EMAIL_DOMAIN} roster (skip ticket-join SQL)"
+  log "User table: @${ENTITY_EMAIL_DOMAIN} IT agent roster (skip ticket-join SQL)"
   USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
@@ -632,6 +633,22 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     AND NULLIF(trim(u.user_name), '') IS NOT NULL
     AND NULLIF(trim(u.user_name), '') <> u.user_id
     AND u.user_name !~ '^[Uu][Ss][A-Za-z0-9_-]{6,}$'
+    AND EXISTS (
+      SELECT 1
+      FROM engagement_reporting.principal_user pu
+      JOIN engagement_reporting.principal p
+        ON p.environment = pu.environment
+       AND p.application_id = pu.application_id
+       AND p.principal_id = pu.principal_id
+       AND p.principal_type = pu.principal_type
+       AND p.is_current = true
+      WHERE pu.user_id = u.user_id
+        AND pu.application_id = '${ITSM_APP_ID}'
+        AND pu.valid_to IS NULL
+        AND pu.principal_type = 'APP_ROLE'
+        AND lower(coalesce(p.principal_name, p.principal_id, '')) LIKE '%agent%'
+        AND lower(coalesce(p.principal_name, p.principal_id, '')) NOT LIKE '%refex%'
+    )
   ORDER BY lower(trim(coalesce(u.email, u.user_id))), COALESCE(u.last_sign_in, u.snapshot_at) DESC NULLS LAST
 ) t;
 " | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
@@ -886,7 +903,7 @@ TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
 SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
   if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
-    # Entity schedule: TotalUsers ≡ MIS rows (same @domain roster). Ticket KPIs stay Entity-scoped.
+    # Entity schedule: TotalUsers ≡ IT Agent rows on this email domain. Ticket KPIs stay Entity-scoped.
     TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
     SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
     log "Entity email domain ${ENTITY_EMAIL_DOMAIN}: TotalUsers=${TOTAL_USERS} (MIS parity)"
