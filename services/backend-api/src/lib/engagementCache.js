@@ -5,8 +5,8 @@
 const ENGAGEMENT_CACHE_TTL_MS = Number(process.env.ENGAGEMENT_CACHE_TTL_MS || 1 * 60 * 60 * 1000);
 /** ITSM tickets change constantly — 1h live cache looks like “old data” vs Kissflow. */
 const ENGAGEMENT_CACHE_ITSM_TTL_MS = Number(process.env.ENGAGEMENT_CACHE_ITSM_TTL_MS || 10 * 60 * 1000);
-/** Bump when record mapping changes (Assigned to / Company) so stale cache.records are not served. */
-const ENGAGEMENT_RECORDS_SCHEMA_VERSION = 10;
+/** Bump when record mapping changes (Assigned to / Company / ITSM Behalf Of / Entity) so stale cache.records are not served. */
+const ENGAGEMENT_RECORDS_SCHEMA_VERSION = 12;
 
 function isItsmApplicationId(applicationId) {
   const id = String(applicationId || '').toLowerCase();

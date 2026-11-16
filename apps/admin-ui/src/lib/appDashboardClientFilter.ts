@@ -9,11 +9,14 @@ import {
   personDedupeKey,
 } from '@/lib/personName';
 import { itsmHumanName } from '@/lib/itsmRecordDisplay';
+import { isPmSlaBreached } from '@/lib/pmSla';
 import {
   buildEntityBucketOptions,
   buildRefexCompanyOptions,
+  companyBelongsToEntity,
   sortCompanyFilterOptions,
   companyIdFromLabel,
+  isEntityBucketLabel,
   recordMatchesCompany,
   recordMatchesEntityBucket,
   REFEX_DEFAULT_COMPANY_NAME,
@@ -21,11 +24,53 @@ import {
   resolveEntityBucket,
 } from '@/lib/refexCompanies';
 
+/**
+ * ITSM Entity filter label — Kissflow Employee_entity / Entity (Adrenalin-backed),
+ * already stamped on row.entity by the API.
+ */
+export function itsmEntityFieldLabel(row: { entity?: unknown; employee_entity?: unknown }): string {
+  const text = String(row.employee_entity || row.entity || '').trim();
+  if (!text || text === '—' || text === '-') return '';
+  return text;
+}
+
+/** Distinct Kissflow entity-field values for the IT Help Desk Entity dropdown. */
+export function itsmEntityFieldCountsFromRecords(
+  items: AppRecordRow[],
+): Array<{ id: string; label: string; count: number }> {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const row of items || []) {
+    const label = itsmEntityFieldLabel(row);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    const hit = counts.get(key);
+    if (hit) hit.count += 1;
+    else counts.set(key, { label, count: 1 });
+  }
+  return [...counts.values()]
+    .map(({ label, count }) => ({ id: label, label, count }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }));
+}
+
+export function recordMatchesItsmEntityField(
+  row: { entity?: unknown },
+  filterId: string,
+): boolean {
+  const filter = String(filterId || 'all').trim();
+  if (!filter || filter.toLowerCase() === 'all') return true;
+  return itsmEntityFieldLabel(row).toLowerCase() === filter.toLowerCase();
+}
+
 export type RecordFilterOpts = {
-  /** Entity bucket: all | refex | extrovis | venwind */
+  /**
+   * ITSM: exact Kissflow Entity field label (or legacy bucket refex/extrovis).
+   * Other apps: entity bucket all | refex | extrovis | venwind.
+   */
   entity?: string;
-  /** Catalog company id from the 29-company list */
+  /** Company catalog id (or Lead website label). */
   company?: string;
+  /** Requester department label (EMS); compared case-insensitively. */
+  department?: string;
   /** Lead Tracker: filter by Kissflow Website_and_form */
   leadWebsiteMode?: boolean;
   status?: string;
@@ -42,7 +87,14 @@ export type RecordFilterOpts = {
   activityDates?: boolean;
 };
 
-export type RecordKpiFocus = 'total' | 'open' | 'closed' | 'rejected' | 'opened_today' | 'closed_today';
+export type RecordKpiFocus =
+  | 'total'
+  | 'open'
+  | 'closed'
+  | 'rejected'
+  | 'opened_today'
+  | 'closed_today'
+  | 'sla_breached';
 
 export function isRecordKpiFocus(focus: string | null | undefined): focus is RecordKpiFocus {
   return focus === 'total'
@@ -50,7 +102,8 @@ export function isRecordKpiFocus(focus: string | null | undefined): focus is Rec
     || focus === 'closed'
     || focus === 'rejected'
     || focus === 'opened_today'
-    || focus === 'closed_today';
+    || focus === 'closed_today'
+    || focus === 'sla_breached';
 }
 
 function isBucketOnlyCompany(value: unknown): boolean {
@@ -198,6 +251,27 @@ export function recordCompanyKey(row: AppRecordRow, itsmCompanyMode: boolean): s
   );
 }
 
+export function recordDepartmentLabel(row: AppRecordRow): string {
+  const text = String(row.department || '').trim();
+  return text === '—' ? '' : text;
+}
+
+/** Department dropdown rows (label = id), sorted A→Z. */
+export function departmentCountsFromRecords(items: AppRecordRow[]): Array<{ id: string; label: string; count: number }> {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const row of items || []) {
+    const label = recordDepartmentLabel(row);
+    if (!label) continue;
+    const key = label.toLowerCase();
+    const hit = counts.get(key);
+    if (hit) hit.count += 1;
+    else counts.set(key, { label, count: 1 });
+  }
+  return [...counts.values()]
+    .map(({ label, count }) => ({ id: label, label, count }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base' }));
+}
+
 export function filterAppRecords(
   items: AppRecordRow[],
   opts: RecordFilterOpts = {},
@@ -205,6 +279,7 @@ export function filterAppRecords(
   const statusFilter = String(opts.status || 'all').toLowerCase();
   const entityFilter = String(opts.entity || 'all').trim().toLowerCase();
   const companyFilter = String(opts.company || 'all').trim().toLowerCase();
+  const departmentFilter = String(opts.department || 'all').trim().toLowerCase();
   const assignedFilter = String(opts.assigned || '').trim();
   const assignedId = String(opts.assignedId || '').trim();
   const from = String(opts.dateFrom || '').slice(0, 10);
@@ -222,7 +297,17 @@ export function filterAppRecords(
 
     if (statusFilter !== 'all' && String(row.status || '').toLowerCase() !== statusFilter) return false;
 
-    if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) return false;
+    if (itsmCompanyMode) {
+      // Entity dropdown = Kissflow Employee_entity / Entity (Adrenalin via Kissflow).
+      // Keep legacy bucket ids working if still selected.
+      if (entityFilter === 'refex' || entityFilter === 'extrovis' || entityFilter === 'venwind') {
+        if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) return false;
+      } else if (!recordMatchesItsmEntityField(row, String(opts.entity || 'all').trim())) {
+        return false;
+      }
+    } else if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) {
+      return false;
+    }
     if (leadWebsiteMode) {
       if (!recordMatchesLeadWebsite(row, companyFilter)) return false;
     } else if (companyFilter.startsWith('raw:')) {
@@ -232,6 +317,8 @@ export function filterAppRecords(
     } else if (!recordMatchesCompany(row, companyFilter, itsmCompanyMode)) {
       return false;
     }
+
+    if (departmentFilter !== 'all' && recordDepartmentLabel(row).toLowerCase() !== departmentFilter) return false;
 
     if ((assignedFilter || assignedId) && !recordMatchesAssigned(row, assignedFilter, assignedId, {
       matchRequester: !itsmCompanyMode,
@@ -305,11 +392,11 @@ export function countTodayActivity(items: AppRecordRow[], todayYmd: string, opts
   return { opened, closed };
 }
 
-function isPmTaskProcess(processId: string): boolean {
+export function isPmTaskProcess(processId: string): boolean {
   return /project_sub_task/i.test(processId);
 }
 
-function isPmSubtaskProcess(processId: string): boolean {
+export function isPmSubtaskProcess(processId: string): boolean {
   return /sub_task_process/i.test(processId) && !/project_sub_task/i.test(processId);
 }
 
@@ -320,8 +407,72 @@ function pmRecordBucket(row: AppRecordRow): 'open' | 'closed' | 'rejected' {
   return 'open';
 }
 
-function pmRecordProjectKey(row: AppRecordRow): string {
+export function pmRecordProjectKey(row: AppRecordRow): string {
   return String(row.project_id || row.project_key || '').trim();
+}
+
+export type PmPackKind = 'projects' | 'tasks' | 'individual' | 'subtasks';
+export type PmPackMetric = 'total' | 'open' | 'closed' | 'sla_breached';
+export type PmProjectState = { hasOpen: boolean; hasClosed: boolean };
+
+/** Project ID → whether it still has open tasks / any closed tasks (same rules as portfolio KPIs). */
+export function buildPmProjectState(items: AppRecordRow[]): Map<string, PmProjectState> {
+  const projectMap = new Map<string, PmProjectState>();
+  for (const row of items || []) {
+    if (!isPmTaskProcess(String(row.process_id || ''))) continue;
+    const key = pmRecordProjectKey(row);
+    if (!key) continue;
+    const bucket = pmRecordBucket(row);
+    const entry = projectMap.get(key) || { hasOpen: false, hasClosed: false };
+    if (bucket === 'open') entry.hasOpen = true;
+    if (bucket === 'closed') entry.hasClosed = true;
+    projectMap.set(key, entry);
+  }
+  return projectMap;
+}
+
+/**
+ * Filter MIS rows for a PM portfolio card click.
+ * Projects cards show linked tasks for matching project IDs.
+ */
+export function pmRowMatchesPack(
+  row: AppRecordRow,
+  pack: { key: PmPackKind; metric: PmPackMetric },
+  projectState: Map<string, PmProjectState>,
+): boolean {
+  const pid = String(row.process_id || '');
+  const bucket = pmRecordBucket(row);
+  const key = pmRecordProjectKey(row);
+
+  if (pack.key === 'projects') {
+    if (!isPmTaskProcess(pid) || !key) return false;
+    const entry = projectState.get(key);
+    if (!entry) return false;
+    if (pack.metric === 'total') return true;
+    if (pack.metric === 'open') return entry.hasOpen;
+    return entry.hasClosed && !entry.hasOpen;
+  }
+
+  if (pack.key === 'tasks') {
+    if (!isPmTaskProcess(pid)) return false;
+    if (pack.metric === 'sla_breached') return isPmSlaBreached(row);
+    if (pack.metric === 'total') return true;
+    return pack.metric === 'open' ? bucket === 'open' : bucket === 'closed';
+  }
+
+  if (pack.key === 'individual') {
+    if (!isPmTaskProcess(pid) || key) return false;
+    if (pack.metric === 'total') return true;
+    return pack.metric === 'open' ? bucket === 'open' : bucket === 'closed';
+  }
+
+  if (pack.key === 'subtasks') {
+    if (!isPmSubtaskProcess(pid)) return false;
+    if (pack.metric === 'total') return true;
+    return pack.metric === 'open' ? bucket === 'open' : bucket === 'closed';
+  }
+
+  return false;
 }
 
 /**
@@ -437,9 +588,11 @@ export function companyCountsFromRecords(
     entity = 'all',
   }: { itsmCompanyMode?: boolean; entity?: string } = {},
 ): Array<{ id: string; label: string; count: number }> {
+  const entityFilter = String(entity || 'all').trim().toLowerCase();
   const counts: Record<string, number> = {};
   const extraLabels: Record<string, string> = {};
   for (const row of items) {
+    if (entityFilter !== 'all' && !recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) continue;
     let key = recordCompanyKey(row, itsmCompanyMode);
     if (!key) {
       const label = String(row.company_name || row.assignee_company || row.company || '').trim();
@@ -454,7 +607,7 @@ export function companyCountsFromRecords(
     .filter((e) => (e.count || 0) > 0)
     .map((e) => ({ id: e.id, label: e.label, count: Number(e.count || 0) }));
   const extras = Object.entries(extraLabels)
-    .filter(([id]) => (counts[id] || 0) > 0)
+    .filter(([id, label]) => (counts[id] || 0) > 0 && companyBelongsToEntity(label || id, entityFilter))
     .map(([id, label]) => ({ id, label, count: counts[id] }));
   return sortCompanyFilterOptions([...catalog, ...extras]);
 }
@@ -560,7 +713,139 @@ function applyItsmLegalCompany(row: AppRecordRow): AppRecordRow {
   };
 }
 
-/** Copy last_sign_in from Kissflow roster onto MIS rows that only have ticket counts. */
+function personCompanyLookupKeys(row: {
+  user_id?: string | null;
+  user_name?: string | null;
+  email?: string | null;
+  requested_by?: string | null;
+  assigned_to?: string | null;
+  assignee_id?: string | null;
+  assignee_email?: string | null;
+  requester_email?: string | null;
+}): string[] {
+  const keys: string[] = [];
+  const push = (raw: unknown, prefix: 'id' | 'email' | 'name') => {
+    const text = String(raw || '').trim();
+    if (!text) return;
+    if (prefix === 'email') {
+      const mail = text.toLowerCase();
+      if (mail.includes('@')) keys.push(`email:${mail}`);
+      return;
+    }
+    if (prefix === 'id') {
+      keys.push(`id:${text.toLowerCase()}`);
+      return;
+    }
+    const compact = personDedupeKey(text);
+    if (compact.length >= 3) keys.push(`name:${compact}`);
+  };
+  push(row.user_id, 'id');
+  push(row.assignee_id, 'id');
+  push(row.email, 'email');
+  push(row.assignee_email, 'email');
+  push(row.requester_email, 'email');
+  push(row.user_name, 'name');
+  push(row.requested_by, 'name');
+  push(row.assigned_to, 'name');
+  return keys;
+}
+
+function preferCatalogCompany(current: string | null | undefined, next: string | null | undefined): string {
+  const cur = String(current || '').trim();
+  const nxt = String(next || '').trim();
+  const curOk = Boolean(cur) && !isBucketOnlyCompany(cur) && !isEntityBucketLabel(cur) && Boolean(resolveCompanyIdFromText(cur));
+  if (curOk) return cur;
+  const nxtOk = Boolean(nxt) && !isBucketOnlyCompany(nxt) && !isEntityBucketLabel(nxt) && Boolean(resolveCompanyIdFromText(nxt));
+  if (nxtOk) return nxt;
+  if (cur && !isBucketOnlyCompany(cur) && !isEntityBucketLabel(cur)) return cur;
+  if (nxt && !isBucketOnlyCompany(nxt) && !isEntityBucketLabel(nxt)) return nxt;
+  return cur || nxt || '';
+}
+
+/**
+ * Stamp APP_ROLE / roster users with legal company (+ email) from application
+ * ticket payloads. Company comes from the requester’s ticket company
+ * (user_details_lookup Company_Name) — never from tickets they only handle as
+ * assignee (IT agents must not inherit the requester’s company).
+ * Assignee rows contribute email only (ticket assignee_company often mirrors
+ * requester company_name and must be ignored).
+ */
+export function stampAppUsersWithCompanyFromRecords(
+  users: AppDashboardUser[],
+  records: AppRecordRow[],
+): AppDashboardUser[] {
+  if (!users?.length) return users || [];
+  type Hit = { company: string; email: string };
+  const byKey = new Map<string, Hit>();
+  const remember = (keys: string[], company: string, email: string) => {
+    if (!keys.length) return;
+    for (const key of keys) {
+      const prev = byKey.get(key);
+      const nextCompany = preferCatalogCompany(prev?.company, company);
+      const nextEmail = String(prev?.email || '').includes('@')
+        ? String(prev?.email)
+        : (email.includes('@') ? email : String(prev?.email || ''));
+      byKey.set(key, { company: nextCompany, email: nextEmail });
+    }
+  };
+
+  for (const row of records || []) {
+    const ticketCompany = preferCatalogCompany(
+      '',
+      String(row.company_name || row.company || '').trim(),
+    );
+    const requesterEmail = String((row as Record<string, unknown>).requester_email || '').trim().toLowerCase();
+    const assigneeEmail = String(row.assignee_email || '').trim().toLowerCase();
+    remember(
+      personCompanyLookupKeys({
+        requested_by: row.requested_by,
+        requester_email: requesterEmail,
+      }),
+      ticketCompany,
+      requesterEmail,
+    );
+    // Assignees: email only. Ticket assignee_company often mirrors requester
+    // company_name (Holding ticket → Mugesh gets Holding) — never use it here.
+    remember(
+      personCompanyLookupKeys({
+        user_id: row.assignee_id,
+        user_name: row.assigned_to,
+        assigned_to: row.assigned_to,
+        assignee_id: row.assignee_id,
+        assignee_email: assigneeEmail,
+        email: assigneeEmail,
+      }),
+      '',
+      assigneeEmail,
+    );
+  }
+
+  return users.map((user) => {
+    const keys = personCompanyLookupKeys(user);
+    let hit: Hit | undefined;
+    for (const key of keys) {
+      const found = byKey.get(key);
+      if (!found) continue;
+      hit = {
+        company: preferCatalogCompany(hit?.company, found.company),
+        email: (hit?.email && hit.email.includes('@')) ? hit.email : (found.email || hit?.email || ''),
+      };
+    }
+    const company = preferCatalogCompany(user.company, hit?.company);
+    const email = String(user.email || '').includes('@')
+      ? String(user.email)
+      : (hit?.email && hit.email.includes('@') ? hit.email : String(user.email || ''));
+    if (!company && !email) return user;
+    return {
+      ...user,
+      company: company || user.company || null,
+      company_key: resolveCompanyIdFromText(company || user.company) || user.company_key || null,
+      email: email || user.email,
+    };
+  });
+}
+
+/** Copy last_sign_in / email / company from Kissflow roster onto MIS rows. */
 export function overlayRosterSignIn(
   users: AppDashboardUser[],
   roster: AppDashboardUser[],
@@ -568,7 +853,6 @@ export function overlayRosterSignIn(
   if (!users?.length || !roster?.length) return users || [];
   const profileByKey = buildProfileLookup(roster);
   return users.map((u) => {
-    if (u.last_sign_in) return u;
     const fakeRow: AppRecordRow = {
       id: String(u.user_id || u.user_name || ''),
       assigned_to: u.user_name,
@@ -576,14 +860,21 @@ export function overlayRosterSignIn(
       assignee_email: u.email,
     };
     const profile = resolveProfileForRecord(fakeRow, profileByKey);
-    if (!profile.last_sign_in) return u;
-    return {
+    const company = preferCatalogCompany(u.company, profile.company);
+    const email = String(u.email || '').includes('@')
+      ? String(u.email)
+      : (String(profile.email || '').includes('@') ? String(profile.email) : String(u.email || ''));
+    const next = {
       ...u,
-      last_sign_in: profile.last_sign_in,
-      ever_logged_in: true,
-      is_active: profile.is_active ?? u.is_active,
-      active_status: profile.active_status ?? u.active_status,
+      email: email || u.email,
+      company: company || u.company || null,
+      company_key: resolveCompanyIdFromText(company || u.company) || u.company_key || profile.company_key || null,
+      last_sign_in: u.last_sign_in || profile.last_sign_in || null,
+      ever_logged_in: Boolean(u.ever_logged_in || profile.ever_logged_in || u.last_sign_in || profile.last_sign_in),
+      is_active: u.is_active ?? profile.is_active,
+      active_status: u.active_status ?? profile.active_status,
     };
+    return next;
   });
 }
 
@@ -718,9 +1009,10 @@ export function buildMisUsersFromRecords(
     if (profile.last_sign_in && (!row.profile.last_sign_in || new Date(profile.last_sign_in) > new Date(row.profile.last_sign_in || 0))) {
       row.profile = profile;
     }
-    if (!row.company && (profile.company || r.company_name || r.assignee_company)) {
-      row.company = String(profile.company || r.company_name || r.assignee_company || '');
-      row.company_key = String(profile.company_key || r.company_key || '');
+    // Assignee company from roster only — never ticket company_name (requester’s).
+    if (!row.company && profile.company) {
+      row.company = String(profile.company);
+      row.company_key = String(profile.company_key || '');
     }
     byKey.set(mergeKey, row);
   }

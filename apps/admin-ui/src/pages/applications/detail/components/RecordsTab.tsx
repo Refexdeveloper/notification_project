@@ -1,33 +1,35 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   AlertCircle,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Layers,
   LayoutDashboard,
   RefreshCw,
   Search,
   X,
+  XCircle,
 } from 'lucide-react';
 import EmbedKpiCard, { NE_KPI_GRID_CLASS } from '@/components/feature/EmbedKpiCard';
 import type { KissflowApplication } from '@/mocks/applications';
-import { neAppHeroTitle, resolveNeAppKind } from '@/lib/neKpiIcons';
 import { resolveBackendApplicationId } from '@/services/applicationsApi';
-import { mergeLeadWebsiteFilterOptions } from '@/services/leadReport';
 import { isBackendApiMode } from '@/services/backendApi';
 import {
   loadApplicationRecordInventory,
-  peekApplicationRecordInventory,
   type AppRecordsResponse,
 } from '@/services/appRecordsApi';
 import { buildEntityBucketOptions, buildRefexCompanyOptions, sortCompanyFilterOptions } from '@/lib/refexCompanies';
 import {
   assignedRecordLabel,
   companyCountsFromRecords,
+  departmentCountsFromRecords,
   websiteCountsFromRecords,
   ensureFilterOption,
   entityCountsFromRecords,
+  itsmEntityFieldCountsFromRecords,
   filterAppRecords,
   stampRecordsWithAssigneeCompany,
   summarizeAppRecords,
@@ -36,7 +38,7 @@ import DashboardLoadingOverlay from '@/components/feature/DashboardLoadingOverla
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
 import MisPersonInitialsCell from '@/components/feature/MisPersonInitialsCell';
 import ExecutiveDateFilterBar from '@/components/feature/ExecutiveDateFilterBar';
-import { NE_DASH_CLASS, NE_DASH_STACK_CLASS, NE_TYPE } from '@/lib/neDashType';
+import { NE_DASH_CLASS, NE_TYPE } from '@/lib/neDashType';
 import {
   currentIstYear,
   resolveDateScope,
@@ -47,10 +49,31 @@ import { personLabelMatches, uniquePersonLabels } from '@/lib/personName';
 import {
   ITSM_CEO_RECORD_COLUMNS,
   itsmClosedAtDisplay,
+  itsmIssueOccurrenceKey,
   itsmRecordCellText,
   itsmReopenedStamp,
   itsmSlaDisplay,
+  stampItsmOccurrenceCounts,
 } from '@/lib/itsmRecordDisplay';
+import { EMS_DASH_COLUMNS } from '@/lib/emsRecordDisplay';
+import {
+  PM_DASH_COLUMNS,
+  PM_SLA_FILTER_OPTIONS,
+  pmSlaDisplay,
+} from '@/lib/pmSla';
+import {
+  isTravelDeadlineSlaProcess,
+  TRAVEL_DASH_COLUMNS,
+  TRAVEL_DEADLINE_SLA_FILTER_OPTIONS,
+  travelDeadlineSlaDisplay,
+} from '@/lib/travelRecordDisplay';
+import {
+  TRAVEL_AIR_SLA_FILTER_OPTIONS,
+  travelAirSlaDisplay,
+  travelAirSlaFilterLabel,
+  travelAirSlaTone,
+} from '@/lib/travelAirSla';
+import { resolveNeAppKind } from '@/lib/neKpiIcons';
 import { duration, easeOutSoft } from '@/lib/motion';
 import EmbedDashboardHero from '@/components/feature/EmbedDashboardHero';
 import { buildEmbedDashboardPath, readEmbedReturnUrl } from '@/lib/embedMode';
@@ -88,32 +111,26 @@ function statusTone(status: string): string {
 export default function RecordsTab({ app, embed = false }: Props) {
   const navigate = useNavigate();
   const backendAppId = resolveBackendApplicationId(app);
-  const appKind = resolveNeAppKind(backendAppId, app?.displayName || app?.name);
   const itsmCompanyMode = /itsm|service_management/i.test(String(app.appId || app.id || backendAppId || ''));
   const travelMode = /travel|expense_and_travel/i.test(String(app.appId || app.id || backendAppId || ''));
   const leadMode = /lead/i.test(String(app.appId || app.id || backendAppId || ''));
+  const pmMode = /project_management|project_tracker/i.test(String(app.appId || app.id || backendAppId || ''));
+  const emsMode = !travelMode && resolveNeAppKind(backendAppId, app.displayName || app.name) === 'expense';
   const { id: routeAppId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const embedReturnTo = readEmbedReturnUrl(searchParams);
   const [data, setData] = useState<AppRecordsResponse | null>(null);
-  const [inventory, setInventory] = useState<AppRecordsResponse['items']>(() => (
-    peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.items || []
-  ));
-  const [recordColumns, setRecordColumns] = useState<AppRecordsResponse['columns']>(() => (
-    peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.columns || []
-  ));
-  const [inventoryReady, setInventoryReady] = useState(() => (
-    Boolean(peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })?.items.length)
-  ));
-  const [loading, setLoading] = useState(() => (
-    !peekApplicationRecordInventory({ applicationId: backendAppId, environment: app.environment })
-  ));
+  const [inventory, setInventory] = useState<AppRecordsResponse['items']>([]);
+  const [recordColumns, setRecordColumns] = useState<AppRecordsResponse['columns']>([]);
+  const [inventoryReady, setInventoryReady] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const [status, setStatus] = useState<string>('all');
   const [entity, setEntity] = useState('all');
   const [company, setCompany] = useState('all');
+  const [department, setDepartment] = useState('all');
   const [assigned, setAssigned] = useState('');
   const [requester, setRequester] = useState('');
   const [search, setSearch] = useState('');
@@ -134,6 +151,8 @@ export default function RecordsTab({ app, embed = false }: Props) {
   const [dateTo, setDateTo] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [dateColumnFilters, setDateColumnFilters] = useState<Record<string, { from: string; to: string }>>({});
+  const [occurrenceFocusKey, setOccurrenceFocusKey] = useState<string | null>(null);
+  const [occurrenceFocusLabel, setOccurrenceFocusLabel] = useState('');
   const pageSize = 100;
 
   const resolvedDates = useMemo(
@@ -148,7 +167,12 @@ export default function RecordsTab({ app, embed = false }: Props) {
 
   useEffect(() => {
     setPage(0);
-  }, [status, entity, company, assigned, requester, debouncedSearch, period, resolvedDates.from, resolvedDates.to, app.id, columnFilters, dateColumnFilters]);
+  }, [status, entity, company, department, assigned, requester, debouncedSearch, period, resolvedDates.from, resolvedDates.to, app.id, columnFilters, dateColumnFilters, occurrenceFocusKey]);
+
+  useEffect(() => {
+    setOccurrenceFocusKey(null);
+    setOccurrenceFocusLabel('');
+  }, [status, entity, company, department, assigned, requester, period, resolvedDates.from, resolvedDates.to, app.id]);
 
   useEffect(() => {
     if (!isBackendApiMode()) {
@@ -156,18 +180,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       return;
     }
     let cancelled = false;
-    const seed = peekApplicationRecordInventory({
-      applicationId: backendAppId,
-      environment: app.environment,
-    });
-    if (seed?.items.length && refreshKey === 0) {
-      setInventory(seed.items);
-      setRecordColumns(seed.columns);
-      setInventoryReady(true);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+    setLoading(true);
     setError('');
     loadApplicationRecordInventory({
       applicationId: backendAppId,
@@ -177,12 +190,10 @@ export default function RecordsTab({ app, embed = false }: Props) {
     }).then((result) => {
       if (cancelled) return;
       if (!result.ok) {
-        if (!seed?.items.length) {
-          setError(result.error || 'Failed to load records');
-          setInventory([]);
-          setRecordColumns([]);
-        }
-      } else if (result.items.length) {
+        setError(result.error || 'Failed to load records');
+        setInventory([]);
+        setRecordColumns([]);
+      } else {
         setInventory(result.items);
         setRecordColumns(result.columns);
       }
@@ -202,9 +213,10 @@ export default function RecordsTab({ app, embed = false }: Props) {
 
   const filteredRows = useMemo(() => {
     if (!inventoryReady) return [];
-    const rows = filterAppRecords(stampedInventory, {
-      entity,
+    const scoped = filterAppRecords(stampedInventory, {
+      entity: (itsmCompanyMode || emsMode) ? 'all' : entity,
       company,
+      department: (emsMode || travelMode || pmMode) ? department : undefined,
       status,
       assigned: assigned || undefined,
       dateFrom: resolvedDates.from,
@@ -213,7 +225,10 @@ export default function RecordsTab({ app, embed = false }: Props) {
       travelMode,
       leadWebsiteMode: leadMode,
       activityDates: period === 'daily',
-    }).filter((row) => {
+    });
+    // Count Category+Sub Category frequency in the date/entity scope (before column filters).
+    const withOccurrences = itsmCompanyMode ? stampItsmOccurrenceCounts(scoped) : scoped;
+    const rows = withOccurrences.filter((row) => {
       if (!debouncedSearch) return true;
       const q = debouncedSearch.toLowerCase();
       const hay = [
@@ -225,6 +240,8 @@ export default function RecordsTab({ app, embed = false }: Props) {
         row.website,
         row.website_name,
         row.status,
+        row.category,
+        row.sub_category,
       ]
         .map((v) => String(v || '').toLowerCase())
         .join(' ');
@@ -235,6 +252,15 @@ export default function RecordsTab({ app, embed = false }: Props) {
     }).filter((row) => {
       const valueOk = Object.entries(columnFilters).every(([colId, wanted]) => {
         if (!wanted || wanted === 'all') return true;
+        if (travelMode && colId === 'sla') {
+          const label = isTravelDeadlineSlaProcess(row.process_id)
+            ? (travelDeadlineSlaDisplay(row).primary || '')
+            : travelAirSlaFilterLabel(row);
+          return label === wanted;
+        }
+        if (pmMode && colId === 'sla') {
+          return (pmSlaDisplay(row).primary || '') === wanted;
+        }
         const raw = itsmCompanyMode
           ? itsmRecordCellText(row, colId)
           : colId === 'assigned_to'
@@ -254,6 +280,9 @@ export default function RecordsTab({ app, embed = false }: Props) {
         if (range.to && key > range.to) return false;
         return true;
       });
+    }).filter((row) => {
+      if (!itsmCompanyMode || !occurrenceFocusKey) return true;
+      return itsmIssueOccurrenceKey(row) === occurrenceFocusKey;
     });
     if (!itsmCompanyMode) return rows;
     return [...rows].sort((a, b) => {
@@ -267,6 +296,9 @@ export default function RecordsTab({ app, embed = false }: Props) {
     inventoryReady,
     entity,
     company,
+    department,
+    emsMode,
+    pmMode,
     status,
     assigned,
     requester,
@@ -281,6 +313,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
     travelMode,
     columnFilters,
     dateColumnFilters,
+    occurrenceFocusKey,
     period,
   ]);
 
@@ -295,12 +328,20 @@ export default function RecordsTab({ app, embed = false }: Props) {
       total: filteredRows.length,
       limit: pageSize,
       offset: page * pageSize,
-      columns: itsmCompanyMode ? ITSM_CEO_RECORD_COLUMNS : recordColumns,
+      columns: itsmCompanyMode
+        ? ITSM_CEO_RECORD_COLUMNS
+        : emsMode
+          ? EMS_DASH_COLUMNS
+          : travelMode
+            ? TRAVEL_DASH_COLUMNS
+            : pmMode
+              ? PM_DASH_COLUMNS
+            : recordColumns,
       items: pageRows,
       summary,
       inventory_summary: summary,
     });
-  }, [filteredRows, page, pageSize, recordColumns, inventoryReady, backendAppId, app.environment]);
+  }, [filteredRows, page, pageSize, recordColumns, inventoryReady, backendAppId, app.environment, emsMode, travelMode, pmMode, itsmCompanyMode]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -313,7 +354,14 @@ export default function RecordsTab({ app, embed = false }: Props) {
   }, [filteredRows.length, pageSize]);
 
   const entityOptions = useMemo(() => {
-    const mode = travelMode ? 'refex_venwind' : itsmCompanyMode ? 'refex_extrovis' : 'all_buckets';
+    if (itsmCompanyMode) {
+      const rows = itsmEntityFieldCountsFromRecords(stampedInventory);
+      return ensureFilterOption(
+        [{ id: 'all', label: 'All entities' }, ...rows.map((r) => ({ id: r.id, label: r.label, count: r.count }))],
+        entity,
+      );
+    }
+    const mode = travelMode ? 'refex_venwind' : 'all_buckets';
     const rows = entityCountsFromRecords(stampedInventory, { itsmCompanyMode, travelMode });
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.id] = r.count;
@@ -327,28 +375,56 @@ export default function RecordsTab({ app, embed = false }: Props) {
     if (leadMode) {
       const rows = websiteCountsFromRecords(stampedInventory);
       return sortCompanyFilterOptions(ensureFilterOption(
-        mergeLeadWebsiteFilterOptions(rows),
+        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
         company,
       ));
     }
-    const rows = companyCountsFromRecords(stampedInventory, { itsmCompanyMode, entity });
-    if (itsmCompanyMode) {
+    const companyEntity = (itsmCompanyMode || emsMode) ? 'all' : entity;
+    const rows = companyCountsFromRecords(stampedInventory, { itsmCompanyMode, entity: companyEntity });
+    // ITSM + Travel + EMS: full company catalog (not only companies present in tickets).
+    if (itsmCompanyMode || travelMode || emsMode) {
       const counts: Record<string, number> = {};
       for (const r of rows) counts[r.id] = r.count;
-      const catalog = buildRefexCompanyOptions(counts, { allLabel: 'All companies', entity });
-      const extras = rows.filter(
-        (r) => String(r.id).startsWith('raw:') && !catalog.some((c) => c.id === r.id),
-      );
-      return sortCompanyFilterOptions(ensureFilterOption([...catalog, ...extras], company));
+      return sortCompanyFilterOptions(ensureFilterOption(
+        buildRefexCompanyOptions(counts, { allLabel: 'All companies', entity: companyEntity }),
+        company,
+      ));
     }
     if (!rows.length) {
-      return buildRefexCompanyOptions({}, { allLabel: 'All companies', entity });
+      return buildRefexCompanyOptions({}, { allLabel: 'All companies', entity: companyEntity });
     }
     return sortCompanyFilterOptions(ensureFilterOption(
       [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
       company,
     ));
-  }, [company, entity, stampedInventory, itsmCompanyMode, leadMode]);
+  }, [company, emsMode, entity, stampedInventory, itsmCompanyMode, leadMode, travelMode]);
+
+  const departmentOptions = useMemo(() => {
+    // IT Help Desk: no Department filter.
+    if (itsmCompanyMode || (!emsMode && !travelMode && !pmMode)) {
+      return [] as Array<{ id: string; label: string }>;
+    }
+    // Travel: distinct Department values from ticket records.
+    if (travelMode) {
+      const rows = departmentCountsFromRecords(stampedInventory);
+      return ensureFilterOption(
+        [{ id: 'all', label: 'All departments' }, ...rows.map((r) => ({ id: r.id, label: r.label, count: r.count }))],
+        department,
+      );
+    }
+    const scoped = filterAppRecords(stampedInventory, {
+      entity: emsMode ? 'all' : entity,
+      company,
+      itsmCompanyMode,
+      travelMode,
+    });
+    const rows = departmentCountsFromRecords(scoped);
+    if (!rows.length) return [] as Array<{ id: string; label: string }>;
+    return ensureFilterOption(
+      [{ id: 'all', label: 'All departments' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      department,
+    );
+  }, [company, department, emsMode, entity, itsmCompanyMode, pmMode, stampedInventory, travelMode]);
 
   const assigneeOptions = useMemo(
     () => uniquePersonLabels(stampedInventory.map((row) => row.assigned_to)),
@@ -358,8 +434,10 @@ export default function RecordsTab({ app, embed = false }: Props) {
     () => uniquePersonLabels(stampedInventory.map((row) => row.requested_by)),
     [stampedInventory],
   );
-  const showEntity = !leadMode;
-  const showCompany = !(itsmCompanyMode && entity === 'extrovis');
+  // Expense Management + IT Help Desk Records: no Entity here; IT Help Desk also hides Department.
+  const showEntity = !leadMode && !itsmCompanyMode && !emsMode;
+  const showCompany = true;
+  const showDepartment = !itsmCompanyMode && departmentOptions.length > 0;
   const showAssigned = assigneeOptions.length > 0;
   const showRequester = requesterOptions.length > 0;
 
@@ -375,21 +453,26 @@ export default function RecordsTab({ app, embed = false }: Props) {
     status !== 'all'
     || entity !== 'all'
     || company !== 'all'
+    || department !== 'all'
     || assigned
     || requester
     || search.trim()
     || period !== defaultPeriod
+    || Boolean(occurrenceFocusKey)
     || Object.values(columnFilters).some((v) => v && v !== 'all')
     || Object.values(dateColumnFilters).some((range) => range.from || range.to);
 
   const clearHeroFilters = () => {
     setEntity('all');
     setCompany('all');
+    setDepartment('all');
     setPeriod(defaultPeriod);
     setDateFrom('');
     setDateTo('');
     setColumnFilters({});
     setDateColumnFilters({});
+    setOccurrenceFocusKey(null);
+    setOccurrenceFocusLabel('');
     setPage(0);
   };
 
@@ -397,10 +480,13 @@ export default function RecordsTab({ app, embed = false }: Props) {
     setStatus('all');
     setEntity('all');
     setCompany('all');
+    setDepartment('all');
     setAssigned('');
     setRequester('');
     setSearch('');
     setDebouncedSearch('');
+    setOccurrenceFocusKey(null);
+    setOccurrenceFocusLabel('');
     setPeriod(defaultPeriod);
     setDateFrom('');
     setDateTo('');
@@ -427,7 +513,13 @@ export default function RecordsTab({ app, embed = false }: Props) {
   const handleEntityChange = (next: string) => {
     setEntity(next);
     setCompany('all');
+    setDepartment('all');
     setPage(0);
+  };
+
+  const handleCompanyChange = (next: string) => {
+    setCompany(next);
+    setDepartment('all');
   };
 
   const filterBar = (
@@ -447,9 +539,12 @@ export default function RecordsTab({ app, embed = false }: Props) {
       entityOptions={showEntity ? entityOptions : undefined}
       entityLabel="Entity"
       company={company}
-      onCompanyChange={showCompany ? setCompany : undefined}
+      onCompanyChange={showCompany ? handleCompanyChange : undefined}
       companyOptions={showCompany ? companyOptions : undefined}
       companyLabel={leadMode ? 'Website' : 'Company'}
+      department={department}
+      onDepartmentChange={showDepartment ? setDepartment : undefined}
+      departmentOptions={showDepartment ? departmentOptions : undefined}
       refreshing={loading && Boolean(data)}
       embedLayout
       hideHints
@@ -484,17 +579,15 @@ export default function RecordsTab({ app, embed = false }: Props) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.fast, ease: easeOutSoft }}
-      className={`relative ${NE_DASH_STACK_CLASS} ${NE_DASH_CLASS}`}
+      className={`relative ${embed ? 'space-y-4' : 'space-y-3'} ${NE_DASH_CLASS}`}
     >
       <DashboardLoadingOverlay
-        show={loading && !inventoryReady && !data?.items?.length}
-        mode="fixed"
+        show={loading && !inventoryReady}
+        mode="absolute"
         label="Loading records…"
       />
 
       <EmbedDashboardHero
-        headline={neAppHeroTitle(appKind, app.displayName || app.name)}
-        description="Record list for the current filters"
         actions={
           embed ? (
             embedHeroActions
@@ -517,30 +610,26 @@ export default function RecordsTab({ app, embed = false }: Props) {
         <EmbedKpiCard
           label="Total"
           value={Number(summary.total || 0)}
+          icon={Layers}
           styleIndex={0}
-          shareOf={Number(summary.total || 0)}
-          appKind={appKind}
         />
         <EmbedKpiCard
           label="Open"
           value={Number(summary.open || 0)}
+          icon={AlertCircle}
           styleIndex={1}
-          shareOf={Number(summary.total || 0)}
-          appKind={appKind}
         />
         <EmbedKpiCard
           label="Closed"
           value={Number(summary.closed || 0)}
+          icon={CheckCircle2}
           styleIndex={2}
-          shareOf={Number(summary.total || 0)}
-          appKind={appKind}
         />
         <EmbedKpiCard
           label="Rejected"
           value={Number(summary.rejected || 0)}
+          icon={XCircle}
           styleIndex={3}
-          shareOf={Number(summary.total || 0)}
-          appKind={appKind}
         />
       </div>
 
@@ -623,13 +712,32 @@ export default function RecordsTab({ app, embed = false }: Props) {
       ) : null}
 
       <div
-        className={`ne-list-panel relative min-h-[220px] overflow-x-auto ${
-          embed ? 'p-5' : ''
+        className={`relative min-h-[220px] overflow-x-auto ${
+          embed
+            ? 'rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]'
+            : 'rounded-2xl border border-slate-200 bg-white shadow-sm'
         }`}
       >
         {embed ? (
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h3 className={NE_TYPE.sectionTitle}>Records</h3>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 className={NE_TYPE.sectionTitle}>Records</h3>
+              {occurrenceFocusKey ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOccurrenceFocusKey(null);
+                    setOccurrenceFocusLabel('');
+                    setPage(0);
+                  }}
+                  className="inline-flex max-w-full items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800"
+                  title="Clear Times occurred drill-down"
+                >
+                  <span className="truncate">Times occurred · {occurrenceFocusLabel || 'issue type'}</span>
+                  <X className="h-3 w-3 shrink-0" aria-hidden />
+                </button>
+              ) : null}
+            </div>
             <span className="text-xs font-semibold tabular-nums text-slate-500">
               {Number(summary.total || 0).toLocaleString('en-IN')} rows
               {data?.data_source === 'live_cache' ? ' · live' : ''}
@@ -643,14 +751,14 @@ export default function RecordsTab({ app, embed = false }: Props) {
         ) : data?.items?.length ? (
           <>
             <div className="space-y-2.5 lg:hidden">
-              {data.items.map((row, index) => {
+              {data.items.map((row) => {
                 const titleCol = columns.find((c) => c.id === 'subject') || columns[0];
                 const idCol = columns.find((c) => c.id === 'request_id');
                 const statusCol = columns.find((c) => c.id === 'status');
                 const previewIds = itsmCompanyMode
-                  ? new Set(['requested_by', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
+                  ? new Set(['requested_by', 'company_name', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
                   : new Set(['assigned_to', 'entity', 'company_name', 'website', 'created_at']);
-                const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
+                const personCols = new Set(['assigned_to', 'closed_by']);
                 const fieldValue = (col: (typeof columns)[number]) => {
                   if (itsmCompanyMode) {
                     if (col.id === 'closed_at') return formatWhen(itsmClosedAtDisplay(row));
@@ -664,8 +772,21 @@ export default function RecordsTab({ app, embed = false }: Props) {
                   if (col.id === 'request_id') return displayDashText(raw, '—');
                   if (col.id === 'status') return displayDashText(raw || row.status_raw, '—');
                   if (col.id === 'created_at') return formatWhen(String(raw || ''));
-                  if (col.id === 'amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
+                  if (col.id === 'policy_deviation_cost') {
+                    if (raw == null || raw === '') return '—';
+                    const n = typeof raw === 'number' ? raw : Number(raw);
+                    return Number.isFinite(n) ? formatInr(n) : '—';
+                  }
+                  if (col.id === 'amount') {
+                    return formatInr(typeof raw === 'number' ? raw : Number(raw));
+                  }
                   if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
+                  if (col.id === 'sla' && travelMode) {
+                    return isTravelDeadlineSlaProcess(row.process_id)
+                      ? (travelDeadlineSlaDisplay(row).primary || '—')
+                      : travelAirSlaDisplay(row).primary;
+                  }
+                  if (col.id === 'sla' && pmMode) return pmSlaDisplay(row).primary || '—';
                   return displayPersonCell(raw);
                 };
                 const displayField = (col: (typeof columns)[number]) => {
@@ -678,7 +799,6 @@ export default function RecordsTab({ app, embed = false }: Props) {
                 return (
                   <MisMobileRecordCard
                     key={row.id}
-                    index={index}
                     title={titleCol ? fieldValue(titleCol) : '—'}
                     subtitle={idCol ? fieldValue(idCol) : undefined}
                     badge={statusCol ? (
@@ -694,14 +814,16 @@ export default function RecordsTab({ app, embed = false }: Props) {
                 );
               })}
             </div>
-            <div className={`hidden overflow-x-auto px-3 lg:block ${embed ? '-mx-5' : ''}`}>
-              <table className="ne-list-table text-sm">
-                <thead className={`${NE_TYPE.tableHead} bg-transparent`}>
-                  <tr>
+            <div className={`hidden overflow-x-auto lg:block ${embed ? '-mx-5 -mb-5' : ''}`}>
+              <table className="w-full min-w-[780px] text-sm sm:min-w-[980px]">
+                <thead className={NE_TYPE.tableHead}>
+                  <tr className="border-b border-slate-200">
                     {columns.map((col) => (
                       <th
                         key={col.id}
-                        className={`${NE_TYPE.tableHeadCell} font-semibold`}
+                        className={`${NE_TYPE.tableHeadCell} font-semibold ${
+                          col.id === 'request_id' ? 'min-w-[7.5rem]' : ''
+                        }`}
                       >
                         {isDateRecordColumn(col.id) ? (
                           <RecordsColumnDateFilter
@@ -735,18 +857,26 @@ export default function RecordsTab({ app, embed = false }: Props) {
                           <RecordsColumnHeaderFilter
                             label={col.label}
                             value={columnFilters[col.id] || ''}
-                            options={[...new Set(
-                              stampedInventory
-                                .map((row) => {
-                                  const raw = itsmCompanyMode
-                                    ? itsmRecordCellText(row, col.id)
-                                    : col.id === 'assigned_to'
-                                      ? assignedRecordLabel(row, { itsmCompanyMode })
-                                      : String((row as Record<string, unknown>)[col.id] ?? '');
-                                  return String(raw).trim();
-                                })
-                                .filter((v) => v && v !== '—'),
-                            )].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))}
+                            options={
+                              travelMode && col.id === 'sla'
+                                ? [...new Set([...TRAVEL_AIR_SLA_FILTER_OPTIONS, ...TRAVEL_DEADLINE_SLA_FILTER_OPTIONS])]
+                                : pmMode && col.id === 'sla'
+                                  ? [...PM_SLA_FILTER_OPTIONS]
+                                : [...new Set(
+                                  stampedInventory
+                                    .map((row) => {
+                                      const raw = itsmCompanyMode
+                                        ? itsmRecordCellText(row, col.id)
+                                        : col.id === 'assigned_to'
+                                          ? assignedRecordLabel(row, { itsmCompanyMode })
+                                          : pmMode && col.id === 'sla'
+                                            ? (pmSlaDisplay(row).primary || '')
+                                          : String((row as Record<string, unknown>)[col.id] ?? '');
+                                      return String(raw).trim();
+                                    })
+                                    .filter((v) => v && v !== '—'),
+                                )].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }))
+                            }
                             onChange={(next) => {
                               setPage(0);
                               setColumnFilters((prev) => ({ ...prev, [col.id]: next }));
@@ -758,12 +888,8 @@ export default function RecordsTab({ app, embed = false }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.items.map((row, index) => (
-                    <tr
-                      key={row.id}
-                      className="ne-list-row group"
-                      style={{ '--r': index } as CSSProperties}
-                    >
+                  {data.items.map((row) => (
+                    <tr key={row.id} className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
                       {columns.map((col) => {
                         const raw = (row as Record<string, unknown>)[col.id];
                         const cellPad = embed ? 'px-5 py-2.5' : 'px-3 py-2.5';
@@ -815,6 +941,48 @@ export default function RecordsTab({ app, embed = false }: Props) {
                             </td>
                           );
                         }
+                        if (travelMode && col.id === 'sla') {
+                          if (isTravelDeadlineSlaProcess(row.process_id)) {
+                            const sla = travelDeadlineSlaDisplay(row);
+                            const primary = sla.primary || '—';
+                            const tone = sla.state === 'breached'
+                              ? 'border-rose-200 bg-rose-50 text-rose-700'
+                              : sla.state === 'ok'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-slate-200 bg-slate-50 text-slate-500';
+                            return (
+                              <td key={col.id} className={cellPad}>
+                                <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                                  {primary}
+                                </span>
+                              </td>
+                            );
+                          }
+                          const sla = travelAirSlaDisplay(row);
+                          return (
+                            <td key={col.id} className={cellPad}>
+                              <span className={`inline-flex max-w-[14rem] whitespace-normal rounded-md border px-1.5 py-0.5 text-[11px] font-semibold leading-snug ${travelAirSlaTone(sla.state)}`}>
+                                {sla.primary}
+                              </span>
+                            </td>
+                          );
+                        }
+                        if (pmMode && col.id === 'sla') {
+                          const sla = pmSlaDisplay(row);
+                          const primary = sla.primary || '—';
+                          const tone = sla.state === 'breached'
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : sla.state === 'ok'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-slate-200 bg-slate-50 text-slate-500';
+                          return (
+                            <td key={col.id} className={cellPad}>
+                              <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                                {primary}
+                              </span>
+                            </td>
+                          );
+                        }
                         if (isDateRecordColumn(col.id) || col.id === 'created_at') {
                           const dateRaw = itsmCompanyMode && col.id === 'closed_at'
                             ? itsmClosedAtDisplay(row)
@@ -822,6 +990,15 @@ export default function RecordsTab({ app, embed = false }: Props) {
                           return (
                             <td key={col.id} className={`whitespace-nowrap tabular-nums text-slate-600 ${cellPad}`}>
                               {formatWhen(dateRaw)}
+                            </td>
+                          );
+                        }
+                        if (col.id === 'policy_deviation_cost') {
+                          const n = typeof raw === 'number' ? raw : Number(raw);
+                          const blank = raw == null || raw === '' || !Number.isFinite(n);
+                          return (
+                            <td key={col.id} className={`whitespace-nowrap tabular-nums text-slate-800 ${cellPad}`}>
+                              {blank ? '—' : formatInr(n)}
                             </td>
                           );
                         }
@@ -837,21 +1014,32 @@ export default function RecordsTab({ app, embed = false }: Props) {
                           : col.id === 'assigned_to'
                             ? assignedRecordLabel(row, { itsmCompanyMode })
                             : displayPersonCell(raw);
-                        if (itsmCompanyMode && (col.id === 'requested_by' || col.id === 'assigned_to' || col.id === 'closed_by')) {
+                        if (itsmCompanyMode && col.id === 'requested_by') {
+                          return (
+                            <td
+                              key={col.id}
+                              title={text}
+                              className={`${cellPad} min-w-[10rem] max-w-[16rem] whitespace-normal break-words font-medium text-slate-800`}
+                            >
+                              {text}
+                            </td>
+                          );
+                        }
+                        if (itsmCompanyMode && (col.id === 'assigned_to' || col.id === 'closed_by')) {
                           return (
                             <td key={col.id} title={text} className={cellPad}>
                               <MisPersonInitialsCell name={text === '—' ? '' : text} />
                             </td>
                           );
                         }
-                        const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'form_status', 'source', 'ticket_type', 'category']);
+                        const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'form_status', 'source', 'ticket_type', 'category', 'sub_category']);
                         return (
                           <td
                             key={col.id}
                             title={text}
                             className={`${cellPad} text-slate-800 ${
                               wrapIds.has(col.id)
-                                ? 'max-w-[14rem] whitespace-normal break-words'
+                                ? 'min-w-[11rem] max-w-[18rem] whitespace-normal break-words'
                                 : 'max-w-[220px]'
                             }`}
                           >
