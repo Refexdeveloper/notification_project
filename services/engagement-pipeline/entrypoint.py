@@ -72,15 +72,19 @@ class Handler(BaseHTTPRequestHandler):
                 env["FULL_INGEST"] = "true"
                 print("Forcing FULL_INGEST=true for this dispatch", flush=True)
 
+            # Keep under Cloud Run / Scheduler attemptDeadline (1800s). 890s was killing
+            # Extrovis-family FULL_INGEST under load (Modepro/Kavis/Extrovis 504s).
+            run_timeout = int(os.environ.get("RUNBOOK_TIMEOUT_SEC", "1700"))
+            # Stream logs live — capture_output hid progress until finish/timeout.
             result = subprocess.run(
                 ["bash", f"./ops/runbooks/{RUNBOOK}"],
-                capture_output=True, text=True, timeout=890, env=env,
+                text=True,
+                timeout=run_timeout,
+                env=env,
             )
-            log_output = result.stdout + "\n" + result.stderr
-            print(log_output, flush=True)
 
             if result.returncode != 0:
-                body = log_output.encode("utf-8")
+                body = f"Runbook exited {result.returncode}\n".encode("utf-8")
                 self.send_response(500)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
@@ -97,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             else:
-                body = log_output.encode("utf-8")
+                body = b"OK\n"
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

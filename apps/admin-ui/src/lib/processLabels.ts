@@ -111,8 +111,8 @@ export function entityFilterForTemplate(
   if (isRilRmcLabel(hay) || (/\brmc\b/i.test(hay) && /lead/i.test(hay))) return RIL_RMC_ENTITY_CODE;
   // Non-Refex Tech Helpdesk entities share the Extrovis process.
   if (isExtrovisProcess(processId)) {
-    if (/kavis/i.test(hay)) return 'Kavispharma';
-    if (/modepro/i.test(hay)) return 'Modepro';
+    if (/kavis/i.test(hay)) return 'KavisPharma';
+    if (/modepro/i.test(hay)) return 'ModePro';
     if (/extrovis/i.test(hay)) return 'Extrovis';
   }
   return defaultEntityFilterForProcess(processId);

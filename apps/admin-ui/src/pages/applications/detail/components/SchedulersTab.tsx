@@ -187,7 +187,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
   }, [selectedId]);
 
   type NonRefexEntitySetup = {
-    entityFilter: 'Extrovis' | 'Kavispharma' | 'Modepro';
+    entityFilter: 'Extrovis' | 'KavisPharma' | 'ModePro';
     templateName: string;
     starterId: 'itsm-extrovis' | 'itsm-kavispharma' | 'itsm-modepro';
     subject: string;
@@ -208,7 +208,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       entityMatch: /^extrovis$/i,
     },
     {
-      entityFilter: 'Kavispharma',
+      entityFilter: 'KavisPharma',
       templateName: 'Kavis Pharma ITSM Report',
       starterId: 'itsm-kavispharma',
       subject: 'Kavis Pharma / Kissflow ITSM Report',
@@ -223,10 +223,10 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
       ],
     },
     {
-      entityFilter: 'Modepro',
+      entityFilter: 'ModePro',
       templateName: 'Modepro ITSM Report',
       starterId: 'itsm-modepro',
-      subject: 'Modepro / Kissflow ITSM Report',
+      subject: 'ModePro / Kissflow ITSM Report',
       nameMatch: /modepro/i,
       entityMatch: /modepro/i,
       recipientsTo: ['pradip.kakade@modepro.com'],
@@ -248,7 +248,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
     const templatesRes = await loadTemplatesFromBackend(app);
     let tpl = templatesRes.templates.find((t) => setup.nameMatch.test(t.name));
     let setupNote = '';
-    const label = setup.entityFilter === 'Kavispharma' ? 'Kavis Pharma' : setup.entityFilter;
+    const label = setup.entityFilter === 'KavisPharma' ? 'Kavis Pharma' : setup.entityFilter;
 
     if (!tpl) {
       const created = await createTemplateOnBackend(app, {
@@ -476,7 +476,7 @@ export default function SchedulersTab({ app }: SchedulersTabProps) {
               >
                 {quickSetupBusy
                   ? 'Setting up…'
-                  : `Setup ${setup.entityFilter === 'Kavispharma' ? 'Kavis Pharma' : setup.entityFilter}`}
+                  : `Setup ${setup.entityFilter === 'KavisPharma' ? 'Kavis Pharma' : setup.entityFilter}`}
               </Button>
             ))}
             {quickSetupMsg && <span className="text-xs text-emerald-800">{quickSetupMsg}</span>}

@@ -223,13 +223,21 @@ report_live_today_kpis() {
   [[ -f "${script}" ]] || return 1
   command -v node >/dev/null 2>&1 || return 1
   local json
-  if ! json="$(
-    PROCESS_ID="${process_id}" \
-    APPLICATION_ID="${application_id}" \
-    ENTITY_FILTER="${entity_filter}" \
-    node "${script}" 2>/dev/null
-  )"; then
-    return 1
+  # Cap live pull so a hung Kissflow page cannot block the whole scheduled email.
+  if command -v timeout >/dev/null 2>&1; then
+    json="$(
+      PROCESS_ID="${process_id}" \
+      APPLICATION_ID="${application_id}" \
+      ENTITY_FILTER="${entity_filter}" \
+      timeout -k 10s 180s node "${script}" 2>/dev/null
+    )" || return 1
+  else
+    json="$(
+      PROCESS_ID="${process_id}" \
+      APPLICATION_ID="${application_id}" \
+      ENTITY_FILTER="${entity_filter}" \
+      node "${script}" 2>/dev/null
+    )" || return 1
   fi
   REPORT_LIVE_OPENED_TODAY="$(jq -r '.opened_today // empty' <<< "${json}" 2>/dev/null || true)"
   REPORT_LIVE_CLOSED_TODAY="$(jq -r '.closed_today // empty' <<< "${json}" 2>/dev/null || true)"
@@ -259,12 +267,18 @@ report_live_itsm_sla() {
   [[ -f "${script}" ]] || return 1
   command -v node >/dev/null 2>&1 || return 1
   local json
-  if ! json="$(
-    PROCESS_ID="${process_id}" \
-    ENTITY_FILTER="${entity_filter}" \
-    node "${script}" 2>/dev/null
-  )"; then
-    return 1
+  if command -v timeout >/dev/null 2>&1; then
+    json="$(
+      PROCESS_ID="${process_id}" \
+      ENTITY_FILTER="${entity_filter}" \
+      timeout -k 10s 180s node "${script}" 2>/dev/null
+    )" || return 1
+  else
+    json="$(
+      PROCESS_ID="${process_id}" \
+      ENTITY_FILTER="${entity_filter}" \
+      node "${script}" 2>/dev/null
+    )" || return 1
   fi
   REPORT_LIVE_SLA_OPEN="$(jq -r '.sla_breached_open // empty' <<< "${json}" 2>/dev/null || true)"
   REPORT_LIVE_SLA_CLOSED="$(jq -r '.sla_breached_closed // empty' <<< "${json}" 2>/dev/null || true)"

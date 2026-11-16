@@ -82,6 +82,48 @@ case "${ENTITY_FILTER_TOKEN}" in
   *) ENTITY_MATCH_TOKEN="${ENTITY_FILTER_TOKEN}" ;;
 esac
 ENTITY_MATCH_TOKEN_SQL="$(printf '%s' "${ENTITY_MATCH_TOKEN}" | sed "s/'/''/g")"
+# MIS / TotalUsers: Extrovis-family entity schedules keep only that company's email domain.
+# Extrovis → @extrovis.com · ModePro → @modepro.com · KavisPharma → @kavispharma.com
+ENTITY_EMAIL_DOMAIN=""
+if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+  case "${ENTITY_MATCH_TOKEN}" in
+    extrovis) ENTITY_EMAIL_DOMAIN='extrovis.com' ;;
+    kavis) ENTITY_EMAIL_DOMAIN='kavispharma.com' ;;
+    modepro) ENTITY_EMAIL_DOMAIN='modepro.com' ;;
+  esac
+fi
+ENTITY_EMAIL_DOMAIN_SQL="$(printf '%s' "${ENTITY_EMAIL_DOMAIN}" | sed "s/'/''/g")"
+# Prefer Kissflow Entity labels in footers / logs when filter is an alias.
+case "${ENTITY_MATCH_TOKEN}" in
+  kavis) ENTITY_FILTER_DISPLAY='KavisPharma' ;;
+  modepro) ENTITY_FILTER_DISPLAY='ModePro' ;;
+  extrovis) ENTITY_FILTER_DISPLAY='Extrovis' ;;
+  *) ENTITY_FILTER_DISPLAY="${ENTITY_FILTER}" ;;
+esac
+# Resolved user email (profile column + Kissflow payload).
+USER_EMAIL_LC_EXPR="lower(trim(coalesce(
+  nullif(trim(u.email), ''),
+  nullif(trim(u.source_payload->>'Email'), ''),
+  nullif(trim(u.source_payload->>'email'), ''),
+  nullif(trim(a.user_email), ''),
+  ''
+)))"
+# empty domain = no filter; otherwise require exact domain after @
+USER_EMAIL_DOMAIN_SCOPE_SQL="(
+  '${ENTITY_EMAIL_DOMAIN_SQL}' = ''
+  OR split_part(${USER_EMAIL_LC_EXPR}, '@', 2) = '${ENTITY_EMAIL_DOMAIN_SQL}'
+)"
+# For summary app_members (no activity alias): profile email only.
+MEMBER_EMAIL_LC_EXPR="lower(trim(coalesce(
+  nullif(trim(u.email), ''),
+  nullif(trim(u.source_payload->>'Email'), ''),
+  nullif(trim(u.source_payload->>'email'), ''),
+  ''
+)))"
+MEMBER_EMAIL_DOMAIN_SCOPE_SQL="(
+  '${ENTITY_EMAIL_DOMAIN_SQL}' = ''
+  OR split_part(${MEMBER_EMAIL_LC_EXPR}, '@', 2) = '${ENTITY_EMAIL_DOMAIN_SQL}'
+)"
 # Normalize Entity text for contains-match (aasik normalizeEntityKey style).
 ENTITY_TOKEN_EXPR_I="regexp_replace(lower(trim(coalesce(i.entity, ''))), '[^a-z0-9]', '', 'g')"
 ENTITY_PAYLOAD_TOKEN_EXPR_I="regexp_replace(lower(trim(coalesce(
@@ -203,12 +245,93 @@ command -v psql >/dev/null 2>&1 || stop "psql is not installed."
 mkdir -p "${TEMPLATES_DIR}" "${AUDIT_DIR}"
 
 apply_template_branding_from_pg
-refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
+# Extrovis-process entity emails (Extrovis / Kavis / Modepro) omit User Sign-in Overview.
+# Kissflow per-user last-sign-in refresh was hanging and 500'ing those schedules before send.
+if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+  log "Skip last-sign-in refresh for Extrovis-process report (no sign-in overview)"
+  # Cap PG so Extrovis role/user scans cannot block Modepro/Kavis/Extrovis email sends.
+  export ITSM_PGOPTIONS="-c statement_timeout=60000"
+else
+  refresh_user_last_sign_ins_for_process "${ITSM_APP_ID}" "${ITSM_PROCESS_ID}"
+  export ITSM_PGOPTIONS=""
+fi
 
 if [[ -n "${ENTITY_FILTER}" ]]; then
-  log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER})"
+  log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER}${ENTITY_EMAIL_DOMAIN:+, users @${ENTITY_EMAIL_DOMAIN}})"
 else
   log "Querying summary metrics (process=${ITSM_PROCESS_ID}, all entities on this process)"
+fi
+
+# Entity email-domain schedules: skip principal_user role scans (they time out under 60s).
+# Roster = Kissflow users whose email domain matches Extrovis / ModePro / KavisPharma.
+if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+  SUMMARY_USER_MEMBERSHIP_SQL="
+domain_users AS (
+  SELECT DISTINCT u0.user_id
+  FROM engagement_reporting.\"user\" u0
+  WHERE u0.environment = 'production'
+    AND split_part(lower(trim(coalesce(
+          nullif(trim(u0.email), ''),
+          nullif(trim(u0.source_payload->>'Email'), ''),
+          nullif(trim(u0.source_payload->>'email'), ''),
+          ''
+        ))), '@', 2) = '${ENTITY_EMAIL_DOMAIN_SQL}'
+),
+app_members_scoped AS (
+  SELECT user_id FROM domain_users
+)"
+else
+  SUMMARY_USER_MEMBERSHIP_SQL="
+latest_users AS (
+  SELECT snapshot_run_id
+  FROM engagement_reporting.\"user\"
+  ORDER BY snapshot_at DESC
+  LIMIT 1
+),
+process_roles AS (
+  SELECT DISTINCT ia.principal_id AS role_id
+  FROM engagement_reporting.item_assignment ia
+  JOIN engagement_reporting.item i
+    ON i.instance_id = ia.instance_id
+   AND i.snapshot_at = ia.snapshot_at
+   AND i.snapshot_run_id = ia.snapshot_run_id
+  WHERE ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
+    AND ia.principal_type = 'APP_ROLE'
+    AND ${ENTITY_SCOPE_SQL}
+),
+named_role_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN engagement_reporting.principal p
+    ON p.environment = pu.environment
+   AND p.application_id = pu.application_id
+   AND p.principal_id = pu.principal_id
+   AND p.principal_type = pu.principal_type
+   AND p.is_current = true
+  WHERE pu.application_id = '${ITSM_APP_ID}'
+    AND pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+    AND ${ROLE_NAME_SCOPE_SQL}
+),
+process_role_members AS (
+  SELECT DISTINCT pu.user_id
+  FROM engagement_reporting.principal_user pu
+  JOIN process_roles pr ON pr.role_id = pu.principal_id
+  WHERE pu.valid_to IS NULL
+    AND pu.principal_type = 'APP_ROLE'
+    AND pu.user_id IS NOT NULL
+    AND trim(pu.user_id) <> ''
+),
+app_members AS (
+  SELECT user_id FROM named_role_members
+  UNION
+  SELECT user_id FROM process_role_members
+),
+app_members_scoped AS (
+  SELECT user_id FROM app_members
+)"
 fi
 
 SUMMARY_JSON="$(echo "
@@ -317,65 +440,19 @@ sla_sourced AS (
     END AS source_channel
   FROM sla
 ),
-latest_users AS (
-  SELECT snapshot_run_id
-  FROM engagement_reporting.\"user\"
-  ORDER BY snapshot_at DESC
-  LIMIT 1
-),
-process_roles AS (
-  SELECT DISTINCT ia.principal_id AS role_id
-  FROM engagement_reporting.item_assignment ia
-  JOIN engagement_reporting.item i
-    ON i.instance_id = ia.instance_id
-   AND i.snapshot_at = ia.snapshot_at
-   AND i.snapshot_run_id = ia.snapshot_run_id
-  WHERE ia.snapshot_run_id = (SELECT snapshot_run_id FROM latest)
-    AND ia.principal_type = 'APP_ROLE'
-    AND ${ENTITY_SCOPE_SQL}
-),
-named_role_members AS (
-  SELECT DISTINCT pu.user_id
-  FROM engagement_reporting.principal_user pu
-  JOIN engagement_reporting.principal p
-    ON p.environment = pu.environment
-   AND p.application_id = pu.application_id
-   AND p.principal_id = pu.principal_id
-   AND p.principal_type = pu.principal_type
-   AND p.is_current = true
-  WHERE pu.application_id = '${ITSM_APP_ID}'
-    AND pu.valid_to IS NULL
-    AND pu.principal_type = 'APP_ROLE'
-    AND pu.user_id IS NOT NULL
-    AND trim(pu.user_id) <> ''
-    AND ${ROLE_NAME_SCOPE_SQL}
-),
-process_role_members AS (
-  SELECT DISTINCT pu.user_id
-  FROM engagement_reporting.principal_user pu
-  JOIN process_roles pr ON pr.role_id = pu.principal_id
-  WHERE pu.valid_to IS NULL
-    AND pu.principal_type = 'APP_ROLE'
-    AND pu.user_id IS NOT NULL
-    AND trim(pu.user_id) <> ''
-),
-app_members AS (
-  SELECT user_id FROM named_role_members
-  UNION
-  SELECT user_id FROM process_role_members
-)
+${SUMMARY_USER_MEMBERSHIP_SQL}
 SELECT json_build_object(
-  'total_users', (SELECT count(*) FROM app_members),
+  'total_users', (SELECT count(*) FROM app_members_scoped),
   'signed_in_users', (
     SELECT count(*)
     FROM ${REPORT_BEST_USER_FROM_SQL}
-    JOIN app_members am ON am.user_id = u.user_id
+    JOIN app_members_scoped am ON am.user_id = u.user_id
     WHERE COALESCE(u.ever_logged_in, false)
   ),
   'signed_in_today', (
     SELECT count(*)
     FROM ${REPORT_BEST_USER_FROM_SQL}
-    JOIN app_members am ON am.user_id = u.user_id
+    JOIN app_members_scoped am ON am.user_id = u.user_id
     WHERE ${REPORT_USER_LAST_SIGN_IN_SQL} IS NOT NULL
       AND (${REPORT_USER_LAST_SIGN_IN_SQL} AT TIME ZONE 'Asia/Kolkata')::date
         = (now() AT TIME ZONE 'Asia/Kolkata')::date
@@ -383,7 +460,7 @@ SELECT json_build_object(
   'never_logged_in', (
     SELECT count(*)
     FROM ${REPORT_BEST_USER_FROM_SQL}
-    JOIN app_members am ON am.user_id = u.user_id
+    JOIN app_members_scoped am ON am.user_id = u.user_id
     WHERE NOT COALESCE(u.ever_logged_in, false)
   ),
   'opened_today', (SELECT count(*) FROM sla WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date),
@@ -415,7 +492,13 @@ SELECT json_build_object(
     'Other', (SELECT count(*) FROM sla_sourced WHERE is_open AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date AND source_channel = 'Other')
   )
 );
-" | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+" | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
+
+# Extrovis-family: principal_user role scan can hang under load — fall back to zeros; live overlay fills KPIs.
+if [[ -z "${SUMMARY_JSON}" || "${SUMMARY_JSON}" != \{* ]]; then
+  log "WARNING: summary SQL empty/timeout — using zeros until live Kissflow overlay"
+  SUMMARY_JSON='{"total_users":0,"signed_in_today":0,"never_logged_in":0,"opened_today":0,"closed_today":0,"open_tickets":0,"closed_tickets":0,"total_tickets":0,"sla_breached_open":0,"sla_breached_closed":0,"source_all":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0},"source_open":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0},"source_opened_today":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0}}'
+fi
 
 if [[ -n "${ENTITY_FILTER}" ]]; then
   log "Querying per-user breakdown (latest snapshot, entity=${ENTITY_FILTER})"
@@ -426,8 +509,32 @@ fi
 # Build user rows from ticket activity first, then attach Kissflow user profile when present.
 # Extrovis (and sparse snapshots) can have assignees/creators that are not in \"user\" yet —
 # still show them so the table is not empty when tickets exist.
-# Extrovis MIS table = full app-role roster ∪ ticket people (zeros allowed).
-if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
+# Entity domain schedules: MIS = @domain users ∪ entity ticket people (domain-filtered in WHERE).
+# Unscoped Extrovis process: full app-role roster ∪ ticket people (zeros allowed).
+if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+  USER_TABLE_ROSTER_CTE=",
+domain_users AS (
+  SELECT DISTINCT u0.user_id
+  FROM engagement_reporting.\"user\" u0
+  WHERE u0.environment = 'production'
+    AND split_part(lower(trim(coalesce(
+          nullif(trim(u0.email), ''),
+          nullif(trim(u0.source_payload->>'Email'), ''),
+          nullif(trim(u0.source_payload->>'email'), ''),
+          ''
+        ))), '@', 2) = '${ENTITY_EMAIL_DOMAIN_SQL}'
+),
+user_roster AS (
+  SELECT user_id FROM domain_users
+  UNION
+  SELECT user_id FROM activity
+)"
+  USER_TABLE_FROM_SQL="user_roster r
+  LEFT JOIN activity a ON a.user_id = r.user_id
+  LEFT JOIN sla_by_user s ON s.user_id = r.user_id"
+  USER_TABLE_ID_SQL="r.user_id"
+  USER_TABLE_ACTIVITY_FILTER_SQL=""
+elif [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
   USER_TABLE_ROSTER_CTE=",
 process_roles AS (
   SELECT DISTINCT ia.principal_id AS role_id
@@ -505,7 +612,8 @@ assignee_name AS (
     i.instance_id,
     i.snapshot_at,
     elem->>'_id' AS user_id,
-    NULLIF(trim(elem->>'Name'), '') AS display_name
+    NULLIF(trim(elem->>'Name'), '') AS display_name,
+    NULLIF(trim(COALESCE(elem->>'Email', elem->>'email')), '') AS user_email
   FROM engagement_reporting.item i
   CROSS JOIN LATERAL jsonb_array_elements(
     CASE
@@ -524,6 +632,7 @@ activity AS (
   SELECT
     user_id,
     MAX(NULLIF(trim(display_name), '')) AS display_name,
+    MAX(NULLIF(trim(user_email), '')) AS user_email,
     SUM(open_count)::int AS open_count,
     SUM(closed_count)::int AS closed_count
   FROM (
@@ -534,6 +643,11 @@ activity AS (
         NULLIF(trim(ia.source_payload->>'name'), ''),
         NULLIF(trim(an.display_name), '')
       )) AS display_name,
+      MAX(COALESCE(
+        NULLIF(trim(ia.source_payload->>'Email'), ''),
+        NULLIF(trim(ia.source_payload->>'email'), ''),
+        NULLIF(trim(an.user_email), '')
+      )) AS user_email,
       count(*)::int AS open_count,
       0 AS closed_count
     FROM engagement_reporting.item_assignment ia
@@ -557,6 +671,10 @@ activity AS (
     SELECT
       (i.source_payload->'_created_by'->>'_id') AS user_id,
       MAX(NULLIF(trim(i.source_payload->'_created_by'->>'Name'), '')) AS display_name,
+      MAX(COALESCE(
+        NULLIF(trim(i.source_payload->'_created_by'->>'Email'), ''),
+        NULLIF(trim(i.source_payload->'_created_by'->>'email'), '')
+      )) AS user_email,
       0 AS open_count,
       count(*)::int AS closed_count
     FROM engagement_reporting.item i
@@ -651,10 +769,16 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   WHERE resolved.user_name IS NOT NULL
     AND resolved.user_name <> ${USER_TABLE_ID_SQL}
     AND resolved.user_name !~ '^[Uu][Ss][A-Za-z0-9_-]{6,}$'
+    AND ${USER_EMAIL_DOMAIN_SCOPE_SQL}
     ${USER_TABLE_ACTIVITY_FILTER_SQL}
   ORDER BY COALESCE(a.open_count, 0) DESC, COALESCE(a.closed_count, 0) DESC, resolved.user_name
 ) t;
-" | psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" | tr -d "\r" | grep -v "^Output format")"
+" | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
+
+if [[ -z "${USERS_JSON}" || "${USERS_JSON}" != \[* ]]; then
+  log "WARNING: user-breakdown SQL empty/timeout — empty user table; live overlay still fills ticket KPIs"
+  USERS_JSON='[]'
+fi
 
 [[ -n "${SUMMARY_JSON}" ]] || stop "Failed to retrieve summary metrics."
 [[ -n "${USERS_JSON}" ]] || stop "Failed to retrieve user breakdown."
@@ -719,9 +843,16 @@ MIS_COUNTS="$(jq -c --arg today "${TODAY_IST}" '
 TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
 SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
 if [[ "${ITSM_PROCESS_ID}" == *[Ee]xtrovis* ]]; then
-  # Card = full Extrovis app-role roster (same as MIS user details), not ticket-only rows.
-  TOTAL_USERS="$(jq -r '.total_users // 0' <<< "${SUMMARY_JSON}")"
-  SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${SUMMARY_JSON}")"
+  if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+    # Entity schedule: TotalUsers ≡ MIS rows (same @domain roster). Ticket KPIs stay Entity-scoped.
+    TOTAL_USERS="$(jq -r '.total' <<< "${MIS_COUNTS}")"
+    SIGNED_IN_TODAY="$(jq -r '.signed_in_today' <<< "${MIS_COUNTS}")"
+    log "Entity email domain ${ENTITY_EMAIL_DOMAIN}: TotalUsers=${TOTAL_USERS} (MIS parity)"
+  else
+    # Unscoped Extrovis process: card = full app-role roster (same as MIS user details).
+    TOTAL_USERS="$(jq -r '.total_users // 0' <<< "${SUMMARY_JSON}")"
+    SIGNED_IN_TODAY="$(jq -r '.signed_in_today // 0' <<< "${SUMMARY_JSON}")"
+  fi
 fi
 SIGNED_IN="$(jq -r '.signed_in_users' <<< "${SUMMARY_JSON}")"
 SIGNIN_PCT="$(jq '
@@ -950,7 +1081,11 @@ jq -n \
   --arg PendingDetailHtml "${PENDING_DETAIL_HTML}" \
   --arg ReportBody "$(
     if [[ -n "${ENTITY_FILTER}" ]]; then
-      printf 'Scoped to process %s · Entity = %s. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}" "${ENTITY_FILTER}"
+      if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+        printf 'Scoped to process %s · Entity = %s · users @%s. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}" "${ENTITY_FILTER_DISPLAY:-${ENTITY_FILTER}}" "${ENTITY_EMAIL_DOMAIN}"
+      else
+        printf 'Scoped to process %s · Entity = %s. SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}" "${ENTITY_FILTER_DISPLAY:-${ENTITY_FILTER}}"
+      fi
     else
       printf 'Scoped to process %s (all tickets on this process). SLA Breached compares actual ticket duration against the configured SLA target from Kissflow'\''s Approval Matrix.' "${ITSM_PROCESS_ID}"
     fi

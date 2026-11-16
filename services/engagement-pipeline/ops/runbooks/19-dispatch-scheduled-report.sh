@@ -475,9 +475,13 @@ case "${APPLICATION_ID}" in
       " 2>/dev/null | tr -d '[:space:]')"
       [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -gt 0 ]]
     }
-    # Healthy = recent completed run with a non-trivial item count (avoids sparse deltas).
+    # Healthy = recent completed/partial run with items (avoids sparse deltas).
+    # Extrovis process is small (often <10 tickets) — do not force FULL_INGEST forever.
     itsm_snapshot_healthy() {
-      local n
+      local n min_count=10
+      case "${ITSM_PROCESS_ID}" in
+        *Extrovis*|*extrovis*) min_count=1 ;;
+      esac
       n="$(psql "host=${PGHOST:-localhost} port=${PGPORT:-5432} dbname=${PGDATABASE} user=${PGUSER}" -t -A -c "
         SELECT COALESCE(MAX(item_record_count), 0)::text
         FROM engagement_reporting.snapshot_run
@@ -487,36 +491,65 @@ case "${APPLICATION_ID}" in
           AND status NOT IN ('IN_PROGRESS', 'PENDING', 'FAILED')
           AND COALESCE(load_completed_at, extraction_completed_at, created_at) > now() - interval '7 days'
       " 2>/dev/null | tr -d '[:space:]')"
-      [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -ge 10 ]]
+      [[ "${n:-0}" =~ ^[0-9]+$ ]] && [[ "${n}" -ge "${min_count}" ]]
     }
     if [[ "${TEST_SEND}" == "true" ]]; then
-      # Fast path: render from PostgreSQL. Kissflow only if snapshot missing/sparse.
-      # Live Today KPIs are still overlaid in 06-render from Kissflow Admin API (small).
-      if ! itsm_has_snapshot || ! itsm_snapshot_healthy; then
-        log "Test send: snapshot missing/sparse for ${ITSM_PROCESS_ID} — one-time FULL_INGEST"
-        export FULL_INGEST=true
-        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh" \
-          || log "WARNING: ITSM ingest failed — rendering from existing snapshot"
-      else
-        log "Test send: using PostgreSQL snapshot for ${ITSM_PROCESS_ID} (no Kissflow pull — fast)"
-      fi
+      # Fast path: render from PostgreSQL. Live Today/SLA/Source still overlay in 06-render.
+      # Extrovis-process entity emails (Extrovis / Kavis / ModePro): never FULL_INGEST on
+      # test-send — same as scheduled path (ingest hangs / 504 / empties KPI SQL).
+      case "${ITSM_PROCESS_ID}" in
+        *Extrovis*|*extrovis*)
+          log "Test send: skip ingest for Extrovis-process entity report (live overlay in render)"
+          ;;
+        *)
+          if ! itsm_has_snapshot || ! itsm_snapshot_healthy; then
+            log "Test send: snapshot missing/sparse for ${ITSM_PROCESS_ID} — one-time FULL_INGEST"
+            export FULL_INGEST=true
+            bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh" \
+              || log "WARNING: ITSM ingest failed — rendering from existing snapshot"
+          else
+            log "Test send: using PostgreSQL snapshot for ${ITSM_PROCESS_ID} (no Kissflow pull — fast)"
+          fi
+          ;;
+      esac
       send_test_report \
         "${REPO_ROOT}/templates/generated/report-latest.html" \
         "$(report_cache_key)" \
         "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
       log "ITSM test send completed"
     else
-      log "Step 1/3: Incremental Kissflow sync (only items modified since last watermark)"
-      # Scheduled emails: incremental + carry-forward. FULL only if snapshot sparse/missing.
-      if itsm_snapshot_healthy; then
-        export FULL_INGEST=false
-      else
-        log "Snapshot sparse/missing — FULL_INGEST for ${ITSM_PROCESS_ID}"
-        export FULL_INGEST=true
-      fi
-      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh"
+      # Extrovis-process entity emails (Extrovis / Kavis / Modepro): FULL_INGEST hangs and
+      # was 504'ing the runner before send. KPI source of truth is live overlay in 06-render —
+      # skip blocking ingest here (does not change dashboard incremental sync).
+      case "${ITSM_PROCESS_ID}" in
+        *Extrovis*|*extrovis*)
+          log "Step 1/3: Skip ingest for Extrovis-process entity report (live overlay in render)"
+          ;;
+        *)
+          log "Step 1/3: Incremental Kissflow sync (only items modified since last watermark)"
+          if itsm_snapshot_healthy; then
+            export FULL_INGEST=false
+          else
+            log "Snapshot sparse/missing — FULL_INGEST for ${ITSM_PROCESS_ID}"
+            export FULL_INGEST=true
+          fi
+          ITSM_INGEST_BUDGET_SEC="${ITSM_INGEST_BUDGET_SEC:-600}"
+          if command -v timeout >/dev/null 2>&1; then
+            timeout -k 15s "${ITSM_INGEST_BUDGET_SEC}" bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh" \
+              || log "WARNING: ITSM ingest failed/timed out after ${ITSM_INGEST_BUDGET_SEC}s — rendering with live Kissflow overlay + existing snapshot"
+          else
+            bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/09-ingest-and-load.sh" \
+              || log "WARNING: ITSM ingest failed — rendering with live Kissflow overlay + existing snapshot"
+          fi
+          ;;
+      esac
       log "Step 2/3: Rendering ITSM report"
-      bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
+      ITSM_RENDER_BUDGET_SEC="${ITSM_RENDER_BUDGET_SEC:-900}"
+      if command -v timeout >/dev/null 2>&1; then
+        timeout -k 15s "${ITSM_RENDER_BUDGET_SEC}" bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
+      else
+        bash "${REPO_ROOT}/services/engagement-pipeline/ops/runbooks/06-render-html-report.sh"
+      fi
       log "Step 3/3: Sending ITSM report"
       send_cached_report "${REPO_ROOT}/templates/generated/report-latest.html"
       log "ITSM ingest-render-send completed"

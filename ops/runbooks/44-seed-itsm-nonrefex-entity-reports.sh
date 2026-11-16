@@ -240,7 +240,7 @@ ON CONFLICT (report_template_id, version_number) DO UPDATE
 SQL
 
 seed_entity \
-  "Kavispharma" \
+  "KavisPharma" \
   "Kavis Pharma ITSM Report" \
   "${TEMPLATE_ID_KAVIS}" \
   "itsm-kavispharma-engagement-template.html" \
@@ -253,14 +253,14 @@ seed_entity \
   "mohamedaasik.m@refex.co.in,gowtham.s@refex.co.in,srivaths.varadharajan@refex.co.in"
 
 seed_entity \
-  "Modepro" \
+  "ModePro" \
   "Modepro ITSM Report" \
   "${TEMPLATE_ID_MODEPRO}" \
   "itsm-modepro-engagement-template.html" \
   "${REPORT_DEF_ID_MODEPRO}" \
   "${REPORT_DEF_VERSION_ID_MODEPRO}" \
   "${SCHEDULE_ID_MODEPRO}" \
-  "Modepro / Kissflow ITSM Report" \
+  "ModePro / Kissflow ITSM Report" \
   "pradip.kakade@modepro.com" \
   "itsupport@extrovis.com" \
   "mohamedaasik.m@refex.co.in,gowtham.s@refex.co.in,srivaths.varadharajan@refex.co.in"
@@ -274,8 +274,8 @@ cat > "${AUDIT_DIR}/runbook-44-${TIMESTAMP}.json" <<EOF
   "process_id": "${PROCESS_ID}",
   "schedules": {
     "Extrovis": "${SCHEDULE_ID_EXTROVIS}",
-    "Kavispharma": "${SCHEDULE_ID_KAVIS}",
-    "Modepro": "${SCHEDULE_ID_MODEPRO}"
+    "KavisPharma": "${SCHEDULE_ID_KAVIS}",
+    "ModePro": "${SCHEDULE_ID_MODEPRO}"
   },
   "note": "Schedules created inactive — Activate in Admin UI after review. Extrovis entity_filter repaired from all→Extrovis."
 }

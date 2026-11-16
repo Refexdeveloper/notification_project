@@ -112,7 +112,7 @@ const STARTER_CATALOG = [
   {
     id: 'itsm-extrovis',
     name: 'Extrovis ITSM report',
-    description: 'Extrovis entity tickets only — no user sign-in overview (tickets, source, activity, assignees).',
+    description: 'Extrovis entity tickets only — no user sign-in overview. Users limited to @extrovis.com.',
     seed_path: 'db/seeds/itsm-extrovis-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -135,7 +135,7 @@ const STARTER_CATALOG = [
   {
     id: 'itsm-kavispharma',
     name: 'Kavis Pharma ITSM report',
-    description: 'Kavis Pharma entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview).',
+    description: 'KavisPharma entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview). Users limited to @kavispharma.com.',
     seed_path: 'db/seeds/itsm-kavispharma-engagement-template.html',
     placeholders: [
       'ReportTitle',
@@ -157,8 +157,8 @@ const STARTER_CATALOG = [
   },
   {
     id: 'itsm-modepro',
-    name: 'Modepro ITSM report',
-    description: 'Modepro entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview).',
+    name: 'ModePro ITSM report',
+    description: 'ModePro entity tickets only on the Extrovis process — same layout as Extrovis (no sign-in overview). Users limited to @modepro.com.',
     seed_path: 'db/seeds/itsm-modepro-engagement-template.html',
     placeholders: [
       'ReportTitle',

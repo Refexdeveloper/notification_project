@@ -26,7 +26,7 @@ function canonicalItsmEntityFilter(filter) {
 
 /**
  * @param {string} entityRaw — Kissflow Entity column / payload value
- * @param {string} filter — schedule entity_filter (Extrovis | Kavispharma | Modepro | …)
+ * @param {string} filter — schedule entity_filter (Extrovis | KavisPharma | ModePro | …)
  */
 function itsmEntityMatchesFilter(entityRaw, filter) {
   const want = canonicalItsmEntityFilter(filter);
@@ -44,8 +44,43 @@ function itsmEntityMatchesFilter(entityRaw, filter) {
   return have === want || have.includes(want) || want.includes(have);
 }
 
+/** Canonical Entity labels for schedules / footers (Kissflow values). */
+function canonicalItsmEntityLabel(filter) {
+  const want = canonicalItsmEntityFilter(filter);
+  if (want === 'extrovis') return 'Extrovis';
+  if (want === 'kavis') return 'KavisPharma';
+  if (want === 'modepro') return 'ModePro';
+  if (want === 'pharmapack') return 'PharmaPack';
+  if (want === 'refex') return 'Refex';
+  return String(filter || '').trim();
+}
+
+/**
+ * Email domain for Extrovis-family entity schedules.
+ * Extrovis → @extrovis.com, ModePro → @modepro.com, KavisPharma → @kavispharma.com
+ */
+function itsmEntityEmailDomain(filter) {
+  const want = canonicalItsmEntityFilter(filter);
+  if (want === 'extrovis') return 'extrovis.com';
+  if (want === 'kavis') return 'kavispharma.com';
+  if (want === 'modepro') return 'modepro.com';
+  return '';
+}
+
+function itsmUserEmailMatchesEntity(email, filter) {
+  const domain = itsmEntityEmailDomain(filter);
+  if (!domain) return true;
+  const e = String(email || '').trim().toLowerCase();
+  const at = e.lastIndexOf('@');
+  if (at < 0) return false;
+  return e.slice(at + 1) === domain;
+}
+
 module.exports = {
   entityToken,
   canonicalItsmEntityFilter,
   itsmEntityMatchesFilter,
+  canonicalItsmEntityLabel,
+  itsmEntityEmailDomain,
+  itsmUserEmailMatchesEntity,
 };

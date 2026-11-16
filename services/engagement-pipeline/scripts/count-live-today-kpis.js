@@ -352,8 +352,14 @@ function extractArray(payload) {
 
 async function fetchAllItems() {
   const all = [];
+  // Extrovis-family process: use All_tickets report (same as SLA / aasik dashboards).
+  // Admin get-all-items hangs under load and blocked Modepro/Kavis/Extrovis email sends.
+  const useExtrovisReport = /extrovis/i.test(processId);
+  const reportId = useExtrovisReport ? 'All_tickets_A00' : '';
   for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const path = `/process/2/${encodeURIComponent(accountId)}/admin/${encodeURIComponent(processId)}/item?page_number=${page}&page_size=${PAGE_SIZE}&apply_preference=false`;
+    const path = useExtrovisReport
+      ? `/process-report/2/${encodeURIComponent(accountId)}/${encodeURIComponent(processId)}/${encodeURIComponent(reportId)}?page_number=${page}&page_size=${PAGE_SIZE}&_application_id=${encodeURIComponent(ITSM_APP_ID)}`
+      : `/process/2/${encodeURIComponent(accountId)}/admin/${encodeURIComponent(processId)}/item?page_number=${page}&page_size=${PAGE_SIZE}&apply_preference=false`;
     const payload = await httpsGetJson(path);
     const batch = extractArray(payload);
     all.push(...batch);

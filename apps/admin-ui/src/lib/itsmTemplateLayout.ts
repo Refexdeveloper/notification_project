@@ -47,7 +47,7 @@ export function resolveItsmEntityStarterId(templateName: string): string {
 
 export function itsmEntityStarterLabel(starterId: string): string {
   if (starterId === 'itsm-kavispharma') return 'Kavis Pharma';
-  if (starterId === 'itsm-modepro') return 'Modepro';
+  if (starterId === 'itsm-modepro') return 'ModePro';
   if (starterId === 'itsm-extrovis') return 'Extrovis';
   return 'Refex ITSM';
 }
