@@ -6,9 +6,15 @@ import {
   itsmClosedByDisplay,
   itsmHumanName,
   itsmRecordCellText,
+  itsmRequesterName,
+  stampItsmRequesterNames,
+  itsmTicketUserName,
   getRequestTypeShort,
   itsmExpandTiles,
+  countItsmSlaBreached,
+  isItsmSlaBreached,
   itsmSlaDisplay,
+  itsmTicketName,
   itsmReopenedStamp,
   itsmStageLabel,
 } from './itsmRecordDisplay';
@@ -27,16 +33,23 @@ describe('ITSM_CEO_RECORD_COLUMNS', () => {
     expect(ITSM_CEO_RECORD_COLUMNS.map((c) => c.id)).toEqual([
       'request_id',
       'requested_by',
+      'company_name',
       'assigned_to',
       'sla',
       'created_at',
       'status',
       'form_status',
       'source',
+      'category',
+      'sub_category',
+      'laptop_label',
       'ticket_type',
       'closed_by',
       'closed_at',
     ]);
+    expect(ITSM_CEO_RECORD_COLUMNS.find((c) => c.id === 'requested_by')?.label).toBe('Requester Name');
+    expect(ITSM_CEO_RECORD_COLUMNS.find((c) => c.id === 'company_name')?.label).toBe('Company');
+    expect(ITSM_CEO_RECORD_COLUMNS.find((c) => c.id === 'laptop_label')?.label).toBe('Laptop');
   });
 });
 
@@ -45,6 +58,50 @@ describe('itsmHumanName', () => {
     expect(itsmHumanName({ id: '1', assigned_to: 'ITSM Bot', closed_by: 'Sakthivel' })).toBe('Sakthivel');
     expect(itsmHumanName({ id: '2', assigned_to: 'Bhukkay Naik', closed_by: 'Sakthivel' })).toBe('Bhukkay Naik');
     expect(itsmHumanName({ id: '3', assigned_to: 'IT Agents Extrovis', closed_by: 'Sakthivel' })).toBe('Sakthivel');
+  });
+});
+
+describe('itsmRequesterName', () => {
+  it('prefers Behalf Of Name when a proxy raised the ticket', () => {
+    expect(itsmRequesterName({
+      id: '1',
+      requested_by: 'Fazulahemed',
+      behalf_of_name: 'Priya S',
+    } as never)).toBe('Priya S');
+    expect(itsmRequesterName({
+      id: '2',
+      requested_by: 'Fazulahemed',
+      Behalf_Of_Name: { Name: 'Arun Kumar' },
+    } as never)).toBe('Arun Kumar');
+    expect(itsmRequesterName({
+      id: '3',
+      requested_by: 'Sudhaya K',
+    } as never)).toBe('Sudhaya K');
+  });
+});
+
+describe('stampItsmRequesterNames', () => {
+  it('rewrites requested_by to Behalf Of Name for IT Help Desk rows', () => {
+    const rows = stampItsmRequesterNames([
+      { id: '1', requested_by: 'Fazulahemed', behalf_of_name: 'Priya S' },
+      { id: '2', requested_by: 'Sudhaya K' },
+    ] as never);
+    expect(rows.map((r) => r.requested_by)).toEqual(['Priya S', 'Sudhaya K']);
+  });
+});
+
+describe('itsmTicketUserName', () => {
+  it('uses raised-by when present', () => {
+    expect(itsmTicketUserName({
+      id: '1',
+      requested_by: 'Priya S',
+      raised_by: 'Fazulahemed',
+      behalf_of_name: 'Priya S',
+    } as never)).toBe('Fazulahemed');
+    expect(itsmTicketUserName({
+      id: '2',
+      requested_by: 'Sudhaya K',
+    } as never)).toBe('Sudhaya K');
   });
 });
 
@@ -105,69 +162,6 @@ describe('itsmSlaDisplay', () => {
     expect(itsmSlaDisplay({ id: '2', form_status: 'On Hold', sla_minutes: 60 }).primary).toBe('Hold');
   });
 
-  it('Closed Ticket Status forces Stage Closed even when Stages still InProgress', () => {
-    expect(itsmStageLabel({
-      id: 'closed-1',
-      status: 'closed',
-      form_status: 'InProgress',
-    })).toBe('Closed');
-    expect(itsmStageLabel({
-      id: 'rejected-1',
-      status: 'rejected',
-      form_status: 'Open',
-    })).toBe('Closed');
-  });
-
-  it('Refex Open→InProgress stage clocks SLA; literal Open without process Holds', () => {
-    // Backend maps blank Stages + Open status → InProgress (IT-SR-Refex-FY026-0532).
-    expect(itsmStageLabel({
-      id: 'refex-1',
-      request_id: 'IT-SR-Refex-FY026-0532',
-      form_status: 'InProgress',
-      status: 'open',
-    })).toBe('InProgress');
-    expect(itsmSlaDisplay({
-      id: 'refex-1',
-      request_id: 'IT-SR-Refex-FY026-0532',
-      entity: 'Refex',
-      status: 'open',
-      form_status: 'InProgress',
-      process_stages: '',
-      closure_minutes: 120,
-      created_at: '2026-10-06T06:00:00Z',
-      modified_at: '2026-10-06T06:00:00Z',
-    }, new Date('2026-10-06T07:00:00Z')).primary).toBe('On track');
-    expect(itsmSlaDisplay({
-      id: 'refex-open-stage',
-      entity: 'Refex',
-      status: 'open',
-      form_status: 'Open',
-      process_stages: '',
-      sla_minutes: 60,
-    }).primary).toBe('Hold');
-  });
-
-  it('Extrovis PickUp never Holds; non-InProgress owned work Holds', () => {
-    expect(itsmSlaDisplay({
-      id: 'ext-pickup',
-      entity: 'Extrovis',
-      request_id: 'IT-SR-Extrovis-FY026-0001',
-      status: 'open',
-      form_status: 'Open',
-      current_step: 'PickUp',
-      sla_minutes: 60,
-      created_at: '2026-10-06T06:00:00Z',
-    }, new Date('2026-10-06T06:30:00Z')).primary).toBe('On track');
-    expect(itsmSlaDisplay({
-      id: 'ext-hold',
-      entity: 'Extrovis',
-      status: 'open',
-      form_status: 'OnHold',
-      current_step: 'IT Agent Solution',
-      sla_minutes: 60,
-    }).primary).toBe('Hold');
-  });
-
   it('never paints No SLA and prefers Closure Time', () => {
     expect(itsmSlaDisplay({ id: '3', status: 'open' }).primary).toBe('On track');
     expect(itsmSlaDisplay({
@@ -176,23 +170,55 @@ describe('itsmSlaDisplay', () => {
       form_status: 'Pending Approval',
       created_at: '2026-10-06T06:00:00Z',
     }, new Date('2026-10-06T06:30:00Z')).primary).toBe('On track');
-    expect(itsmSlaDisplay({
-      id: '4b',
-      status: 'open',
-      form_status: 'Pending with Vendor',
-      sla_minutes: 60,
-    }).primary).toBe('Hold');
     const preferClosure = itsmSlaDisplay({
       id: '5',
       status: 'open',
-      form_status: 'InProgress',
       sla_minutes: 30,
       closure_minutes: 180,
       created_at: '2026-10-06T06:00:00Z',
-      modified_at: '2026-10-06T06:00:00Z',
     }, new Date('2026-10-06T07:00:00Z'));
     expect(preferClosure.primary).toBe('On track');
     expect(preferClosure.sub).toMatch(/left/);
+  });
+});
+
+describe('itsmTicketName', () => {
+  it('skips process titles and uses description', () => {
+    expect(itsmTicketName({
+      id: '1',
+      subject: 'Live_IT_Service_Request_A00',
+      description: 'Laptop cursor is not working properly. Please help.',
+    })).toBe('Laptop cursor is not working properly.');
+  });
+
+  it('prefers a real summary/subject', () => {
+    expect(itsmTicketName({
+      id: '2',
+      subject: 'VPN access for new joiner',
+      description: 'Longer description body',
+    })).toBe('VPN access for new joiner');
+  });
+});
+
+describe('isItsmSlaBreached / countItsmSlaBreached', () => {
+  it('counts only breached rows for the SLA card', () => {
+    const breached = {
+      id: '1',
+      status: 'closed',
+      created_at: '2026-10-01T00:00:00Z',
+      closed_at: '2026-10-02T02:00:00Z',
+      sla_minutes: 60,
+    };
+    const onTrack = {
+      id: '2',
+      status: 'open',
+      created_at: '2026-10-06T06:00:00Z',
+      sla_minutes: 180,
+    };
+    const now = new Date('2026-10-06T07:00:00Z');
+    expect(isItsmSlaBreached(breached, now)).toBe(true);
+    expect(isItsmSlaBreached(onTrack, now)).toBe(false);
+    expect(countItsmSlaBreached([breached, onTrack], now)).toBe(1);
   });
 });
 
@@ -216,8 +242,10 @@ describe('itsmExpandTiles', () => {
     expect(tiles.map((t) => t.label)).toEqual([
       'Subject',
       'Description',
+      'Requester Name',
       'Category',
       'Sub Category',
+      'Laptop',
       'Criticality',
       'Company',
       'Entity',
@@ -225,6 +253,19 @@ describe('itsmExpandTiles', () => {
     ]);
     expect(tiles.find((t) => t.label === 'Description')?.value).toBe('Cannot connect');
     expect(tiles.find((t) => t.label === 'Subject')?.value).toBe('VPN');
+    expect(tiles.find((t) => t.label === 'Laptop')?.value).toBe('');
+  });
+
+  it('shows laptop name with model on laptop issues', () => {
+    const tiles = itsmExpandTiles({
+      id: '2',
+      category: 'Hardware Incident',
+      sub_category: 'Laptop',
+      laptop_name: 'GM-LT-12',
+      laptop_model: 'Lenovo Ideapad slim 3',
+      laptop_label: 'GM-LT-12 · Lenovo Ideapad slim 3',
+    });
+    expect(tiles.find((t) => t.label === 'Laptop')?.value).toBe('GM-LT-12 · Lenovo Ideapad slim 3');
   });
 });
 
@@ -255,20 +296,6 @@ describe('itsmClosedByDisplay', () => {
       closed_by: 'Sakthivel',
       form_status: 'InProgress',
     })).toBe('');
-    expect(itsmClosedByDisplay({
-      id: '5',
-      status: 'open',
-      assigned_to: '',
-      closed_by: 'Sakthivel',
-      form_status: 'Completed',
-    })).toBe('Sakthivel');
-    expect(itsmClosedByDisplay({
-      id: '6',
-      status: 'completed',
-      assigned_to: 'ITSM Bot',
-      closed_by: 'Bhukkay Naik',
-      form_status: 'IT Tech Reopen',
-    })).toBe('Bhukkay Naik');
   });
 });
 

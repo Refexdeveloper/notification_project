@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignedRecordLabel,
   buildMisUsersFromRecords,
+  buildPmProjectState,
   countTodayActivity,
   countPmPortfolio,
   ensureFilterOption,
@@ -10,11 +11,18 @@ import {
   mergeRosterWithTicketCounts,
   mergeUserFilterOptions,
   misEligibleUsers,
+  pmRowMatchesPack,
   unionRosterWithTicketUsers,
   recordMatchesAssigned,
+  stampAppUsersWithCompanyFromRecords,
   stampRecordsWithAssigneeCompany,
 } from './appDashboardClientFilter';
-import { buildRefexCompanyOptions, recordMatchesCompany } from './refexCompanies';
+import {
+  buildRefexCompanyOptions,
+  companyIdFromLabel,
+  recordMatchesCompany,
+  userMatchesCompanyFilter,
+} from './refexCompanies';
 import { isPlaceholderPersonName, normalizeItsmPersonLabel, personLabelMatches, uniquePersonLabels } from './personName';
 import type { AppRecordRow } from '@/services/appRecordsApi';
 
@@ -46,6 +54,29 @@ describe('countPmPortfolio', () => {
     ]);
     expect(p.subtasks_total).toBe(0);
     expect(p.tasks_total).toBe(1);
+  });
+
+  it('filters MIS rows for Projects / Tasks portfolio card clicks', () => {
+    const rows: AppRecordRow[] = [
+      { id: '1', process_id: 'Project_Sub_Task_A01', project_id: 'P1', status: 'open' },
+      { id: '2', process_id: 'Project_Sub_Task_A01', project_id: 'P1', status: 'closed' },
+      { id: '3', process_id: 'Project_Sub_Task_A01', project_id: 'P2', status: 'closed' },
+      { id: '4', process_id: 'Project_Sub_Task_A01', status: 'open' },
+      { id: '5', process_id: 'Sub_Task_Process_A00', status: 'closed' },
+    ];
+    const state = buildPmProjectState(rows);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'projects', metric: 'total' }, state)).map((r) => r.id))
+      .toEqual(['1', '2', '3']);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'projects', metric: 'open' }, state)).map((r) => r.id))
+      .toEqual(['1', '2']);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'projects', metric: 'closed' }, state)).map((r) => r.id))
+      .toEqual(['3']);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'tasks', metric: 'open' }, state)).map((r) => r.id))
+      .toEqual(['1', '4']);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'individual', metric: 'total' }, state)).map((r) => r.id))
+      .toEqual(['4']);
+    expect(rows.filter((r) => pmRowMatchesPack(r, { key: 'subtasks', metric: 'closed' }, state)).map((r) => r.id))
+      .toEqual(['5']);
   });
 });
 
@@ -654,6 +685,101 @@ describe('mergeUserFilterOptions', () => {
       { id: 'Us-b', label: 'Balaraju Ilaveni' },
     ]);
     expect(merged.filter((row) => /balaraju/i.test(row.label))).toHaveLength(1);
+  });
+});
+
+describe('stampAppUsersWithCompanyFromRecords', () => {
+  it('fills company and email from application ticket requester fields', () => {
+    const company = 'Refex Life Sciences Private Limited';
+    const stamped = stampAppUsersWithCompanyFromRecords(
+      [
+        {
+          user_id: 'Us-1',
+          user_name: 'Nehal Surana',
+          email: '',
+          total: 0,
+          company: 'Refex',
+        },
+      ],
+      [
+        {
+          id: 't1',
+          requested_by: 'Nehal Surana',
+          requester_email: 'nehal.surana@refex.co.in',
+          company_name: company,
+        } as AppRecordRow,
+      ],
+    );
+    expect(stamped[0].company).toBe(company);
+    expect(stamped[0].email).toBe('nehal.surana@refex.co.in');
+    expect(recordMatchesCompany(
+      { company: stamped[0].company, company_name: stamped[0].company },
+      companyIdFromLabel(company),
+      true,
+    )).toBe(true);
+  });
+
+  it('does not stamp ticket company onto assignees (IT agent on Holding ticket)', () => {
+    const holding = 'Refex Holding Private Limited';
+    const industries = 'Refex Industries Limited';
+    const stamped = stampAppUsersWithCompanyFromRecords(
+      [
+        {
+          user_id: 'Us-mugesh',
+          user_name: 'Mugesh M',
+          email: 'mugesh.m@refex.co.in',
+          total: 0,
+          company: industries,
+        },
+      ],
+      [
+        {
+          id: 't-hold',
+          requested_by: 'Harini S',
+          assigned_to: 'Mugesh M',
+          assignee_id: 'Us-mugesh',
+          company_name: holding,
+          // Backend often mirrors requester company onto assignee_company.
+          assignee_company: holding,
+        } as AppRecordRow,
+        {
+          id: 't-own',
+          requested_by: 'Mugesh M',
+          requester_email: 'mugesh.m@refex.co.in',
+          company_name: industries,
+        } as AppRecordRow,
+      ],
+    );
+    expect(stamped[0].company).toBe(industries);
+    expect(userMatchesCompanyFilter(stamped[0], companyIdFromLabel(holding))).toBe(false);
+    expect(userMatchesCompanyFilter(stamped[0], companyIdFromLabel(industries))).toBe(true);
+  });
+
+  it('ignores assignee_company=Holding when agent has no roster company', () => {
+    const holding = 'Refex Holding Private Limited';
+    const stamped = stampAppUsersWithCompanyFromRecords(
+      [
+        {
+          user_id: 'Us-mugesh',
+          user_name: 'Mugesh M',
+          email: 'mugesh.m@refex.co.in',
+          total: 0,
+          company: '',
+        },
+      ],
+      [
+        {
+          id: 't-hold',
+          requested_by: 'Harini S',
+          assigned_to: 'Mugesh M',
+          assignee_id: 'Us-mugesh',
+          company_name: holding,
+          assignee_company: holding,
+        } as AppRecordRow,
+      ],
+    );
+    expect(stamped[0].company || '').toBe('');
+    expect(userMatchesCompanyFilter(stamped[0], companyIdFromLabel(holding))).toBe(false);
   });
 });
 

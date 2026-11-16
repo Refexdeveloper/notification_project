@@ -98,11 +98,15 @@ const ITSM_SUB_CATEGORY_KEYS = [
 const ITSM_CRITICALITY_KEYS = [
   'Criticality', 'Column_SjoEGM7XlG', 'Column_nps6UwRtUp', 'Column_AZfxrxgc1d',
 ];
-/** Service-queue Subject: Refex Column_iiZk0Xon6N, Extrovis Column_HEiwMtIBBO. */
+/** Service-queue Summary / Name — CEO Refex/Extrovis columns + legacy aliases. */
 const ITSM_SUMMARY_KEYS = [
+  'Column_GJjL9mdkas',
+  'Column_RBeiS2lPsx',
   'Column_iiZk0Xon6N',
   'Column_HEiwMtIBBO',
   'Summary',
+  'Name',
+  '_name',
 ];
 /** Service-queue Description: Refex Column_E-ofBZkcFS, Extrovis Column_AS7UbLz7Mg. */
 const ITSM_DESCRIPTION_KEYS = [
@@ -119,23 +123,16 @@ const ITSM_CLOSURE_MINUTES_KEYS = [
 const ITSM_TAT_MINUTES_KEYS = [
   'TAT_Minutes', 'TurnAround_Time_TAT', 'Column_uzB76CIUdv', 'Column_VO-1shRU1Q',
 ];
-/** Refex overall-report Stages (display). aasik getRefexReportStagesLabel. */
-const ITSM_REPORT_STAGES_KEYS = ['Column_Bug5EApiHs', 'Stages'];
-/** Process Stages — SLA Hold / InProgress only (never Statu_1). */
-const ITSM_PROCESS_STAGES_KEYS = ['Column_GooYV3HuY1', 'Column_JUGHj6d2Xj', 'Stages'];
-/** Extrovis Stage column = form Status (Statu_1). */
-const ITSM_EXTROVIS_STAGE_KEYS = ['Statu_1', 'Column_ps84EEKkEI', 'Column_WRiZDgVSqj'];
-/** Refex Ticket Status — Open/Closed fallback when Stages is blank. */
-const ITSM_REFEX_STATUS_KEYS = [
-  'Column_0GDnNoEuA7',
-  'Status',
-  '_status',
-];
-/** SQL preview only — real Stage is computed in extractItsmStageFromPayload. */
 const ITSM_FORM_STATUS_KEYS = [
-  ...ITSM_REPORT_STAGES_KEYS,
-  ...ITSM_PROCESS_STAGES_KEYS,
-  ...ITSM_EXTROVIS_STAGE_KEYS,
+  'Statu_1',
+  'Column_ps84EEKkEI',
+  'Column_WRiZDgVSqj',
+  'Column_0GDnNoEuA7',
+  'Column_69zTtmtO92',
+  'Stages',
+  'Column_JUGHj6d2Xj',
+  'Column_GooYV3HuY1',
+  'Status',
 ];
 const ITSM_REOPENED_DATE_KEYS = ['Reopened_On', 'Reopened_Date', 'ReopenedOn', 'Reopened_Date_Time'];
 const ITSM_REOPENED_FLAG_KEYS = ['Reopened_Ticket', 'Reopened', 'Column_C7s_oevsgX', 'Column_U0QcqEXR63'];
@@ -192,11 +189,7 @@ function applyItsmMisExtras(records, extrasById) {
       || extrasById.get(String(row.request_id || ''));
     if (!extra) return row;
     const status = String(row.status || '').toLowerCase();
-    const stage = String(row.form_status || row.current_step || extra.form_status || '').toLowerCase();
-    const closed = status === 'closed'
-      || status === 'rejected'
-      || status === 'completed'
-      || /complet|closed|reopen|employee feedback/.test(stage);
+    const closed = status === 'closed' || status === 'rejected';
     const closedBy = (blankMis(row.closed_by) || isItsmNonHumanActor(row.closed_by))
       ? extra.closed_by
       : row.closed_by;
@@ -210,7 +203,11 @@ function applyItsmMisExtras(records, extrasById) {
     const subject = summary
       || (description && existingSubject === description ? '' : existingSubject)
       || existingSubject;
-    const formStatus = blankMis(extra.form_status) ? row.form_status : extra.form_status;
+    const laptopName = blankMis(row.laptop_name) ? extra.laptop_name : row.laptop_name;
+    const laptopModel = blankMis(row.laptop_model) ? extra.laptop_model : row.laptop_model;
+    const laptopLabel = blankMis(row.laptop_label)
+      ? (extra.laptop_label || formatItsmLaptopLabel(laptopName, laptopModel) || undefined)
+      : row.laptop_label;
     return {
       ...row,
       ticket_type: blankMis(row.ticket_type) ? extra.ticket_type : row.ticket_type,
@@ -224,10 +221,7 @@ function applyItsmMisExtras(records, extrasById) {
       sla_minutes: blankNumericMis(row.sla_minutes) ? extra.sla_minutes : row.sla_minutes,
       closure_minutes: blankNumericMis(row.closure_minutes) ? extra.closure_minutes : row.closure_minutes,
       tat_minutes: blankNumericMis(row.tat_minutes) ? extra.tat_minutes : row.tat_minutes,
-      // Always prefer entity-aware Stage / process Stages from payload (aasik rules).
-      // Closed Ticket Status always wins over a stale InProgress Stages value.
-      form_status: closed ? 'Closed' : formStatus,
-      process_stages: blankMis(extra.process_stages) ? row.process_stages : extra.process_stages,
+      form_status: blankMis(row.form_status) ? extra.form_status : row.form_status,
       reopened_at: row.reopened_at || extra.reopened_at || null,
       // KPI Closed Today uses reopen_entered_at (step move), not _modified_at.
       closed_at: row.closed_at || extra.closed_at || extra.completed_at || null,
@@ -238,46 +232,11 @@ function applyItsmMisExtras(records, extrasById) {
       assigned_to: (closed && !assignedHuman && closedBy && !isItsmNonHumanActor(closedBy))
         ? closedBy
         : row.assigned_to,
+      laptop_name: laptopName || undefined,
+      laptop_model: laptopModel || undefined,
+      laptop_label: laptopLabel || undefined,
     };
   });
-}
-
-function itsmRowLooksClosed(row) {
-  const status = String(row?.status || '').toLowerCase();
-  const stage = String(row?.form_status || row?.current_step || '').toLowerCase();
-  return status === 'closed'
-    || status === 'rejected'
-    || status === 'completed'
-    || /complet|closed|reopen|employee feedback/.test(stage);
-}
-
-function itsmNeedsCloserOverlay(rows) {
-  return (rows || []).some((row) => (
-    itsmRowLooksClosed(row)
-    && (blankMis(row.closed_by) || isItsmNonHumanActor(row.closed_by))
-  ));
-}
-
-function primeItsmReportCloserCache(environment, map) {
-  itsmReportCloserCache = {
-    at: Date.now(),
-    environment: String(environment || 'production'),
-    map: map instanceof Map ? map : new Map(),
-  };
-}
-
-async function overlayItsmClosedByFromSnapshot(_pool, environment, _applicationId, rows) {
-  if (!itsmNeedsCloserOverlay(rows)) return rows;
-  try {
-    // Same Closed By condition as before (extractItsmCloserMeta):
-    // solver ActedBy → Closed_By → human closer. Process-report rows have ActedBy;
-    // snapshot Closed_By is blank on most completed tickets.
-    // No Get-all-items. Incremental ingest unchanged.
-    const extras = await loadItsmReportCloserById(environment);
-    return applyItsmMisExtras(rows, extras);
-  } catch {
-    return rows;
-  }
 }
 
 async function loadItsmMisExtrasById(pool, environment, applicationId) {
@@ -338,6 +297,7 @@ async function loadItsmMisExtrasById(pool, environment, applicationId) {
   const map = new Map();
   for (const row of rows || []) {
     const fromPayload = extractItsmCloserMeta(row.source_payload);
+    const laptop = extractItsmLaptopAssetFromRaw(row.source_payload || {});
     const closedBy = fromPayload.closed_by || (row.closed_by && !isItsmNonHumanActor(row.closed_by)
       ? normalizeItsmPersonLabel(String(row.closed_by).trim())
       : '');
@@ -353,11 +313,7 @@ async function loadItsmMisExtrasById(pool, environment, applicationId) {
       sla_minutes: row.sla_minutes || undefined,
       closure_minutes: row.closure_minutes || undefined,
       tat_minutes: row.tat_minutes || undefined,
-      form_status: extractItsmStageFromPayload(
-        row.source_payload,
-        row.request_id || '',
-      ) || undefined,
-      process_stages: extractItsmProcessStagesFromPayload(row.source_payload) || undefined,
+      form_status: row.form_status || undefined,
       reopened_at: row.reopened_at || null,
       closed_at: row.closed_at || fromPayload.completed_at || null,
       agent_closed_at: fromPayload.agent_closed_at || null,
@@ -365,6 +321,9 @@ async function loadItsmMisExtrasById(pool, environment, applicationId) {
       modified_at: row.modified_at || fromPayload.modified_at || null,
       completed_at: fromPayload.completed_at || null,
       closed_by: closedBy || undefined,
+      laptop_name: laptop.laptop_name,
+      laptop_model: laptop.laptop_model,
+      laptop_label: laptop.laptop_label,
     };
     for (const key of [row.instance_id, row.request_id]) {
       if (key) map.set(String(key), extra);
@@ -525,66 +484,15 @@ function travelProcessTitle(processId) {
 }
 
 const TRAVEL_TRIP_TYPE_KEYS = ['OnewayRound_tripNot_applicable', 'Travel_Type', 'FS_Trip_Type', 'Trip_Type'];
-/** One-way airport fields first; round-trip / multi-city use Boarding + Destination_1 (+ Google Place JSON). */
-const TRAVEL_FROM_CITY_KEYS = [
-  'Boarding_from', 'FS_From_City', 'common_From', 'Boarding', 'Boarding_From_1',
-  'Show_Source', 'From_City', 'Source',
-];
-const TRAVEL_TO_CITY_KEYS = [
-  'Destination_to_1', 'FS_To_City', 'common_To', 'Destination_1', 'Destination_To_3',
-  'Show_Destination', 'City_1', 'Destination', 'To_City',
-];
+const TRAVEL_FROM_CITY_KEYS = ['Boarding_from', 'FS_From_City', 'common_From', 'Source', 'From_City'];
+const TRAVEL_TO_CITY_KEYS = ['Destination_to_1', 'FS_To_City', 'common_To', 'Destination', 'To_City'];
 const TRAVEL_DEPARTURE_KEYS = ['Departure_Date', 'FS_Departure_Date', 'From_Date', 'Common_from_date'];
-const TRAVEL_PLACE_TRIP_TYPE = /^(one\s*way|round\s*trip|multi\s*city|not\s*applicable)$/i;
-const TRAVEL_PLACE_REGION = /\b(india|tamil nadu|gujarat|west bengal|karnataka|maharashtra|delhi|telangana|andhra|kerala|rajasthan|uttar pradesh|madhya pradesh|odisha|bihar|assam|punjab|haryana|goa)\b/i;
-
-function travelPlaceText(value) {
-  if (value == null || value === '') return '';
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'string') {
-    const text = value.trim();
-    if (!text || text === '—') return '';
-    if (text.startsWith('{')) {
-      try {
-        return travelPlaceText(JSON.parse(text));
-      } catch {
-        return text;
-      }
-    }
-    return text;
-  }
-  if (typeof value === 'object') {
-    return travelPlaceText(
-      value.description || value.Name || value.name || value.v || value.value || value.text || value.Text || '',
-    );
-  }
-  return '';
-}
-
-function formatTravelPlace(value) {
-  const text = travelPlaceText(value);
-  if (!text || TRAVEL_PLACE_TRIP_TYPE.test(text)) return '';
-  const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
-  if (parts.length >= 2 && TRAVEL_PLACE_REGION.test(parts.slice(1).join(' '))) {
-    return parts[0];
-  }
-  return text;
-}
-
-function pickTravelPlace(raw, keys) {
-  if (!raw || typeof raw !== 'object') return '';
-  for (const key of keys) {
-    const place = formatTravelPlace(raw[key]);
-    if (place) return place;
-  }
-  return '';
-}
 
 function travelPlaceFieldsFromRaw(raw) {
   return {
     trip_type: pickString(raw, TRAVEL_TRIP_TYPE_KEYS) || undefined,
-    from_city: pickTravelPlace(raw, TRAVEL_FROM_CITY_KEYS) || undefined,
-    to_city: pickTravelPlace(raw, TRAVEL_TO_CITY_KEYS) || undefined,
+    from_city: pickString(raw, TRAVEL_FROM_CITY_KEYS) || undefined,
+    to_city: pickString(raw, TRAVEL_TO_CITY_KEYS) || undefined,
     departure_date: pickDateTime(raw, TRAVEL_DEPARTURE_KEYS) || undefined,
   };
 }
@@ -624,29 +532,224 @@ function pickFirstPositiveAmount(raw, keys) {
   return undefined;
 }
 
-/**
- * Travel Expense MIS rules:
- * A) Claim is not possible without a positive Raised amount.
- * B) Claim must not exceed Raised — clamp display Claim to Raised when higher.
- * Returns raised/claimed for columns; `amount` is the Claim amount column value.
- */
-function normalizeTravelExpenseAmounts(raised, claimed) {
-  const raisedN = coerceAmount(raised);
-  const claimN = coerceAmount(claimed);
-  const raisedOk = raisedN != null && raisedN > 0 ? raisedN : undefined;
-  if (!raisedOk) {
-    return { raised_amount: undefined, claimed_amount: undefined, amount: undefined };
+function pickAmountAllowZero(raw, keys) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  for (const key of keys) {
+    const n = coerceAmount(raw[key]);
+    if (n != null && Number.isFinite(n)) return n;
   }
-  if (claimN == null || claimN <= 0) {
-    return { raised_amount: raisedOk, claimed_amount: undefined, amount: undefined };
-  }
-  const claimOk = claimN > raisedOk ? raisedOk : claimN;
-  return { raised_amount: raisedOk, claimed_amount: claimOk, amount: claimOk };
+  return undefined;
 }
 
-function isTravelExpenseProcessId(processId) {
-  const pid = String(processId || '').toLowerCase();
-  return pid.includes('expense') || pid.includes('amount claimed');
+const TRAVEL_POLICY_DEVIATION_KEYS = [
+  'Policy_Deviation_Cost',
+  'Policy_deviation_cost',
+  'PolicyDeviationCost',
+  'Policy_Deviation_Amount',
+  'Deviation_Cost',
+  'Out_of_Policy_Cost',
+  'FS_Policy_Deviation_Cost',
+  'FS_Policy_Deviation_Amount',
+  'Policy_Cost_Deviation',
+];
+
+/** Actual fare paid / selected booking amount. */
+const TRAVEL_PAID_FARE_KEYS = [
+  'FS_Booking_Amount',
+  'FS_Booking_Amount_1',
+  'FS_Total_Fare_1',
+  'MC_Total_Booking_Amount',
+  'Ticker_Fare',
+  'Booking_Amount',
+  'Paid_Fare',
+  'Actual_Fare',
+  'Selected_Fare',
+  'Final_Total_Amount',
+  'Total_Amount',
+  'Amount',
+];
+
+/** Policy reference / cap / lowest logical fare (Kissflow catalog + legacy). */
+const TRAVEL_REFERENCE_FARE_KEYS = [
+  'Reference_Fare',
+  'FS_Reference_Fare',
+  'Lowest_Fare',
+  'FS_Lowest_Fare',
+  'Lowest_Logical_Fare',
+  'FS_Lowest_Logical_Fare',
+  'Benchmark_Fare',
+  'Policy_Fare',
+  'Policy_Cap',
+  'Fare_Cap',
+  'Cap_Fare',
+  'Cap_Amount',
+  'Price_to_Beat',
+  'Price_To_Beat',
+  'Approved_Fare',
+  'Allowed_Fare',
+  'Max_Allowed_Fare',
+  'Reference_Amount',
+  'Policy_Amount',
+  // Live Travel_Management_A02 catalog (no classic Reference_Fare field)
+  'Old_Ticket_Price',
+  'Aprox_New_Ticket_Price',
+];
+
+const TRAVEL_FARE_TREND_TEXT_KEYS = [
+  'Fare_Trend',
+  'FS_Fare_Trend',
+  'FareTrend',
+  'Fare_Trend_Status',
+  'Fare_trend',
+  'FS_Fare_Trend_1',
+  'Fare_Trend_1',
+];
+
+const TRAVEL_FARE_TREND_NUM_KEYS = [
+  'Fare_Trend',
+  'FS_Fare_Trend',
+  'Fare_Trend_Percentage',
+  'Fare_Trend_Pct',
+  'FS_Fare_Trend_Percentage',
+];
+
+function pickTravelPaidFare(raw) {
+  return pickFirstPositiveAmount(raw, TRAVEL_PAID_FARE_KEYS);
+}
+
+function pickTravelReferenceFare(raw) {
+  return pickFirstPositiveAmount(raw, TRAVEL_REFERENCE_FARE_KEYS);
+}
+
+function formatTravelFareTrendPct(pct) {
+  const rounded = Math.round(pct * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+/**
+ * Policy deviation cost = paid − reference (0 when under).
+ * Example: paid 16606, cap 10908 → 5698.
+ */
+function computeTravelPolicyDeviationCost(raw) {
+  const paid = pickTravelPaidFare(raw);
+  const reference = pickTravelReferenceFare(raw);
+  if (paid != null && reference != null && reference > 0) {
+    const delta = Math.round((paid - reference) * 100) / 100;
+    return delta > 0 ? delta : 0;
+  }
+  return pickAmountAllowZero(raw, TRAVEL_POLICY_DEVIATION_KEYS);
+}
+
+/**
+ * Fare trend: explicit field, else deviation ÷ reference as a percent (0% when under).
+ * Example: 5698 / 10908 → 52.2%.
+ */
+function pickTravelFareTrend(raw) {
+  const text = pickString(raw, TRAVEL_FARE_TREND_TEXT_KEYS);
+  if (text && !/^-?\d+(\.\d+)?%?$/.test(text.trim())) return text;
+
+  const paid = pickTravelPaidFare(raw);
+  const reference = pickTravelReferenceFare(raw);
+  if (paid != null && reference != null && reference > 0) {
+    if (paid <= reference) return '0%';
+    return formatTravelFareTrendPct(((paid - reference) / reference) * 100);
+  }
+
+  if (text) {
+    const n = Number(String(text).replace(/[^0-9.-]/g, ''));
+    if (Number.isFinite(n)) return formatTravelFareTrendPct(n);
+  }
+  if (!raw || typeof raw !== 'object') return undefined;
+  for (const key of TRAVEL_FARE_TREND_NUM_KEYS) {
+    const n = coerceAmount(raw[key]);
+    if (n == null || !Number.isFinite(n)) continue;
+    return formatTravelFareTrendPct(n);
+  }
+  return undefined;
+}
+
+function normalizeTravelCity(value) {
+  return String(value || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function travelRouteKey(from, to) {
+  const a = normalizeTravelCity(from);
+  const b = normalizeTravelCity(to);
+  if (!a || !b) return '';
+  return `${a}|${b}`;
+}
+
+function medianAmount(values) {
+  if (!values.length) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Overlay policy deviation + fare trend from live route peers:
+ * median → cap = median × 1.25; blocked uses cap, flagged uses median.
+ */
+function applyTravelRoutePolicyMetrics(records) {
+  if (!Array.isArray(records) || !records.length) return records || [];
+
+  const routeAmounts = new Map();
+  for (const row of records) {
+    const mode = String(row.travel_mode || '').toLowerCase();
+    if (mode && !mode.includes('air') && !mode.includes('flight')) continue;
+    const paid = Number(row.amount);
+    if (!(paid > 0)) continue;
+    const key = travelRouteKey(row.from_city, row.to_city);
+    if (!key) continue;
+    const list = routeAmounts.get(key);
+    if (list) list.push(paid);
+    else routeAmounts.set(key, [paid]);
+  }
+
+  const routeMedian = new Map();
+  for (const [key, amounts] of routeAmounts) {
+    if (amounts.length < 2) continue;
+    const med = medianAmount(amounts);
+    if (med != null && med > 0) routeMedian.set(key, med);
+  }
+
+  return records.map((row) => {
+    const paid = Number(row.amount);
+    if (!(paid > 0)) return row;
+
+    const key = travelRouteKey(row.from_city, row.to_city);
+    const median = key ? routeMedian.get(key) : undefined;
+    let reference = median != null && median > 0 ? median : Number(row.reference_fare);
+    if (!(reference > 0)) return row;
+
+    if (median != null && median > 0) {
+      const cap = Math.round(median * 1.25);
+      if (paid > cap) {
+        reference = cap;
+      } else if (paid <= median) {
+        return {
+          ...row,
+          reference_fare: median,
+          policy_deviation_cost: 0,
+          fare_trend: '0%',
+        };
+      } else {
+        reference = median;
+      }
+    }
+
+    const delta = Math.round((paid - reference) * 100) / 100;
+    const policy_deviation_cost = delta > 0 ? delta : 0;
+    const fare_trend = policy_deviation_cost > 0
+      ? formatTravelFareTrendPct(((paid - reference) / reference) * 100)
+      : '0%';
+    return { ...row, reference_fare: reference, policy_deviation_cost, fare_trend };
+  });
 }
 
 function parseExpenseTypeList(raw) {
@@ -702,6 +805,17 @@ function emsSplitsFromRaw(raw) {
   });
 }
 
+/** Project Management Department / Dept from Kissflow payload. */
+function pmDepartmentFromRaw(raw) {
+  return pickString(raw, [
+    'Department',
+    'Dept',
+    'Employee_Department',
+    'Requester_Department',
+    'Owner_Department',
+  ]) || undefined;
+}
+
 function emsDetailFieldsFromRaw(raw) {
   const splits = emsSplitsFromRaw(raw);
   const vehicle = pickString(raw, ['Vehicle_Type', 'Vehicle_Type_1', 'Travel_Mode_1', 'Travel_Mode'])
@@ -721,13 +835,15 @@ function emsDetailFieldsFromRaw(raw) {
     raised_amount: pickFirstPositiveAmount(raw, EMS_RAISED_KEYS),
     claimed_amount: pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS),
     expense_splits: splits.length ? splits : undefined,
+    /** Kissflow Deadline — used as SLA due date for Expense Management. */
+    expected_at: pickDateTime(raw, ['Deadline', 'ExpectedAt', 'Expected_At', 'SLA_ExpectedAt']) || undefined,
   };
 }
 
 const EMS_DETAIL_KEYS = [
   'expense_date', 'designation', 'department', 'expense_by', 'restaurant',
   'from_city', 'to_city', 'travel_mode', 'vehicle_type', 'have_advance', 'l1_status',
-  'raised_amount', 'claimed_amount', 'expense_splits',
+  'raised_amount', 'claimed_amount', 'expense_splits', 'expected_at',
 ];
 
 function pickTravelDays(raw) {
@@ -761,21 +877,25 @@ function travelDetailFieldsFromRaw(raw, requestId) {
     airline: pickString(raw, ['FS_Airline_Name']) || undefined,
     flight_number: pickString(raw, ['FS_Flight_Number']) || undefined,
     designation: pickString(raw, ['Designation', 'Employee_designation', 'Requester_Designation']) || undefined,
+    department: departmentFromKissflowRaw(raw) || undefined,
+    policy_deviation_cost: computeTravelPolicyDeviationCost(raw),
+    fare_trend: pickTravelFareTrend(raw),
+    reference_fare: pickTravelReferenceFare(raw),
     remarks: pickString(raw, ['Remarks']) || undefined,
     payment_status: pickString(raw, ['Payment_Status_1', 'Payement_Type']) || undefined,
     raised_amount: pickFirstPositiveAmount(raw, EMS_RAISED_KEYS),
     claimed_amount: pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS),
-    department: pickString(raw, ['Department']) || undefined,
-    sla_deadline: pickDateTime(raw, ['SLA_Deadline']) || undefined,
+    /** Kissflow SLA_Deadline — used for Travel Advance / Expense SLA cards. */
+    expected_at: pickDateTime(raw, ['SLA_Deadline', 'Deadline', 'ExpectedAt', 'Expected_At']) || undefined,
   };
 }
 
 const TRAVEL_DETAIL_KEYS = [
   'trip_type', 'from_city', 'to_city', 'departure_date', 'purpose', 'travel_mode',
   'return_date', 'travel_days', 'linked_request_id', 'advance_claim_status',
-  'expense_type', 'expense_date', 'airline', 'flight_number', 'designation',
-  'remarks', 'payment_status', 'raised_amount', 'claimed_amount',
-  'department', 'sla_deadline',
+  'expense_type', 'expense_date', 'airline', 'flight_number', 'designation', 'department',
+  'policy_deviation_cost', 'fare_trend', 'reference_fare',
+  'remarks', 'payment_status', 'raised_amount', 'claimed_amount', 'expected_at',
 ];
 
 /** Person Name from jsonb user object — never dump raw JSON text. */
@@ -929,10 +1049,19 @@ const ITSM_WORKFLOW_ASSIGNED_KEYS = [
   'AssignedTo',
 ];
 
+/** Travel expense: claim needs a raised amount and never exceeds it (else amount is the linked advance fallback). */
+function travelExpenseClaimAmount(it, travel) {
+  if (!travel || travelProcessTitle(String(it.process_id || '')) !== 'Travel expense') return it.amount;
+  const raised = Number(it.raised_amount);
+  if (!(raised > 0)) return null;
+  if (it.amount == null) return it.amount;
+  return Math.min(Number(it.amount), raised);
+}
+
 function serializeRecordItem(it, opts = {}) {
   const itsm = Boolean(opts.itsm);
   const assigned = usableAssignedName(it.assigned_to);
-  const row = {
+  return {
     id: String(it.id || it.instance_id || it.request_id),
     request_id: it.request_id,
     expense_type: it.expense_type,
@@ -943,9 +1072,12 @@ function serializeRecordItem(it, opts = {}) {
       : (assigned || usableAssignedName(it.closed_by) || usableAssignedName(it.requested_by) || '—'),
     closed_by: it.closed_by,
     requested_by: it.requested_by,
+    behalf_of_name: it.behalf_of_name || undefined,
+    raised_by: it.raised_by || undefined,
     status: it.status,
     status_raw: it.status_raw,
     entity: it.entity,
+    employee_entity: it.employee_entity || undefined,
     entity_key: it.entity_key,
     company: it.company,
     company_key: it.company_key,
@@ -959,7 +1091,7 @@ function serializeRecordItem(it, opts = {}) {
     project_key: it.project_key || it.project_id || undefined,
     created_at: it.created_at,
     closed_at: it.closed_at || it.completed_at || null,
-    amount: it.amount,
+    amount: travelExpenseClaimAmount(it, Boolean(opts.travel)),
     trip_type: it.trip_type || undefined,
     from_city: it.from_city || undefined,
     to_city: it.to_city || undefined,
@@ -977,7 +1109,9 @@ function serializeRecordItem(it, opts = {}) {
     remarks: it.remarks || undefined,
     payment_status: it.payment_status || undefined,
     department: it.department || undefined,
-    sla_deadline: it.sla_deadline || undefined,
+    policy_deviation_cost: it.policy_deviation_cost,
+    fare_trend: it.fare_trend || undefined,
+    reference_fare: it.reference_fare,
     expense_by: it.expense_by || undefined,
     restaurant: it.restaurant || undefined,
     vehicle_type: it.vehicle_type || undefined,
@@ -1004,19 +1138,10 @@ function serializeRecordItem(it, opts = {}) {
     reopen_entered_at: it.reopen_entered_at || null,
     modified_at: it.modified_at || null,
     form_status: it.form_status || undefined,
-    process_stages: it.process_stages || undefined,
+    laptop_name: itsm ? (it.laptop_name || undefined) : undefined,
+    laptop_model: itsm ? (it.laptop_model || undefined) : undefined,
+    laptop_label: itsm ? (it.laptop_label || formatItsmLaptopLabel(it.laptop_name, it.laptop_model) || undefined) : undefined,
   };
-  if (row.status === 'closed' || row.status === 'rejected' || row.status === 'completed') {
-    row.form_status = 'Closed';
-  }
-  if (isTravelExpenseProcessId(row.process_id) || isTravelExpenseProcessId(row.subject)) {
-    // Claim column never falls back to `amount` (that often held Raised via pickAmount).
-    const normalized = normalizeTravelExpenseAmounts(row.raised_amount, row.claimed_amount);
-    row.raised_amount = normalized.raised_amount;
-    row.claimed_amount = normalized.claimed_amount;
-    row.amount = normalized.amount;
-  }
-  return row;
 }
 
 function recordHasProcessCompany(rec) {
@@ -1058,7 +1183,7 @@ function overlayTravelPlacesFromItems(records, items, applicationId) {
         if (!Array.isArray(next[key]) || !next[key].length) next[key] = details[key];
         continue;
       }
-      if (next[key] == null || next[key] === '' || next[key] === '—') next[key] = details[key];
+      if (next[key] == null || next[key] === '') next[key] = details[key];
     }
     if (ems && (!next.expense_type || next.expense_type === '—')) {
       next.expense_type = pickTravelExpenseType(raw) || next.expense_type;
@@ -1140,6 +1265,54 @@ async function overlayTravelDetailsFromDb(pool, environment, applicationId, reco
       ...(row.source_payload && typeof row.source_payload === 'object' ? row.source_payload : {}),
     }));
     return overlayTravelPlacesFromItems(records, items, applicationId);
+  } catch {
+    return records;
+  }
+}
+
+/** Fill expected_at from Kissflow End_Date on live-cache PM rows. */
+async function overlayPmExpectedAtFromDb(pool, environment, applicationId, records) {
+  if (!isPmApp(applicationId) || !records?.length) return records || [];
+  const needIds = [...new Set(
+    records
+      .filter((row) => !row.expected_at)
+      .map((row) => String(row.id || row.instance_id || ''))
+      .filter(Boolean),
+  )];
+  if (!needIds.length) return records;
+  try {
+    const latest = latestRunsCte({ environmentParam: '$1', applicationIdParam: '$2', alias: 'latest' });
+    const { rows } = await pool.query(
+      `WITH ${latest}
+       SELECT
+         i.instance_id,
+         COALESCE(
+           ${kissflowTsSql("i.source_payload->'End_Date'")},
+           ${kissflowTsSql("i.source_payload->'fetch_End_date'")},
+           ${kissflowTsSql("i.source_payload->'Deadline'")},
+           ${kissflowTsSql("i.source_payload->'ExpectedAt'")}
+         ) AS expected_at
+       FROM engagement_reporting.item i
+       JOIN latest l
+         ON i.snapshot_run_id = l.snapshot_run_id
+        AND i.process_id = l.process_id
+       WHERE i.instance_id = ANY($3::text[])`,
+      [environment, applicationId, needIds],
+    );
+    const byId = new Map();
+    for (const row of rows || []) {
+      const id = String(row.instance_id || '').trim();
+      const due = row.expected_at ? new Date(row.expected_at) : null;
+      if (!id || !due || Number.isNaN(due.getTime())) continue;
+      byId.set(id, due.toISOString());
+    }
+    if (!byId.size) return records;
+    return records.map((rec) => {
+      if (rec.expected_at) return rec;
+      const id = String(rec.id || rec.instance_id || '');
+      const expectedAt = byId.get(id);
+      return expectedAt ? { ...rec, expected_at: expectedAt } : rec;
+    });
   } catch {
     return records;
   }
@@ -1235,16 +1408,18 @@ function columnsForApp(applicationId) {
   if (isItsmApp(applicationId)) {
     return [
       { id: 'request_id', label: 'Request ID' },
-      { id: 'requested_by', label: 'Requester' },
+      { id: 'requested_by', label: 'Requester Name' },
+      { id: 'company_name', label: 'Company' },
       { id: 'assigned_to', label: 'Assigned To' },
       { id: 'sla', label: 'SLA' },
       { id: 'created_at', label: 'Created Date' },
       { id: 'status', label: 'Ticket Status' },
       { id: 'form_status', label: 'Stage' },
       { id: 'source', label: 'Source' },
-      { id: 'ticket_type', label: 'Request Type' },
       { id: 'category', label: 'Category' },
       { id: 'sub_category', label: 'Sub Category' },
+      { id: 'laptop_label', label: 'Laptop' },
+      { id: 'ticket_type', label: 'Request Type' },
       { id: 'criticality', label: 'Criticality' },
       { id: 'closed_by', label: 'Closed By' },
       { id: 'closed_at', label: 'Closed Date' },
@@ -1258,8 +1433,9 @@ function columnsForApp(applicationId) {
       { id: 'requested_by', label: 'Requester' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
-      { id: 'company_name', label: 'Company name' },
+      { id: 'department', label: 'Department' },
       { id: 'created_at', label: 'Created' },
+      { id: 'sla', label: 'SLA' },
     ];
   }
   if (isLeadApp(applicationId)) {
@@ -1281,7 +1457,6 @@ function columnsForApp(applicationId) {
       { id: 'requested_by', label: 'Requestor' },
       { id: 'assigned_to', label: 'Assigned to' },
       { id: 'amount', label: 'Amount' },
-      { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
       { id: 'entity', label: 'Entity' },
       { id: 'company_name', label: 'Company name' },
@@ -1310,9 +1485,10 @@ function columnsForApp(applicationId) {
       { id: 'purpose', label: 'Purpose' },
       { id: 'company_name', label: 'Company name' },
       { id: 'amount', label: 'Booking amount' },
+      { id: 'process_id', label: 'Process' },
+      { id: 'sla', label: 'SLA' },
       { id: 'current_step', label: 'Current step' },
       { id: 'status', label: 'Status' },
-      { id: 'process_id', label: 'Process' },
       { id: 'created_at', label: 'Created by' },
     ];
   }
@@ -1506,12 +1682,12 @@ function assigneeMetaFromRaw(raw, { itsm = false } = {}) {
     : [
       raw?._current_assigned_to,
       raw?.Column_Q7Ygw5jzjd,
-    raw?.Assigned_To,
-    raw?.Assignee,
-    raw?.assigned_to,
-    raw?.AssignedTo,
-    raw?.Owner,
-  ];
+      raw?.Assigned_To,
+      raw?.Assignee,
+      raw?.assigned_to,
+      raw?.AssignedTo,
+      raw?.Owner,
+    ];
   for (const field of fields) {
     if (field == null) continue;
     const assignee_id = personIdFromRaw(field);
@@ -1745,83 +1921,18 @@ async function fetchKissflowReportItems(environment, processId, reportId, creden
   return all;
 }
 
-function looksLikeExtrovisItsm(raw, entityHint = '') {
-  const blob = [
-    entityHint,
-    raw?.Entity,
-    raw?.entity,
-    raw?.Entity_Name,
-    raw?._process_id,
-    raw?.ProcessId,
-    raw?.process_id,
-    pickString(raw || {}, ['Request_ID', 'Request_Id', '_request_number', 'Ticket_ID']),
-  ].map((value) => String(value || '').toLowerCase()).join(' ');
-  return blob.includes('extrovis');
-}
-
-function mapRefexTicketStatusDisplay(rawStatus) {
-  const text = String(rawStatus || '').trim();
-  if (!text || text === '—' || text === '-') return '';
-  const token = text.toLowerCase().replace(/[\s_-]+/g, '');
-  if (
-    token === 'open'
-    || token === 'inprogress'
-    || token === 'pending'
-    || token === 'assigned'
-    || token === 'draft'
-  ) return 'Open';
-  if (
-    token === 'closed'
-    || token === 'completed'
-    || token === 'complete'
-    || token === 'done'
-  ) return 'Closed';
-  if (token.includes('reject') || token.includes('withdraw') || token.includes('cancel')) {
-    return 'Rejected';
-  }
-  return text;
-}
-
-function pickFirstItsmField(raw, keys) {
+function extractItsmStageFromPayload(raw) {
   if (!raw || typeof raw !== 'object') return '';
-  for (const key of keys || []) {
+  for (const key of ITSM_FORM_STATUS_KEYS) {
     const value = pickString(raw, [key]);
-    if (!value || /^(yes|no)$/i.test(value) || value === '—' || value === '-') continue;
+    if (!value || /^(yes|no)$/i.test(value)) continue;
     return value;
   }
   return '';
 }
 
-/**
- * Stage for MIS — same rules as aasik_ITSM:
- * Refex → report Stages as stored; blank Stages → Open→InProgress / Closed→Closed.
- * Extrovis → Statu_1 form Status.
- * Ticket Status Closed / Rejected / Completed always forces Stage Closed
- * (stored Stages can lag as InProgress after close).
- */
-function extractItsmStageFromPayload(raw, entityHint = '') {
-  if (!raw || typeof raw !== 'object') return '';
-  const status = mapRefexTicketStatusDisplay(pickFirstItsmField(raw, ITSM_REFEX_STATUS_KEYS));
-  if (status === 'Closed' || status === 'Rejected') return 'Closed';
-  if (looksLikeExtrovisItsm(raw, entityHint)) {
-    return pickFirstItsmField(raw, ITSM_EXTROVIS_STAGE_KEYS);
-  }
-  const stored = pickFirstItsmField(raw, ITSM_REPORT_STAGES_KEYS);
-  if (stored) return stored;
-  if (status === 'Open') return 'InProgress';
-  return '';
-}
-
-/** Process Stages for SLA clock (aasik readProcessStagesField). */
-function extractItsmProcessStagesFromPayload(raw) {
-  return pickFirstItsmField(raw, ITSM_PROCESS_STAGES_KEYS);
-}
-
 function closerExtraFromRaw(raw) {
   const meta = extractItsmCloserMeta(raw);
-  const entityHint = pickString(raw || {}, [
-    'Request_ID', 'Request_Id', '_request_number', 'Ticket_ID', 'Entity', 'entity',
-  ]);
   return {
     closed_by: meta.closed_by || undefined,
     modified_at: meta.modified_at || null,
@@ -1829,8 +1940,7 @@ function closerExtraFromRaw(raw) {
     reopen_entered_at: meta.reopen_entered_at || null,
     completed_at: meta.completed_at || null,
     closed_at: meta.completed_at || null,
-    form_status: extractItsmStageFromPayload(raw, entityHint) || undefined,
-    process_stages: extractItsmProcessStagesFromPayload(raw) || undefined,
+    form_status: extractItsmStageFromPayload(raw) || undefined,
   };
 }
 
@@ -1914,8 +2024,233 @@ function entityTextFromRaw(raw) {
   );
 }
 
+/**
+ * IT Help Desk Entity filter: Kissflow field that mirrors Adrenalin.
+ * Prefer Employee_entity / lookup Entity; fall back to process Entity (not Company).
+ */
+function pickEntityFromLookup(lookup) {
+  if (lookup == null || lookup === '') return '';
+  if (Array.isArray(lookup)) {
+    for (const entry of lookup) {
+      const found = pickEntityFromLookup(entry);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof lookup === 'string') {
+    const t = lookup.trim();
+    return t && t !== '—' && t !== '-' && !isEntityBucketLabel(t) ? t : '';
+  }
+  if (typeof lookup === 'object') {
+    if (lookup.v != null && lookup.v !== lookup) {
+      const fromV = pickEntityFromLookup(lookup.v);
+      if (fromV) return fromV;
+    }
+    const keys = [
+      'Employee_entity',
+      'Employee_Entity',
+      'Entity',
+      'Organisation',
+      'Organization',
+      'Org_Unit',
+      'Business_Unit',
+    ];
+    for (const key of keys) {
+      if (lookup[key] == null || lookup[key] === '') continue;
+      if (typeof lookup[key] === 'object') {
+        const nested = pickEntityFromLookup(lookup[key]);
+        if (nested) return nested;
+        continue;
+      }
+      const t = String(lookup[key]).trim();
+      if (t && t !== '—' && t !== '-' && !isEntityBucketLabel(t)) return t;
+    }
+  }
+  return '';
+}
+
+function extractItsmEntityFromRaw(raw) {
+  if (!raw) return '';
+  const fromEmployee = personNameFromRaw(raw?.Employee_entity)
+    || personNameFromRaw(raw?.Employee_Entity)
+    || pickString(raw, ['Employee_entity', 'Employee_Entity'])
+    || '';
+  if (fromEmployee && !isEntityBucketLabel(fromEmployee)) return fromEmployee;
+
+  const fromLookup = pickEntityFromLookup(
+    raw.user_details_lookup
+    || raw.Column_bRn4sBWeeF
+    || raw.User_Details_Lookup
+    || raw.userDetailsLookup,
+  );
+  if (fromLookup) return fromLookup;
+
+  const fromProcess = personNameFromRaw(raw?.Entity)
+    || personNameFromRaw(raw?.entity)
+    || pickString(raw, ['Entity'])
+    || '';
+  if (fromProcess && !isEntityBucketLabel(fromProcess)) return fromProcess;
+  // Keep Refex / Extrovis / Venwind labels when that is all the ticket has.
+  return fromProcess || '';
+}
+
 function isEntityBucketLabel(value) {
   return /^(refex|extrovis|venwind|refex group)$/i.test(String(value || '').trim());
+}
+
+const ITSM_LAPTOP_NAME_KEYS = [
+  'Hostname', 'Host_Name', 'Host Name', 'Computer_Name', 'Computer Name',
+  'Device_Name', 'Device Name', 'Asset_Name', 'Asset Name', 'Laptop_Name',
+  'Laptop Name', 'Asset_Tag', 'Asset Tag', 'Asset_ID', 'Asset Id', 'Name',
+];
+const ITSM_LAPTOP_MODEL_KEYS = [
+  'Model', 'Laptop_Model', 'Laptop Model', 'Asset_Model', 'Asset Model',
+  'Device_Model', 'Device Model', 'Model_Name', 'Model Name', 'Model_Number',
+  'Model Number', 'Model_No', 'Model No',
+];
+const ITSM_QUICK_SEARCH_KEYS = [
+  'Details_of_Quick_Search', 'Details_Of_Quick_Search', 'Details of Quick Search',
+];
+
+function isJunkItsmAssetName(value) {
+  const t = String(value || '').trim().toLowerCase();
+  if (!t) return true;
+  return t.includes('approval matrix')
+    || t.includes('live_it_service')
+    || t.includes('it service request')
+    || t === '—'
+    || t === '-';
+}
+
+function formatItsmLaptopLabel(name, model) {
+  const n = String(name || '').trim();
+  const m = String(model || '').trim();
+  if (n && m) {
+    const nLower = n.toLowerCase();
+    const mLower = m.toLowerCase();
+    if (nLower.includes(mLower) || mLower.includes(nLower)) return n.length >= m.length ? n : m;
+    return `${n} · ${m}`;
+  }
+  return n || m || '';
+}
+
+/** Flatten Kissflow lookup / {v} / array wrappers into a plain string map. */
+function flattenItsmLookupAttrs(lookup, into = {}, depth = 0) {
+  if (lookup == null || lookup === '' || depth > 4) return into;
+  if (Array.isArray(lookup)) {
+    for (const entry of lookup) flattenItsmLookupAttrs(entry, into, depth + 1);
+    return into;
+  }
+  if (typeof lookup === 'string' || typeof lookup === 'number' || typeof lookup === 'boolean') {
+    if (!into.Name) into.Name = String(lookup).trim();
+    return into;
+  }
+  if (typeof lookup !== 'object') return into;
+  if (lookup.v != null && lookup.v !== lookup) {
+    flattenItsmLookupAttrs(lookup.v, into, depth + 1);
+  }
+  for (const [key, value] of Object.entries(lookup)) {
+    if (!key || key === 'v' || key.startsWith('_')) continue;
+    if (value == null || value === '') continue;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const text = String(value).trim();
+      if (text && !into[key]) into[key] = text;
+      continue;
+    }
+    if (typeof value === 'object') {
+      const nested = value.Name || value.name || value.v || value.text || value.Text;
+      if (typeof nested === 'string' && nested.trim() && !into[key]) into[key] = nested.trim();
+      else if (!Array.isArray(value) || value.length) flattenItsmLookupAttrs(value, into, depth + 1);
+    }
+  }
+  return into;
+}
+
+function pickAttrByKeys(attrs, keys) {
+  if (!attrs || typeof attrs !== 'object') return '';
+  for (const key of keys) {
+    const direct = attrs[key];
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  }
+  const lowerMap = new Map(
+    Object.entries(attrs).map(([k, v]) => [String(k).toLowerCase().replace(/[\s_-]+/g, ''), v]),
+  );
+  for (const key of keys) {
+    const hit = lowerMap.get(String(key).toLowerCase().replace(/[\s_-]+/g, ''));
+    if (typeof hit === 'string' && hit.trim()) return hit.trim();
+  }
+  // Heuristic: any attr whose key looks like hostname/asset name / model.
+  for (const [key, value] of Object.entries(attrs)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const token = key.toLowerCase().replace(/[\s_-]+/g, '');
+    if (/^(hostname|computername|devicename|assetname|laptopname|assettag)$/.test(token)) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function pickModelAttr(attrs) {
+  if (!attrs || typeof attrs !== 'object') return '';
+  const byKey = pickAttrByKeys(attrs, ITSM_LAPTOP_MODEL_KEYS);
+  if (byKey) return byKey;
+  for (const [key, value] of Object.entries(attrs)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const token = key.toLowerCase().replace(/[\s_-]+/g, '');
+    if (token.includes('model') && !token.includes('email')) return value.trim();
+  }
+  return '';
+}
+
+/** Parse "Laptop :- Lenovo …" / "Laptop Model :- HP …" from ticket description. */
+function parseLaptopFromDescription(text) {
+  const raw = String(text || '').replace(/\r/g, '\n');
+  if (!raw.trim()) return { name: '', model: '' };
+  const modelMatch = raw.match(/Laptop\s*Model\s*[:-]+\s*([^*\n]+)/i)
+    || raw.match(/\*?\s*Laptop\s*[:-]+\s*([^*\n]+)/i);
+  let model = modelMatch ? String(modelMatch[1] || '').replace(/\*+/g, '').trim() : '';
+  model = model.replace(/\s{2,}/g, ' ').replace(/[.]+$/, '').trim();
+  if (/^(details|below|please|hello|dear)\b/i.test(model)) model = '';
+  return { name: '', model };
+}
+
+/**
+ * Laptop / desktop asset identity from Quick Search lookup + description.
+ * Returns { laptop_name, laptop_model, laptop_label }.
+ */
+function extractItsmLaptopAssetFromRaw(raw) {
+  if (!raw || typeof raw !== 'object') return { laptop_name: '', laptop_model: '', laptop_label: '' };
+  let attrs = {};
+  for (const key of ITSM_QUICK_SEARCH_KEYS) {
+    if (raw[key] != null) {
+      attrs = flattenItsmLookupAttrs(raw[key], attrs);
+      break;
+    }
+  }
+  let name = pickAttrByKeys(attrs, ITSM_LAPTOP_NAME_KEYS);
+  let model = pickModelAttr(attrs);
+  if (isJunkItsmAssetName(name)) name = '';
+  if (isJunkItsmAssetName(model)) model = '';
+
+  const fromDesc = parseLaptopFromDescription(
+    pickString(raw, ITSM_DESCRIPTION_KEYS) || raw.Description || raw.description || '',
+  );
+  if (!model && fromDesc.model) model = fromDesc.model;
+  if (!name && fromDesc.name) name = fromDesc.name;
+
+  // When description only has a model string like "Lenovo Ideapad slim 3", treat as model.
+  // If lookup Name looks like a model (contains Lenovo/Dell/HP) and model empty, use as model.
+  if (!model && name && /(?:lenovo|dell|hp\b|acer|asus|macbook|thinkpad|ideapad|latitude|elitebook|thinkbook)/i.test(name)) {
+    model = name;
+    name = '';
+  }
+
+  const label = formatItsmLaptopLabel(name, model);
+  return {
+    laptop_name: name || undefined,
+    laptop_model: model || undefined,
+    laptop_label: label || undefined,
+  };
 }
 
 /** Company_Name / REFEX_COMPANY_NAME_1 from Kissflow user_details_lookup. */
@@ -1972,6 +2307,82 @@ function extractItsmCompanyNameFromRaw(raw) {
   );
 }
 
+/**
+ * Department on Kissflow ticket payloads — same keys Travel Management uses
+ * (Department / Dept / Employee_Department / Requester_Department).
+ * ITSM also checks report column Column_ype_hrsE6R and user_details_lookup.
+ */
+function departmentFromKissflowRaw(raw, { itsm = false } = {}) {
+  if (!raw) return '';
+  // Travel / EMS / shared ticket fields.
+  const fromTicket = pickString(raw, [
+    'Department',
+    'Dept',
+    'Employee_Department',
+    'Requester_Department',
+  ]) || '';
+  if (fromTicket) return fromTicket;
+  if (!itsm) return '';
+  // ITSM report column (CEO ITSM FIELD.department) + lookup fallbacks.
+  const fromItsmCol = personNameFromRaw(raw.Column_ype_hrsE6R)
+    || pickString(raw, ['Column_ype_hrsE6R', 'Department_Name'])
+    || '';
+  if (fromItsmCol) return fromItsmCol;
+  return pickDepartmentFromLookup(
+    raw.user_details_lookup
+    || raw.Column_bRn4sBWeeF
+    || raw.User_Details_Lookup
+    || raw.userDetailsLookup,
+  );
+}
+
+/** Department nested under Kissflow user_details_lookup (ITSM). */
+function pickDepartmentFromLookup(lookup) {
+  if (lookup == null || lookup === '') return '';
+  if (Array.isArray(lookup)) {
+    for (const entry of lookup) {
+      const found = pickDepartmentFromLookup(entry);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof lookup === 'string') {
+    const t = lookup.trim();
+    return t && t !== '—' && t !== '-' ? t : '';
+  }
+  if (typeof lookup === 'object') {
+    if (lookup.v != null && lookup.v !== lookup) {
+      const fromV = pickDepartmentFromLookup(lookup.v);
+      if (fromV) return fromV;
+    }
+    const keys = [
+      'Department',
+      'Dept',
+      'Employee_Department',
+      'Requester_Department',
+      'Department_Name',
+      'department',
+    ];
+    for (const key of keys) {
+      if (lookup[key] == null || lookup[key] === '') continue;
+      if (typeof lookup[key] === 'object') {
+        const nested = pickDepartmentFromLookup(lookup[key]);
+        if (nested) return nested;
+        continue;
+      }
+      const t = String(lookup[key]).trim();
+      if (t && t !== '—' && t !== '-') return t;
+    }
+    const name = String(lookup.Name || lookup.name || '').trim();
+    if (name && name !== '—' && name !== '-') return name;
+  }
+  return '';
+}
+
+function extractItsmDepartmentFromRaw(raw) {
+  return departmentFromKissflowRaw(raw, { itsm: true });
+}
+
 function companyTextFromRaw(raw, applicationId) {
   if (isItsmApp(applicationId)) {
     const fromLookup = extractItsmCompanyNameFromRaw(raw);
@@ -2008,6 +2419,44 @@ function itsmLookupCompanySql() {
       parts.push(`NULLIF(trim(${p}->0->>'${escaped}'), '')`);
     }
   }
+  return `COALESCE(${parts.join(',\n      ')})`;
+}
+
+/** Snapshot SQL: requester department from user_details_lookup / ticket (ITSM). */
+function itsmLookupDepartmentSql() {
+  const paths = [
+    "i.source_payload->'user_details_lookup'",
+    "i.source_payload->'Column_bRn4sBWeeF'",
+    "i.source_payload->'User_Details_Lookup'",
+  ];
+  const attrs = [
+    'Department',
+    'Dept',
+    'Employee_Department',
+    'Requester_Department',
+    'Department_Name',
+    'department',
+  ];
+  const parts = [];
+  for (const p of paths) {
+    for (const a of attrs) {
+      const escaped = String(a).replace(/'/g, "''");
+      parts.push(`NULLIF(trim(${p}->>'${escaped}'), '')`);
+      parts.push(`NULLIF(trim(${p}->'v'->>'${escaped}'), '')`);
+      parts.push(`NULLIF(trim(${p}->0->>'${escaped}'), '')`);
+    }
+  }
+  // Prefer the Kissflow ITSM Department column (Column_ype_hrsE6R) before lookup/native aliases.
+  parts.unshift(
+    `NULLIF(trim(i.source_payload->>'Column_ype_hrsE6R'), '')`,
+    `NULLIF(trim(i.source_payload->'Column_ype_hrsE6R'->>'Name'), '')`,
+    `NULLIF(trim(i.source_payload->'Column_ype_hrsE6R'->>'v'), '')`,
+  );
+  parts.push(`NULLIF(trim(i.source_payload->>'Department'), '')`);
+  parts.push(`NULLIF(trim(i.source_payload->>'Dept'), '')`);
+  parts.push(`NULLIF(trim(i.source_payload->>'Employee_Department'), '')`);
+  parts.push(`NULLIF(trim(i.source_payload->>'Requester_Department'), '')`);
+  parts.push(`NULLIF(trim(i.source_payload->'Department'->>'Name'), '')`);
   return `COALESCE(${parts.join(',\n      ')})`;
 }
 
@@ -2068,8 +2517,33 @@ function buildLiveRecordRows(allItems, applicationId) {
       : lead
         ? (assignedName || leadOwner || '—')
         : (assignedName || personNameFromRaw(raw?._created_by) || '—');
+    // ITSM: when raised on behalf of someone, requested_by = that user (Behalf Of Name),
+    // not the proxy (Raised_By / Fazulahemed). Keep raised_by / behalf_of_name separately.
+    const behalfOf = itsm
+      ? (
+        personNameFromRaw(raw?.Behalf_Of_Name)
+        || personNameFromRaw(raw?.BehalfOfName)
+        || personNameFromRaw(raw?.Behalf_Of)
+        || pickString(raw, ['Behalf_Of_Name', 'BehalfOfName'])
+        || ''
+      )
+      : '';
+    const raisedBy = itsm
+      ? (
+        personNameFromRaw(raw?.Raised_By)
+        || personNameFromRaw(raw?._created_by)
+        || ''
+      )
+      : '';
+    const requesterOnly = itsm
+      ? (
+        personNameFromRaw(raw?.Requester)
+        || personNameFromRaw(raw?.Requester_Name)
+        || ''
+      )
+      : '';
     const requested = itsm
-      ? (personNameFromRaw(raw?.Requester) || personNameFromRaw(raw?.Requester_Name) || '—')
+      ? (behalfOf || requesterOnly || raisedBy || '—')
       : lead
         ? (leadOwner || personNameFromRaw(raw?.Requester) || '—')
         : (
@@ -2081,12 +2555,12 @@ function buildLiveRecordRows(allItems, applicationId) {
         );
     const requestId = (
       pm
-      ? (isTask
+        ? (isTask
           ? pickString(raw, ['Task_ID_Formulated', 'Task_ID', 'Sub_Task_ID', 'Task_Id', '_request_number', 'Request_ID', '_id'])
           : pickString(raw, ['Project_ID_Formulated', 'Project_ID', 'Project_Id', '_request_number', 'Request_ID', '_id']))
-      : travel
+        : travel
           ? pickString(raw, ['Request_ID', 'Request_Id', 'Request_Number', 'Travel_Request_ID', 'Travel_Request_ID_1', 'Advance_Request_ID', 'Request_No', '_request_number'])
-        : lead
+          : lead
             ? pickString(raw, ['Lead_ID', 'Lead_Id', 'Lead_Number', '_request_number', '_id'])
             : solar
               ? pickString(raw, [
@@ -2100,9 +2574,9 @@ function buildLiveRecordRows(allItems, applicationId) {
                 'Request_Id',
                 '_id',
               ])
-          : ems
-            ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
-            : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
+              : ems
+                ? pickString(raw, ['Expense_ID', 'Exp_ID', 'Expense_Id', '_request_number', 'Request_ID'])
+                : pickString(raw, ['_request_number', 'Request_Number', 'Request_ID', 'Request_Id', 'Ticket_ID', 'Ticket_Number'])
     ) || String(raw?._id || '') || '—';
     const created =
       (typeof raw?._created_at === 'string' && raw._created_at)
@@ -2116,7 +2590,7 @@ function buildLiveRecordRows(allItems, applicationId) {
         ? (pickTravelExpenseType(raw) || pickString(raw, ['Expense_Type', 'Expense_Category', 'Category']) || '—')
       : travel
         ? travelDetails.expense_type
-      : undefined;
+        : undefined;
     const tripType = travelDetails.trip_type;
     const fromCity = travelDetails.from_city || emsDetails.from_city;
     const toCity = travelDetails.to_city || emsDetails.to_city;
@@ -2135,9 +2609,10 @@ function buildLiveRecordRows(allItems, applicationId) {
               ? (pickString(raw, ['Title', 'Subject', 'Expense_Title', 'Name', 'Description']) || '—')
               : itsm
                 ? (pickString(raw, ITSM_SUMMARY_KEYS) || pickCurrentStep(raw) || processId || '—')
-              : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
+                : (pickString(raw, ['Subject', 'Title', 'Summary', 'Description']) || pickCurrentStep(raw) || processId || '—');
     const closedBy = itsm ? (closer.closed_by || undefined) : undefined;
-    const entityText = entityTextFromRaw(raw);
+    // ITSM Entity filter = Kissflow Employee_entity / lookup (Adrenalin), else process Entity.
+    const entityText = itsm ? extractItsmEntityFromRaw(raw) : entityTextFromRaw(raw);
     const companyText = companyTextFromRaw(raw, applicationId);
     const solarEntityDisplay = solar
       ? (
@@ -2155,16 +2630,19 @@ function buildLiveRecordRows(allItems, applicationId) {
       : (
         resolveCompanyIdFromText(companyText)
         || resolveCompanyIdFromText(entityText)
-      || resolveCompanyIdFromText(entityKey)
+        || resolveCompanyIdFromText(entityKey)
         || null
       );
-    const entityDisplay =
-      (solar ? solarEntityDisplay : entityText)
-      || (itsm ? '' : (companyText && !isEntityBucketLabel(companyText) ? companyText : ''))
-      || (itsm ? '' : (companyKey ? companyKey.replace(/-/g, ' ') : ''))
-      || entityLabel(entityKey);
+    const entityDisplay = itsm
+      ? (entityText || '')
+      : (
+        (solar ? solarEntityDisplay : entityText)
+        || (companyText && !isEntityBucketLabel(companyText) ? companyText : '')
+        || (companyKey ? companyKey.replace(/-/g, ' ') : '')
+        || entityLabel(entityKey)
+      );
     const projectKey = pm ? (projectKeyFromRaw(raw) || undefined) : undefined;
-    const row = {
+    return {
       id: String(raw?._id || requestId),
       instance_id: String(raw?._id || requestId),
       process_id: travel ? travelProcessTitle(processId) : processId,
@@ -2176,9 +2654,12 @@ function buildLiveRecordRows(allItems, applicationId) {
       assigned_to: assigned,
       closed_by: closedBy,
       requested_by: requested,
+      behalf_of_name: itsm && behalfOf ? behalfOf : undefined,
+      raised_by: itsm && raisedBy ? raisedBy : undefined,
       status: statusBucketFromRaw(raw, applicationId),
       status_raw: String(raw?._status || raw?.Status || normalizeProcessStatus(raw) || ''),
       entity: entityDisplay,
+      employee_entity: itsm && entityDisplay ? entityDisplay : undefined,
       entity_key: entityKey,
       company: itsm ? companyText : (companyText || entityDisplay),
       company_key: companyKey || undefined,
@@ -2202,8 +2683,13 @@ function buildLiveRecordRows(allItems, applicationId) {
       airline: travelDetails.airline,
       flight_number: travelDetails.flight_number,
       designation: travelDetails.designation || emsDetails.designation,
-      department: emsDetails.department || travelDetails.department,
-      sla_deadline: travelDetails.sla_deadline,
+      department: travelDetails.department
+        || emsDetails.department
+        || (pm ? pmDepartmentFromRaw(raw) : undefined)
+        || (itsm ? (extractItsmDepartmentFromRaw(raw) || undefined) : undefined),
+      policy_deviation_cost: travelDetails.policy_deviation_cost,
+      fare_trend: travelDetails.fare_trend,
+      reference_fare: travelDetails.reference_fare,
       expense_by: emsDetails.expense_by,
       restaurant: emsDetails.restaurant,
       vehicle_type: emsDetails.vehicle_type,
@@ -2224,7 +2710,17 @@ function buildLiveRecordRows(allItems, applicationId) {
       source: itsm ? classifyTicketSource(raw) : undefined,
       ticket_type: itsm ? (pickString(raw, ITSM_TICKET_TYPE_KEYS) || undefined) : undefined,
       description: itsm ? (cleanItsmDescription(pickString(raw, ITSM_DESCRIPTION_KEYS)) || undefined) : undefined,
-      expected_at: itsm ? (pickDateTime(raw, ITSM_EXPECTED_AT_KEYS) || null) : null,
+      expected_at: itsm
+        ? (pickDateTime(raw, ITSM_EXPECTED_AT_KEYS) || null)
+        : ems
+          ? (emsDetails.expected_at || pickDateTime(raw, ['Deadline', 'ExpectedAt', 'Expected_At']) || null)
+          : pm
+            ? (pickDateTime(raw, ['End_Date', 'fetch_End_date', 'Deadline', 'ExpectedAt', 'Expected_At']) || null)
+            : travel
+              ? (travelDetails.expected_at
+                || pickDateTime(raw, ['SLA_Deadline', 'Deadline', 'ExpectedAt', 'Expected_At'])
+                || null)
+              : null,
       category: itsm ? (pickString(raw, ITSM_CATEGORY_KEYS) || undefined) : undefined,
       sub_category: itsm ? (pickString(raw, ITSM_SUB_CATEGORY_KEYS) || undefined) : undefined,
       criticality: itsm ? (pickString(raw, ITSM_CRITICALITY_KEYS) || undefined) : undefined,
@@ -2232,26 +2728,11 @@ function buildLiveRecordRows(allItems, applicationId) {
       sla_minutes: itsm ? (pickString(raw, ITSM_SLA_MINUTES_KEYS) || undefined) : undefined,
       closure_minutes: itsm ? (pickString(raw, ITSM_CLOSURE_MINUTES_KEYS) || undefined) : undefined,
       tat_minutes: itsm ? (pickString(raw, ITSM_TAT_MINUTES_KEYS) || undefined) : undefined,
-      form_status: itsm
-        ? (extractItsmStageFromPayload(raw, entityDisplay || entityKey || '') || undefined)
-        : undefined,
-      process_stages: itsm ? (extractItsmProcessStagesFromPayload(raw) || undefined) : undefined,
+      form_status: itsm ? (extractItsmStageFromPayload(raw) || undefined) : undefined,
       reopened_at: itsm ? (pickDateTime(raw, ['Reopened_On', 'Reopened_Date', 'ReopenedOn']) || null) : null,
       source_channel: itsm ? classifyTicketSource(raw) : undefined,
+      ...(itsm ? extractItsmLaptopAssetFromRaw(raw) : {}),
     };
-    // Ticket Status Closed → Stage Closed (stored Stages may still say InProgress).
-    if (itsm && (row.status === 'closed' || row.status === 'rejected' || row.status === 'completed')) {
-      row.form_status = 'Closed';
-    }
-    // Travel Expense: Claim column = claimed_amount (not pickAmount which prefers Raised).
-    if (travel && isTravelExpenseProcessId(processId)) {
-      const claimSource = row.claimed_amount != null ? row.claimed_amount : pickFirstPositiveAmount(raw, EMS_CLAIMED_KEYS);
-      const normalized = normalizeTravelExpenseAmounts(row.raised_amount, claimSource);
-      row.raised_amount = normalized.raised_amount;
-      row.claimed_amount = normalized.claimed_amount;
-      row.amount = normalized.amount;
-    }
-    return row;
   });
 }
 
@@ -2388,92 +2869,8 @@ function paginateRows(rows, limit, offset) {
   return { lim, off, page: rows.slice(off, off + lim), total: rows.length };
 }
 
-function recordsPayloadFromCache({
-  applicationId,
-  environment,
-  cache,
-  rows,
-  inventory,
-  status,
-  entity,
-  search,
-  assigned,
-  requester,
-  dateFrom,
-  dateTo,
-  limit,
-  offset,
-}) {
-  const itsm = isItsmApp(applicationId);
-      const all = enrichRecordsWithAssigneeCompany(
-    overlayTravelPlacesFromItems(
-      overlayLeadWebsiteFromItems(
-        dedupeRecords((rows || []).filter((row) => !isDraftRow(row))),
-        cache.items || [],
-        applicationId,
-      ),
-      cache.items || [],
-      applicationId,
-    ),
-    cache.items || [],
-    { skipAssigneeStamp: itsm },
-      );
-      const filtered = dedupeRecords(filterRecordRows(all, {
-        status,
-        entity,
-        search,
-        assigned,
-        requester,
-        dateFrom,
-        dateTo,
-        itsmCompanyMode: itsm,
-      }));
-      filtered.sort((a, b) => {
-        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return tb - ta;
-      });
-      const summaryAll = summarizeRows(all);
-      const summary = summarizeRows(filtered);
-  const counts = entityCountsFromRows(all);
-  const base = {
-          application_id: applicationId,
-          environment,
-          data_source: 'live_cache',
-          generated_at: cache.fetched_at || null,
-          summary,
-          inventory_summary: summaryAll,
-          filter_options: {
-      entities: entityOptionsForApp(applicationId, counts),
-            assignees: uniqueNames(all, 'assigned_to'),
-            requesters: uniqueNames(all, 'requested_by'),
-            show_assigned: !isSolarApp(applicationId),
-            show_requester: true,
-      show_entity: true,
-          },
-          columns: columnsForApp(applicationId),
-  };
-  if (inventory) {
-    return {
-      ...base,
-      total: filtered.length,
-      limit: filtered.length,
-      offset: 0,
-      items: filtered.map((row) => serializeRecordItem(row, { itsm })),
-    };
-  }
-  const page = paginateRows(filtered, limit, offset);
-      return {
-    ...base,
-    total: page.total,
-    limit: page.lim,
-    offset: page.off,
-    items: page.page.map((row) => serializeRecordItem(row, { itsm })),
-  };
-}
-
 async function loadKissflowRecords(pool, {
-        environment,
+  environment,
   applicationId,
   entity = 'all',
   status = 'all',
@@ -2488,39 +2885,14 @@ async function loadKissflowRecords(pool, {
   inventory = false,
 } = {}) {
   const itsm = isItsmApp(applicationId);
-  const filterOpts = {
-    status, entity, search, assigned, requester, dateFrom, dateTo, limit, offset, inventory,
-  };
-
-  // Landing / filters: return engagement_cache.records immediately.
-  // Extra snapshot/overlay SQL was hanging Cloud SQL and emptying the table.
-  // Incremental ingest is unchanged — this is display-only.
-  try {
-    const cache = await loadApplicationEngagementCache(pool, environment, applicationId);
-    const leadWebsiteReady = !isLeadApp(applicationId)
-      || (cache?.records || []).some((row) => String(row.website || row.website_name || '').trim());
-    if (!forceLive && hasUsableEngagementRecords(cache) && leadWebsiteReady) {
-      const rows = itsm
-        ? await overlayItsmClosedByFromSnapshot(pool, environment, applicationId, cache.records)
-        : cache.records;
-      return recordsPayloadFromCache({
-        applicationId,
-        environment,
-        cache,
-        rows,
-        ...filterOpts,
-      });
-    }
-  } catch {
-    /* try freshness / snapshot path below */
-  }
 
   // Prefer GCP engagement_cache when fresh and newer than snapshot. Never full Kissflow on filter reads.
   try {
     let cache = await loadApplicationEngagementCache(pool, environment, applicationId);
     const snapshotAt = await latestApplicationSnapshotAt(pool, environment, applicationId);
 
-    // Kissflow Get-all-items only when the client explicitly asks force_live.
+    // Landing / filter reads stay on incremental cache (or snapshot). Kissflow
+    // Get-all-items only when the client explicitly asks force_live.
     if (forceLive) {
       try {
         const { fetchLiveAppMetrics } = require('./kissflowLiveMetrics');
@@ -2551,31 +2923,89 @@ async function loadKissflowRecords(pool, {
         cache.items || [],
         { skipAssigneeStamp: itsm },
       );
-      if (forceLive) {
-        all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
-        all = await overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, all);
-        if (inventory && itsm) {
-          try {
-            const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
-            all = applyItsmMisExtras(all, extras);
-          } catch {
-            /* keep cache rows — extras overlay is display-only */
-          }
-          try {
-            const reportExtras = await loadItsmReportCloserById(environment);
-            all = applyItsmMisExtras(all, reportExtras);
-          } catch {
-            /* report overlay is display-only — keep snapshot/cache rows */
-          }
+      all = await overlayTravelDetailsFromDb(pool, environment, applicationId, all);
+      all = await overlayPmExpectedAtFromDb(pool, environment, applicationId, all);
+      all = await overlaySolarWorkflowStepsFromDb(pool, environment, applicationId, all);
+      if (isTravelApp(applicationId)) {
+        all = applyTravelRoutePolicyMetrics(all);
+      }
+      if (inventory && itsm) {
+        try {
+          const extras = await loadItsmMisExtrasById(pool, environment, applicationId);
+          all = applyItsmMisExtras(all, extras);
+        } catch {
+          /* keep cache rows — extras overlay is display-only */
+        }
+        try {
+          const reportExtras = await loadItsmReportCloserById(environment);
+          all = applyItsmMisExtras(all, reportExtras);
+        } catch {
+          /* report overlay is display-only — keep snapshot/cache rows */
         }
       }
-      return recordsPayloadFromCache({
-        applicationId,
-        environment,
-        cache,
-        rows: all,
-        ...filterOpts,
+      const filtered = dedupeRecords(filterRecordRows(all, {
+        status,
+        entity,
+        search,
+        assigned,
+        requester,
+        dateFrom,
+        dateTo,
+        itsmCompanyMode: itsm,
+      }));
+      filtered.sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tb - ta;
       });
+      const summaryAll = summarizeRows(all);
+      const summary = summarizeRows(filtered);
+      if (inventory) {
+        return {
+          application_id: applicationId,
+          environment,
+          data_source: 'live_cache',
+          generated_at: cache.fetched_at || null,
+          total: filtered.length,
+          limit: filtered.length,
+          offset: 0,
+          summary,
+          inventory_summary: summaryAll,
+          filter_options: {
+            entities: entityOptionsForApp(applicationId, entityCountsFromRows(all)),
+            assignees: uniqueNames(all, 'assigned_to'),
+            requesters: uniqueNames(all, 'requested_by'),
+            show_assigned: !isSolarApp(applicationId),
+            show_requester: true,
+            show_entity: true,
+          },
+          columns: columnsForApp(applicationId),
+          items: filtered.map((row) => serializeRecordItem(row, { itsm, travel: isTravelApp(applicationId) })),
+        };
+      }
+      const { lim, off, page, total } = paginateRows(filtered, limit, offset);
+      const counts = entityCountsFromRows(all);
+      return {
+        application_id: applicationId,
+        environment,
+        data_source: 'live_cache',
+        generated_at: cache.fetched_at || null,
+        total,
+        limit: lim,
+        offset: off,
+        summary,
+        inventory_summary: summaryAll,
+        filter_options: {
+          entities: entityOptionsForApp(applicationId, counts),
+          assignees: uniqueNames(all, 'assigned_to'),
+          requesters: uniqueNames(all, 'requested_by'),
+          show_assigned: !isSolarApp(applicationId),
+          show_requester: true,
+          show_entity: true,
+        },
+        columns: columnsForApp(applicationId),
+        items: page.map((row) => serializeRecordItem(row, { itsm, travel: isTravelApp(applicationId) })),
+      };
     }
   } catch {
     /* fall through to snapshot */
@@ -2601,15 +3031,19 @@ async function loadKissflowRecords(pool, {
   const lead = isLeadApp(applicationId);
   const travel = isTravelApp(applicationId);
   const ems = isEmsApp(applicationId);
+  const pm = isPmApp(applicationId);
   const solar = isSolarApp(applicationId);
-  const payloadColSql = (travel || ems) ? 'i.source_payload AS source_payload,' : '';
-  const payloadSelectSql = (travel || ems) ? 'c.source_payload,' : '';
+  const payloadColSql = (travel || ems || pm) ? 'i.source_payload AS source_payload,' : '';
+  const payloadSelectSql = (travel || ems || pm) ? 'c.source_payload,' : '';
   const statusSql = statusBucketSql(itsm, lead);
   const entitySql = entityKeySql(applicationId);
 
-  // ITSM Requested by = Requester.Name only (never Created By).
+  // ITSM: Behalf Of Name (actual user) wins; else Requester — not Raised_By proxy.
   const requestedBySql = itsm
     ? `COALESCE(
+        ${pickPersonNameSql("i.source_payload->'Behalf_Of_Name'")},
+        NULLIF(trim(i.source_payload->>'Behalf_Of_Name'), ''),
+        ${pickPersonNameSql("i.source_payload->'Behalf_Of'")},
         ${pickPersonNameSql("i.source_payload->'Requester'")},
         NULLIF(trim(i.source_payload->>'Requester_Name'), ''),
         '—'
@@ -2697,7 +3131,23 @@ classified AS (
     ${payloadColSql}
     (${statusSql}) AS status_bucket,
     (${entitySql}) AS entity_key,
-    COALESCE(
+    ${itsm
+    ? `COALESCE(
+      NULLIF(trim(i.source_payload->>'Employee_entity'), ''),
+      NULLIF(trim(i.source_payload->'Employee_entity'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->>'Employee_Entity'), ''),
+      NULLIF(trim(i.source_payload->'Employee_Entity'->>'Name'), ''),
+      NULLIF(trim(i.source_payload->'user_details_lookup'->>'Employee_entity'), ''),
+      NULLIF(trim(i.source_payload->'user_details_lookup'->'v'->>'Employee_entity'), ''),
+      NULLIF(trim(i.source_payload->'user_details_lookup'->>'Entity'), ''),
+      NULLIF(trim(i.source_payload->'user_details_lookup'->'v'->>'Entity'), ''),
+      NULLIF(trim(i.source_payload->'Column_bRn4sBWeeF'->>'Employee_entity'), ''),
+      NULLIF(trim(i.source_payload->'Column_bRn4sBWeeF'->>'Entity'), ''),
+      NULLIF(trim(i.source_payload->>'Entity'), ''),
+      NULLIF(trim(i.source_payload->'Entity'->>'Name'), ''),
+      NULLIF(trim(i.entity), '')
+    )`
+    : `COALESCE(
       NULLIF(trim(i.source_payload->>'Entity'), ''),
       NULLIF(trim(i.source_payload->'Entity'->>'Name'), ''),
       NULLIF(trim(i.source_payload->>'Company'), ''),
@@ -2707,8 +3157,9 @@ classified AS (
       NULLIF(trim(i.source_payload->>'Organisation'), ''),
       NULLIF(trim(i.source_payload->>'Organization'), ''),
       NULLIF(trim(i.entity), '')
-    ) AS entity_raw,
+    )`} AS entity_raw,
     (${itsmLookupCompanySql()}) AS company_raw,
+    (${itsmLookupDepartmentSql()}) AS department_raw,
     NULLIF(trim(i.source_payload->>'Website_and_form'), '') AS website_raw,
     COALESCE(
       NULLIF(trim(i.source_payload->>'Task_ID_Formulated'), ''),
@@ -2731,6 +3182,19 @@ classified AS (
     (${assignedToSql}) AS assigned_to,
     (${closedBySql}) AS closed_by,
     (${requestedBySql}) AS requested_by,
+    ${itsm
+    ? `COALESCE(
+        ${pickPersonNameSql("i.source_payload->'Behalf_Of_Name'")},
+        NULLIF(trim(i.source_payload->>'Behalf_Of_Name'), ''),
+        ${pickPersonNameSql("i.source_payload->'Behalf_Of'")},
+        NULLIF(trim(i.source_payload->>'BehalfOfName'), '')
+      ) AS behalf_of_name,
+      COALESCE(
+        ${pickPersonNameSql("i.source_payload->'Raised_By'")},
+        ${pickPersonNameSql("i.source_payload->'_created_by'")},
+        NULLIF(trim(i.source_payload->>'Raised_By'), '')
+      ) AS raised_by,`
+    : ''}
     ${itsm
     ? `COALESCE(
       (${payloadFieldSql(ITSM_SUMMARY_KEYS)}),
@@ -2782,7 +3246,14 @@ classified AS (
     (${payloadFieldSql(ITSM_TICKET_TYPE_KEYS)}) AS ticket_type,
     (${payloadFieldSql(ITSM_SUMMARY_KEYS)}) AS summary,
     (${payloadFieldSql(ITSM_DESCRIPTION_KEYS)}) AS description,
-    (${kissflowTsSql("i.source_payload->'ExpectedAt'")}) AS expected_at,
+    COALESCE(
+      ${kissflowTsSql("i.source_payload->'End_Date'")},
+      ${kissflowTsSql("i.source_payload->'fetch_End_date'")},
+      ${kissflowTsSql("i.source_payload->'Deadline'")},
+      ${kissflowTsSql("i.source_payload->'ExpectedAt'")},
+      ${kissflowTsSql("i.source_payload->'Expected_At'")},
+      ${kissflowTsSql("i.source_payload->'SLA_ExpectedAt'")}
+    ) AS expected_at,
     (${payloadFieldSql(ITSM_CATEGORY_KEYS)}) AS category,
     (${payloadFieldSql(ITSM_SUB_CATEGORY_KEYS)}) AS sub_category,
     (${payloadFieldSql(ITSM_CRITICALITY_KEYS)}) AS criticality,
@@ -2850,6 +3321,7 @@ SELECT
         c.assigned_to,
         c.closed_by,
         c.requested_by,
+        ${itsm ? 'c.behalf_of_name, c.raised_by,' : ''}
         c.subject,
         c.current_step,
         c.process_status AS status_raw,
@@ -2857,6 +3329,7 @@ SELECT
         c.entity_key,
         c.entity_raw,
         c.company_raw,
+        c.department_raw,
         c.website_raw,
         c.created_at,
         c.closed_at,
@@ -2929,51 +3402,60 @@ SELECT
       show_entity: true,
     },
     columns: columnsForApp(applicationId),
-    items: items
-      .filter(isMeaningfulRecord)
-      .map((it) => {
-        const entityKey = String(it.entity_key || '');
-        const entityRaw = String(it.entity_raw || '').trim();
-        const entityDisplay = entityRaw || entityLabel(entityKey);
-        if (itsm) {
-          const lookupCompany = String(it.company_raw || '').trim();
-          const companyText = lookupCompany && !isEntityBucketLabel(lookupCompany)
-            ? lookupCompany
-            : REFEX_DEFAULT_COMPANY_NAME;
-        return serializeRecordItem({
-          ...it,
+    items: (() => {
+      const mapped = items
+        .filter(isMeaningfulRecord)
+        .map((it) => {
+          const entityKey = String(it.entity_key || '');
+          const entityRaw = String(it.entity_raw || '').trim();
+          const entityDisplay = entityRaw || entityLabel(entityKey);
+          if (itsm) {
+            const lookupCompany = String(it.company_raw || '').trim();
+            const companyText = lookupCompany && !isEntityBucketLabel(lookupCompany)
+              ? lookupCompany
+              : REFEX_DEFAULT_COMPANY_NAME;
+            const departmentText = String(it.department_raw || '').trim()
+              || extractItsmDepartmentFromRaw(it.source_payload || {})
+              || '';
+            return serializeRecordItem({
+              ...it,
+              id: String(it.instance_id || it.request_id),
+              entity: entityDisplay,
+              entity_key: entityKey,
+              company: companyText,
+              company_name: companyText,
+              company_key: resolveCompanyIdFromText(companyText) || undefined,
+              department: departmentText || undefined,
+              project_id: it.project_key || undefined,
+              project_key: it.project_key || undefined,
+            }, { itsm: true });
+          }
+          const companyKey = resolveCompanyIdFromText(entityRaw) || resolveCompanyIdFromText(entityKey) || undefined;
+          const website = String(it.website_raw || '').trim();
+          const details = travel
+            ? travelDetailFieldsFromRaw(it.source_payload || {}, it.request_id)
+            : ems
+              ? emsDetailFieldsFromRaw(it.source_payload || {})
+              : pm
+                ? { department: pmDepartmentFromRaw(it.source_payload || {}) }
+                : {};
+          const { source_payload: _payload, ...rest } = it;
+          return serializeRecordItem({
+            ...rest,
+            ...details,
             id: String(it.instance_id || it.request_id),
             entity: entityDisplay,
             entity_key: entityKey,
-            company: companyText,
-            company_name: companyText,
-            company_key: resolveCompanyIdFromText(companyText) || undefined,
+            company: entityDisplay,
+            company_key: companyKey,
+            website: website || undefined,
+            website_name: website || undefined,
             project_id: it.project_key || undefined,
             project_key: it.project_key || undefined,
-          }, { itsm: true });
-        }
-        const companyKey = resolveCompanyIdFromText(entityRaw) || resolveCompanyIdFromText(entityKey) || undefined;
-        const website = String(it.website_raw || '').trim();
-        const details = travel
-          ? travelDetailFieldsFromRaw(it.source_payload || {}, it.request_id)
-          : ems
-            ? emsDetailFieldsFromRaw(it.source_payload || {})
-            : {};
-        const { source_payload: _payload, ...rest } = it;
-        return serializeRecordItem({
-          ...rest,
-          ...details,
-          id: String(it.instance_id || it.request_id),
-          entity: entityDisplay,
-          entity_key: entityKey,
-          company: entityDisplay,
-          company_key: companyKey,
-          website: website || undefined,
-          website_name: website || undefined,
-          project_id: it.project_key || undefined,
-          project_key: it.project_key || undefined,
+          }, { travel });
         });
-      }),
+      return travel ? applyTravelRoutePolicyMetrics(mapped) : mapped;
+    })(),
   };
 }
 
@@ -3184,15 +3666,19 @@ module.exports = {
   serializeRecordItem,
   travelPlaceFieldsFromRaw,
   travelDetailFieldsFromRaw,
+  applyTravelRoutePolicyMetrics,
   overlayTravelPlacesFromItems,
   emsDetailFieldsFromRaw,
   emsSplitsFromRaw,
   enrichRecordsWithAssigneeCompany,
   extractItsmCompanyNameFromRaw,
+  extractItsmDepartmentFromRaw,
+  extractItsmEntityFromRaw,
+  extractItsmLaptopAssetFromRaw,
   extractItsmCloserMeta,
   applyItsmMisExtras,
+  formatItsmLaptopLabel,
   loadItsmReportCloserById,
-  primeItsmReportCloserCache,
   companyTextFromRaw,
   isItsmApp,
   isDraftRaw,
@@ -3201,5 +3687,4 @@ module.exports = {
   isPmApp,
   buildPmPortfolioFromRecords,
   pickAmountFromRaw,
-  normalizeTravelExpenseAmounts,
 };

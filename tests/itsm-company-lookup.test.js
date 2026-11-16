@@ -8,6 +8,8 @@ const assert = require('assert');
 const path = require('path');
 const {
   extractItsmCompanyNameFromRaw,
+  extractItsmDepartmentFromRaw,
+  extractItsmEntityFromRaw,
   companyTextFromRaw,
   buildLiveRecordRows,
 } = require(path.join(
@@ -143,5 +145,66 @@ const assignedRole = buildLiveRecordRows([
   },
 ], ITSM);
 assert.strictEqual(assignedRole[0].assigned_to, 'Sakthivel');
+
+assert.strictEqual(
+  extractItsmDepartmentFromRaw({
+    Column_ype_hrsE6R: { Name: 'Information Technology' },
+  }),
+  'Information Technology',
+);
+
+assert.strictEqual(
+  extractItsmDepartmentFromRaw({
+    Department: 'Finance',
+  }),
+  'Finance',
+);
+
+const deptRows = buildLiveRecordRows([
+  {
+    _id: 'g',
+    _process_id: 'Service_Items_Refex_A00',
+    _status: 'Open',
+    Entity: 'Refex',
+    _request_number: 'IT-7',
+    Column_ype_hrsE6R: { Name: 'Human Resources' },
+  },
+], ITSM);
+assert.strictEqual(deptRows[0].department, 'Human Resources');
+
+assert.strictEqual(
+  extractItsmEntityFromRaw({
+    Employee_entity: { Name: 'RIL_Ash Handling' },
+    Entity: 'Refex',
+  }),
+  'RIL_Ash Handling',
+);
+
+assert.strictEqual(
+  extractItsmEntityFromRaw({
+    user_details_lookup: { Entity: 'Green Mobility' },
+    Entity: 'Refex',
+  }),
+  'Green Mobility',
+);
+
+assert.strictEqual(
+  extractItsmEntityFromRaw({ Entity: 'Extrovis' }),
+  'Extrovis',
+);
+
+const entityRows = buildLiveRecordRows([
+  {
+    _id: 'h',
+    _process_id: 'Service_Items_Refex_A00',
+    _status: 'Open',
+    Entity: 'Refex',
+    Employee_entity: 'RIL_Ash Handling',
+    _request_number: 'IT-8',
+    user_details_lookup: { Company_Name: 'Refex Industries Limited' },
+  },
+], ITSM);
+assert.strictEqual(entityRows[0].entity, 'RIL_Ash Handling');
+assert.strictEqual(entityRows[0].employee_entity, 'RIL_Ash Handling');
 
 console.log('itsm-company-lookup.test.js: ok');
