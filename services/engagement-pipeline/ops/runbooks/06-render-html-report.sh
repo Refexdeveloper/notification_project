@@ -605,6 +605,37 @@ else
   USER_TABLE_ACTIVITY_FILTER_SQL="AND (a.open_count > 0 OR a.closed_count > 0)"
 fi
 
+# Domain schedules: the ticket-join user SQL hits the 60s cap and the table goes out empty.
+# Roster is Kissflow users on this company's email domain. Per-user open/closed stay on the live SLA overlay.
+if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+  log "User table: @${ENTITY_EMAIL_DOMAIN} roster (skip ticket-join SQL)"
+  USERS_JSON="$(echo "
+\pset tuples_only on
+\pset format unaligned
+SELECT COALESCE(json_agg(t), '[]'::json) FROM (
+  SELECT DISTINCT ON (lower(trim(coalesce(u.email, u.user_id))))
+    u.user_id,
+    NULLIF(trim(u.user_name), '') AS user_name,
+    to_char(u.last_sign_in AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_sign_in,
+    COALESCE(u.ever_logged_in, false) AS ever_logged_in,
+    0 AS open_count,
+    0 AS closed_count,
+    0 AS sla_breached_count
+  FROM engagement_reporting.\"user\" u
+  WHERE u.environment = 'production'
+    AND split_part(lower(trim(coalesce(
+          nullif(trim(u.email), ''),
+          nullif(trim(u.source_payload->>'Email'), ''),
+          nullif(trim(u.source_payload->>'email'), ''),
+          ''
+        ))), '@', 2) = '${ENTITY_EMAIL_DOMAIN_SQL}'
+    AND NULLIF(trim(u.user_name), '') IS NOT NULL
+    AND NULLIF(trim(u.user_name), '') <> u.user_id
+    AND u.user_name !~ '^[Uu][Ss][A-Za-z0-9_-]{6,}$'
+  ORDER BY lower(trim(coalesce(u.email, u.user_id))), COALESCE(u.last_sign_in, u.snapshot_at) DESC NULLS LAST
+) t;
+" | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
+else
 USERS_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
@@ -784,6 +815,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
   ORDER BY COALESCE(a.open_count, 0) DESC, COALESCE(a.closed_count, 0) DESC, resolved.user_name
 ) t;
 " | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
+fi
 
 if [[ -z "${USERS_JSON}" || "${USERS_JSON}" != \[* ]]; then
   log "WARNING: user-breakdown SQL empty/timeout — empty user table; live overlay still fills ticket KPIs"
