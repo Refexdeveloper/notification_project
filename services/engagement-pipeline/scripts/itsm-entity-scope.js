@@ -76,6 +76,36 @@ function itsmUserEmailMatchesEntity(email, filter) {
   return e.slice(at + 1) === domain;
 }
 
+/**
+ * All_tickets_A00 returns Extrovis values on Column_* ids, not FieldIds.
+ * Same ids as aasik_ITSM EXTROVIS_SERVICE_COL / count-itsm-sla-kpis.js.
+ * Native FieldIds win when the row already has them (admin item payload).
+ */
+const EXTROVIS_REPORT_FIELDS = {
+  Entity: 'Column_KOIeT2FK23',
+  _status: 'Column_ApNmcvK7J8',
+  _current_step: 'Column_Yf9r2UCRuu',
+  _created_at: 'Column_OuyTOsNWaK',
+  _modified_at: 'Column_QpPzei51U2',
+  Statu_1: 'Column_ps84EEKkEI',
+  Status: 'Column_69zTtmtO92',
+  Source: 'Column_hFjGV8lRrn',
+};
+
+function overlayExtrovisReportFields(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out = { ...raw };
+  for (const [field, column] of Object.entries(EXTROVIS_REPORT_FIELDS)) {
+    const current = out[field];
+    const blank = current == null || (typeof current === 'string' && !current.trim());
+    if (!blank) continue;
+    const fromColumn = out[column];
+    if (fromColumn == null || fromColumn === '') continue;
+    out[field] = fromColumn;
+  }
+  return out;
+}
+
 module.exports = {
   entityToken,
   canonicalItsmEntityFilter,
@@ -83,4 +113,5 @@ module.exports = {
   canonicalItsmEntityLabel,
   itsmEntityEmailDomain,
   itsmUserEmailMatchesEntity,
+  overlayExtrovisReportFields,
 };

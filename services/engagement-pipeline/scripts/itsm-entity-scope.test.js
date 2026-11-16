@@ -8,6 +8,7 @@ const {
   canonicalItsmEntityLabel,
   itsmEntityEmailDomain,
   itsmUserEmailMatchesEntity,
+  overlayExtrovisReportFields,
 } = require('./itsm-entity-scope.js');
 
 describe('itsmEntityMatchesFilter', () => {
@@ -54,6 +55,33 @@ describe('itsmEntityEmailDomain', () => {
     assert.equal(itsmUserEmailMatchesEntity('x@refex.co.in', 'ModePro'), false);
     assert.equal(itsmUserEmailMatchesEntity('', 'ModePro'), false);
     assert.equal(itsmUserEmailMatchesEntity('anyone@x.com', 'all'), true);
+  });
+
+  it('reads Extrovis All_tickets column ids onto FieldIds', () => {
+    const row = overlayExtrovisReportFields({
+      Column_KOIeT2FK23: 'KavisPharma',
+      Column_ApNmcvK7J8: 'InProgress',
+      Column_Yf9r2UCRuu: 'IT Agent Solution',
+      Column_OuyTOsNWaK: '2026-11-16T04:00:00Z',
+      Column_hFjGV8lRrn: 'Email',
+    });
+    assert.equal(row.Entity, 'KavisPharma');
+    assert.equal(row._status, 'InProgress');
+    assert.equal(row._current_step, 'IT Agent Solution');
+    assert.equal(row._created_at, '2026-11-16T04:00:00Z');
+    assert.equal(row.Source, 'Email');
+    assert.equal(itsmEntityMatchesFilter(row.Entity, 'KavisPharma'), true);
+    assert.equal(itsmEntityMatchesFilter(row.Entity, 'Extrovis'), false);
+    assert.equal(itsmEntityMatchesFilter(row.Entity, 'ModePro'), false);
+  });
+
+  it('keeps a native Entity when the report column is also present', () => {
+    const row = overlayExtrovisReportFields({
+      Entity: 'Extrovis',
+      Column_KOIeT2FK23: 'ModePro',
+    });
+    assert.equal(row.Entity, 'Extrovis');
+    assert.equal(itsmEntityMatchesFilter(row.Entity, 'Extrovis'), true);
   });
 
   it('canonical labels match Kissflow Entity names', () => {

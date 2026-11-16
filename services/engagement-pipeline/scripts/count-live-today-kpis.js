@@ -25,7 +25,10 @@ const {
   bumpSource,
 } = require(path.join(__dirname, 'itsm-ticket-source.js'));
 const { recordInEntityCodeScope, recordInPmRmcScope } = require(path.join(__dirname, 'entity-code'));
-const { itsmEntityMatchesFilter } = require(path.join(__dirname, 'itsm-entity-scope.js'));
+const {
+  itsmEntityMatchesFilter,
+  overlayExtrovisReportFields,
+} = require(path.join(__dirname, 'itsm-entity-scope.js'));
 
 const TZ = 'Asia/Kolkata';
 const PAGE_SIZE = 100;
@@ -374,6 +377,7 @@ async function main() {
     process.exit(2);
   }
   const items = await fetchAllItems();
+  const useExtrovisReport = /extrovis/i.test(processId);
   let openedToday = 0;
   let closedToday = 0;
   let openCount = 0;
@@ -382,7 +386,8 @@ async function main() {
   const sourceAll = emptySourceBuckets();
   const sourceOpen = emptySourceBuckets();
   const sourceOpenedToday = emptySourceBuckets();
-  for (const raw of items) {
+  for (const item of items) {
+    const raw = useExtrovisReport ? overlayExtrovisReportFields(item) : item;
     if (!entityMatches(raw)) continue;
     scoped += 1;
     const channel = classifyTicketSource(raw);

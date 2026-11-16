@@ -256,8 +256,10 @@ else
   export ITSM_PGOPTIONS=""
 fi
 
-if [[ -n "${ENTITY_FILTER}" ]]; then
-  log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER}${ENTITY_EMAIL_DOMAIN:+, users @${ENTITY_EMAIL_DOMAIN}})"
+if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+  log "Entity report ${ENTITY_FILTER}: ticket KPIs from live Kissflow (snapshot summary SQL skipped)"
+elif [[ -n "${ENTITY_FILTER}" ]]; then
+  log "Querying summary metrics (process=${ITSM_PROCESS_ID}, entity=${ENTITY_FILTER})"
 else
   log "Querying summary metrics (process=${ITSM_PROCESS_ID}, all entities on this process)"
 fi
@@ -334,6 +336,13 @@ app_members_scoped AS (
 )"
 fi
 
+# Extrovis / KavisPharma / ModePro: this snapshot summary was hitting the 60s cap and
+# the email went out with every KPI at 0. Ticket numbers come from the live Kissflow
+# All_tickets overlay below. Refex still uses this SQL.
+if [[ -n "${ENTITY_EMAIL_DOMAIN}" ]]; then
+  log "Skip snapshot summary SQL for ${ENTITY_FILTER} (users @${ENTITY_EMAIL_DOMAIN}) — live Kissflow overlay fills ticket KPIs"
+  SUMMARY_JSON='{"total_users":0,"signed_in_today":0,"never_logged_in":0,"opened_today":0,"closed_today":0,"open_tickets":0,"closed_tickets":0,"total_tickets":0,"sla_breached_open":0,"sla_breached_closed":0,"source_all":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0},"source_open":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0},"source_opened_today":{"Email":0,"WhatsApp":0,"Mobile":0,"Web":0,"Other":0}}'
+else
 SUMMARY_JSON="$(echo "
 \pset tuples_only on
 \pset format unaligned
@@ -493,6 +502,7 @@ SELECT json_build_object(
   )
 );
 " | PGOPTIONS="${ITSM_PGOPTIONS:-}" psql "host=${PGHOST} port=${PGPORT} dbname=${PGDATABASE} user=${PGUSER}" 2>/dev/null | tr -d "\r" | grep -v "^Output format" || true)"
+fi
 
 # Extrovis-family: principal_user role scan can hang under load — fall back to zeros; live overlay fills KPIs.
 if [[ -z "${SUMMARY_JSON}" || "${SUMMARY_JSON}" != \{* ]]; then
@@ -755,7 +765,7 @@ SELECT COALESCE(json_agg(t), '[]'::json) FROM (
     COALESCE(s.sla_breached_count, 0) AS sla_breached_count
   FROM ${USER_TABLE_FROM_SQL}
   LEFT JOIN LATERAL (
-    SELECT u0.user_name, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
+    SELECT u0.user_name, u0.email, u0.last_sign_in, u0.ever_logged_in, u0.source_payload
     FROM engagement_reporting.\"user\" u0
     WHERE u0.user_id = ${USER_TABLE_ID_SQL}
       AND u0.environment = 'production'
