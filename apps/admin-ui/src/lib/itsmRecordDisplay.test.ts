@@ -146,14 +146,37 @@ describe('itsmClosedAtDisplay', () => {
 });
 
 describe('itsmSlaDisplay', () => {
-  it('shows Exceeded by when elapsed is over budget', () => {
-    const sla = itsmSlaDisplay({
+  it('closed tickets breach only on flag (not elapsed alone)', () => {
+    const overBudgetNoFlag = itsmSlaDisplay({
       id: '1',
       status: 'closed',
       created_at: '2026-10-01T00:00:00Z',
       closed_at: '2026-10-02T02:00:00Z',
       sla_minutes: 60,
     });
+    expect(overBudgetNoFlag.primary).toBe('Not Breached');
+
+    const flagged = itsmSlaDisplay({
+      id: '1b',
+      status: 'closed',
+      created_at: '2026-10-01T00:00:00Z',
+      closed_at: '2026-10-01T00:30:00Z',
+      sla_minutes: 60,
+      sla_breached: 'true',
+    });
+    expect(flagged.primary).toBe('Breached');
+  });
+
+  it('shows Exceeded by for In Progress tech-work when elapsed is over budget', () => {
+    const sla = itsmSlaDisplay({
+      id: '1c',
+      status: 'open',
+      form_status: 'InProgress',
+      current_step: 'IT Tech Support',
+      created_at: '2026-10-01T00:00:00Z',
+      modified_at: '2026-10-01T00:00:00Z',
+      sla_minutes: 60,
+    }, new Date('2026-10-02T02:00:00Z'));
     expect(sla.primary).toBe('Breached');
     expect(sla.sub).toMatch(/^Exceeded by /);
   });
@@ -173,12 +196,27 @@ describe('itsmSlaDisplay', () => {
     const preferClosure = itsmSlaDisplay({
       id: '5',
       status: 'open',
+      form_status: 'InProgress',
+      current_step: 'IT Tech Support',
       sla_minutes: 30,
       closure_minutes: 180,
       created_at: '2026-10-06T06:00:00Z',
+      modified_at: '2026-10-06T06:00:00Z',
     }, new Date('2026-10-06T07:00:00Z'));
     expect(preferClosure.primary).toBe('On track');
     expect(preferClosure.sub).toMatch(/left/);
+  });
+
+  it('approval steps never breach while open even when past budget', () => {
+    const sla = itsmSlaDisplay({
+      id: '6',
+      status: 'open',
+      form_status: 'Pending Approval',
+      current_step: 'L1 Approval',
+      created_at: '2026-10-01T00:00:00Z',
+      closure_minutes: 60,
+    }, new Date('2026-10-03T00:00:00Z'));
+    expect(sla.primary).toBe('On track');
   });
 });
 
@@ -201,12 +239,29 @@ describe('itsmTicketName', () => {
 });
 
 describe('isItsmSlaBreached / countItsmSlaBreached', () => {
-  it('counts only breached rows for the SLA card', () => {
-    const breached = {
+  it('counts only breached rows for the SLA card (production rules)', () => {
+    const breachedClosedFlag = {
       id: '1',
       status: 'closed',
       created_at: '2026-10-01T00:00:00Z',
       closed_at: '2026-10-02T02:00:00Z',
+      sla_minutes: 60,
+      sla_breached: 'true',
+    };
+    const closedOverBudgetNoFlag = {
+      id: '1b',
+      status: 'closed',
+      created_at: '2026-10-01T00:00:00Z',
+      closed_at: '2026-10-02T02:00:00Z',
+      sla_minutes: 60,
+    };
+    const breachedTechWork = {
+      id: '1c',
+      status: 'open',
+      form_status: 'InProgress',
+      current_step: 'IT Tech Support',
+      created_at: '2026-10-01T00:00:00Z',
+      modified_at: '2026-10-01T00:00:00Z',
       sla_minutes: 60,
     };
     const onTrack = {
@@ -216,9 +271,14 @@ describe('isItsmSlaBreached / countItsmSlaBreached', () => {
       sla_minutes: 180,
     };
     const now = new Date('2026-10-06T07:00:00Z');
-    expect(isItsmSlaBreached(breached, now)).toBe(true);
+    expect(isItsmSlaBreached(breachedClosedFlag, now)).toBe(true);
+    expect(isItsmSlaBreached(closedOverBudgetNoFlag, now)).toBe(false);
+    expect(isItsmSlaBreached(breachedTechWork, now)).toBe(true);
     expect(isItsmSlaBreached(onTrack, now)).toBe(false);
-    expect(countItsmSlaBreached([breached, onTrack], now)).toBe(1);
+    expect(countItsmSlaBreached(
+      [breachedClosedFlag, closedOverBudgetNoFlag, breachedTechWork, onTrack],
+      now,
+    )).toBe(2);
   });
 });
 

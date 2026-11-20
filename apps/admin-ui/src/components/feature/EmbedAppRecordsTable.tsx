@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Loader2, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
 import {
   assignedRecordLabel,
   filterAppRecords,
@@ -8,28 +8,41 @@ import {
 import { displayDashText, displayPersonCell, displayWhen, formatInr, isBlankDash } from '@/lib/dashboardEmpty';
 import {
   ITSM_CEO_RECORD_COLUMNS,
+  stampItsmOccurrenceCounts,
+  isItsmSlaBreached,
   itsmClosedAtDisplay,
   itsmExpandTiles,
+  itsmIssueOccurrenceKey,
   itsmRecordCellText,
   itsmReopenedStamp,
   itsmSlaDisplay,
 } from '@/lib/itsmRecordDisplay';
-import { emsExpandTiles, isEmsCoreColumn } from '@/lib/emsRecordDisplay';
 import {
-  annotateTravelBookingFareRows,
-  annotateTravelExpenseAmountRows,
-  fareTrendFilterLabel,
-  formatDeviationPct,
-  isTravelBookingRow,
+  emsExpandTiles,
+  emsSlaDisplay,
+  isEmsCoreColumn,
+  isEmsSlaBreached,
+} from '@/lib/emsRecordDisplay';
+import { isSolarSlaBreached, solarSlaDisplay } from '@/lib/solarCategory';
+import { PM_SLA_FILTER_OPTIONS, pmSlaDisplay } from '@/lib/pmSla';
+import {
   isTravelCoreColumn,
+  isTravelDeadlineSlaBreached,
+  isTravelDeadlineSlaProcess,
+  TRAVEL_DEADLINE_SLA_FILTER_OPTIONS,
+  travelDeadlineSlaDisplay,
   travelExpandTiles,
   travelPurposeText,
   travelRouteSummary,
-  travelSlaLabel,
   type TravelPackKind,
 } from '@/lib/travelRecordDisplay';
-import TravelFareTrendCell from '@/components/feature/TravelFareTrendCell';
-import TravelSlaCell from '@/components/feature/TravelSlaCell';
+import {
+  isTravelAirSlaBreached,
+  TRAVEL_AIR_SLA_FILTER_OPTIONS,
+  travelAirSlaDisplay,
+  travelAirSlaFilterLabel,
+  travelAirSlaTone,
+} from '@/lib/travelAirSla';
 import TravelRouteBanner from '@/components/feature/TravelRouteBanner';
 import type { AppRecordColumn, AppRecordRow } from '@/services/appRecordsApi';
 import { MisMobileRecordCard } from '@/components/feature/MisMobileCards';
@@ -73,56 +86,45 @@ function rowDateKey(value: unknown): string {
   return raw.slice(0, 10);
 }
 
-function pushSearchPart(parts: string[], value: unknown) {
-  if (value == null || value === '') return;
-  const kind = typeof value;
-  if (kind === 'string' || kind === 'number' || kind === 'boolean') {
-    parts.push(String(value));
-    return;
-  }
-  if (kind !== 'object') return;
-  if (Array.isArray(value)) {
-    value.forEach((item) => pushSearchPart(parts, item));
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  const name = record.Name || record.name || record.Email || record.email || record.label || record.primary;
-  if (name != null && name !== '') parts.push(String(name));
-  if (record.sub != null && record.sub !== '') parts.push(String(record.sub));
-}
-
-function recordSearchText(row: AppRecordRow, extras: unknown[] = []) {
-  const parts: string[] = [];
-  Object.values(row).forEach((value) => pushSearchPart(parts, value));
-  extras.forEach((value) => pushSearchPart(parts, value));
-  return parts.join(' ').toLowerCase();
-}
-
 type Props = {
   inventory: AppRecordRow[];
   columns?: AppRecordColumn[];
   dataSource?: string;
   entity?: string;
   company?: string;
+  department?: string;
   status?: string;
   assigned?: string;
   assignedId?: string;
+  /** IT Help Desk Top users drill — Requester Name / Behalf Of only. */
+  requester?: string;
+  /** IT Help Desk Top users · SR / Incident card scope. */
+  ticketKind?: 'sr' | 'incident' | null;
   dateFrom?: string;
   dateTo?: string;
   todayKind?: 'opened' | 'closed';
   itsmCompanyMode?: boolean;
   travelMode?: boolean;
   travelPackKind?: TravelPackKind | null;
+  /** From Travel Booking / Advance / Expense “SLA breached” card — ignored when SLA column filter is set. */
+  travelSlaFocus?: 'breached' | null;
+  /** From Tech Helpdesk “SLA Breached” card — ignored when SLA column filter is set. */
+  itsmSlaFocus?: 'breached' | null;
+  /** From Expense Management “SLA Breached” card — ignored when SLA column filter is set. */
+  emsSlaFocus?: 'breached' | null;
   emsMode?: boolean;
+  /** From Solar Expense “SLA Breached” card — ignored when SLA column filter is set. */
+  solarSlaFocus?: 'breached' | null;
+  solarMode?: boolean;
   leadWebsiteMode?: boolean;
   activityDates?: boolean;
   filterAnimating?: boolean;
   inventoryLoading?: boolean;
-  /** Display-only text match. Does not change KPI counts. */
-  textQuery?: string;
-  onTextQueryChange?: (value: string) => void;
   /** Rows after header + MIS column filters, without KPI status — parent recounts cards. */
-  onColumnScopedRowsChange?: (payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[]; active: boolean }) => void;
+  onColumnScopedRowsChange?: (payload: { kpiRows: AppRecordRow[]; sourceRows: AppRecordRow[] }) => void;
+  /** Controlled Times occurred / Top tickets drill-down (Category||Sub Category). */
+  occurrenceFocus?: { key: string; label: string } | null;
+  onOccurrenceFocusChange?: (next: { key: string; label: string } | null) => void;
 };
 
 export default function EmbedAppRecordsTable({
@@ -131,79 +133,123 @@ export default function EmbedAppRecordsTable({
   dataSource,
   entity = 'all',
   company = 'all',
+  department = 'all',
   status = 'all',
   assigned,
   assignedId,
+  requester,
+  ticketKind = null,
   dateFrom,
   dateTo,
   todayKind,
   itsmCompanyMode = false,
   travelMode = false,
   travelPackKind = null,
+  travelSlaFocus = null,
+  itsmSlaFocus = null,
+  emsSlaFocus = null,
   emsMode = false,
+  solarSlaFocus = null,
+  solarMode = false,
   leadWebsiteMode = false,
   activityDates = false,
   filterAnimating = false,
   inventoryLoading = false,
-  textQuery = '',
-  onTextQueryChange,
   onColumnScopedRowsChange,
+  occurrenceFocus = null,
+  onOccurrenceFocusChange,
 }: Props) {
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [dateFilters, setDateFilters] = useState<Record<string, { from: string; to: string }>>({});
+  /** Category||Sub Category key from a Times occurred click (uncontrolled). */
+  const [localOccurrenceFocusKey, setLocalOccurrenceFocusKey] = useState<string | null>(null);
+  const [localOccurrenceFocusLabel, setLocalOccurrenceFocusLabel] = useState<string>('');
+  const occurrenceControlled = typeof onOccurrenceFocusChange === 'function';
+  const occurrenceFocusKey = occurrenceControlled
+    ? (occurrenceFocus?.key || null)
+    : localOccurrenceFocusKey;
+  const occurrenceFocusLabel = occurrenceControlled
+    ? (occurrenceFocus?.label || '')
+    : localOccurrenceFocusLabel;
+  const setOccurrenceFocus = (next: { key: string; label: string } | null) => {
+    if (occurrenceControlled) {
+      onOccurrenceFocusChange?.(next);
+      return;
+    }
+    setLocalOccurrenceFocusKey(next?.key || null);
+    setLocalOccurrenceFocusLabel(next?.label || '');
+  };
   const pageSize = 10;
 
   useEffect(() => {
     setPage(0);
     setColumnFilters({});
     setDateFilters({});
-  }, [entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind]);
+    if (!occurrenceControlled) {
+      setLocalOccurrenceFocusKey(null);
+      setLocalOccurrenceFocusLabel('');
+    }
+  }, [entity, company, department, status, assigned, assignedId, requester, ticketKind, dateFrom, dateTo, todayKind, travelSlaFocus, itsmSlaFocus, emsSlaFocus, solarSlaFocus, occurrenceControlled]);
 
   useEffect(() => {
-    setPage(0);
-  }, [textQuery]);
-
-  const fareReadyInventory = useMemo(
-    () => (travelMode
-      ? annotateTravelExpenseAmountRows(annotateTravelBookingFareRows(inventory))
-      : inventory),
-    [inventory, travelMode],
-  );
+    if (occurrenceControlled) setPage(0);
+  }, [occurrenceFocus?.key, occurrenceControlled]);
 
   const scoped = useMemo(
     () => {
-      const rows = filterAppRecords(fareReadyInventory, {
-      entity,
-      company,
-      status,
-      assigned,
+      let rows = filterAppRecords(inventory, {
+        entity,
+        company,
+        department,
+        status,
+        assigned,
         assignedId,
-      dateFrom,
-      dateTo,
+        requester,
+        ticketKind: ticketKind || undefined,
+        dateFrom,
+        dateTo,
         todayKind,
-      itsmCompanyMode,
-      travelMode,
+        itsmCompanyMode,
+        travelMode,
         leadWebsiteMode,
         activityDates,
       });
+      // Pack card focus applies only until the SLA column filter is used.
+      if (travelMode && travelSlaFocus === 'breached' && !(columnFilters.sla && columnFilters.sla !== 'all')) {
+        rows = rows.filter((row) => (
+          travelPackKind === 'advance' || travelPackKind === 'expense' || isTravelDeadlineSlaProcess(row.process_id)
+            ? isTravelDeadlineSlaBreached(row)
+            : isTravelAirSlaBreached(row)
+        ));
+      }
+      if (itsmCompanyMode && itsmSlaFocus === 'breached' && !(columnFilters.sla && columnFilters.sla !== 'all')) {
+        rows = rows.filter((row) => isItsmSlaBreached(row));
+      }
+      if (emsMode && emsSlaFocus === 'breached' && !(columnFilters.sla && columnFilters.sla !== 'all')) {
+        rows = rows.filter((row) => isEmsSlaBreached(row));
+      }
+      if (solarMode && solarSlaFocus === 'breached' && !(columnFilters.sla && columnFilters.sla !== 'all')) {
+        rows = rows.filter((row) => isSolarSlaBreached(row));
+      }
       if (!itsmCompanyMode) return rows;
-      return [...rows].sort((a, b) => {
+      const stamped = stampItsmOccurrenceCounts(rows);
+      return [...stamped].sort((a, b) => {
         const right = new Date(String(b.created_at || 0)).getTime() || 0;
         const left = new Date(String(a.created_at || 0)).getTime() || 0;
         if (right !== left) return right - left;
         return String(b.request_id || '').localeCompare(String(a.request_id || ''));
       });
     },
-    [fareReadyInventory, entity, company, status, assigned, assignedId, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, leadWebsiteMode, activityDates],
+    [inventory, entity, company, department, status, assigned, assignedId, requester, ticketKind, dateFrom, dateTo, todayKind, itsmCompanyMode, travelMode, emsMode, solarMode, leadWebsiteMode, activityDates, travelSlaFocus, itsmSlaFocus, emsSlaFocus, solarSlaFocus, columnFilters.sla],
   );
 
   const columns: AppRecordColumn[] = columnsProp?.length
     ? columnsProp
     : itsmCompanyMode
       ? ITSM_CEO_RECORD_COLUMNS
-    : [
+      : [
         { id: 'request_id', label: 'Request ID' },
         { id: 'subject', label: 'Subject' },
         { id: 'assigned_to', label: 'Assigned to' },
@@ -229,19 +275,23 @@ export default function EmbedAppRecordsTable({
     if (isDateRecordColumn(col.id)) return formatWhen(String(raw || ''));
     if (col.id === 'assigned_to') return assignedRecordLabel(row, { itsmCompanyMode });
     if (col.id === 'purpose') return displayDashText(travelPurposeText(row), '—');
-    if (col.id === 'reference_fare' || col.id === 'policy_deviation_cost') {
+    if (col.id === 'sla' && travelMode) {
+      if (travelPackKind === 'advance' || travelPackKind === 'expense' || isTravelDeadlineSlaProcess(row.process_id)) {
+        return travelDeadlineSlaDisplay(row).primary || '—';
+      }
+      return travelAirSlaFilterLabel(row);
+    }
+    if (col.id === 'sla' && emsMode) return emsSlaDisplay(row).primary || '—';
+    if (col.id === 'sla' && solarMode) return solarSlaDisplay(row).primary || '—';
+    if (col.id === 'sla') return pmSlaDisplay(row).primary || '—';
+    if (col.id === 'policy_deviation_cost') {
       if (raw == null || raw === '') return '—';
       const n = typeof raw === 'number' ? raw : Number(raw);
       return Number.isFinite(n) ? formatInr(n) : '—';
     }
-    if (col.id === 'deviation_pct') return displayDashText(formatDeviationPct(raw), '—');
-    if (col.id === 'fare_trend') return displayDashText(fareTrendFilterLabel(raw, row.deviation_pct), '—');
-    if (col.id === 'sla') {
-      return travelMode
-        ? displayDashText(travelSlaLabel(row), '—')
-        : displayDashText(raw, '—');
+    if (col.id === 'amount' || col.id === 'raised_amount') {
+      return formatInr(typeof raw === 'number' ? raw : Number(raw));
     }
-    if (col.id === 'amount' || col.id === 'raised_amount') return formatInr(typeof raw === 'number' ? raw : Number(raw));
     if (col.id === 'requested_by' || col.id === 'closed_by') return displayPersonCell(raw);
     return displayPersonCell(raw);
   };
@@ -250,6 +300,16 @@ export default function EmbedAppRecordsTable({
     const map: Record<string, string[]> = {};
     for (const col of columns) {
       if (isDateRecordColumn(col.id)) continue;
+      if (travelMode && col.id === 'sla') {
+        map[col.id] = (travelPackKind === 'advance' || travelPackKind === 'expense')
+          ? [...TRAVEL_DEADLINE_SLA_FILTER_OPTIONS]
+          : [...TRAVEL_AIR_SLA_FILTER_OPTIONS];
+        continue;
+      }
+      if (!travelMode && !emsMode && !solarMode && !itsmCompanyMode && col.id === 'sla') {
+        map[col.id] = [...PM_SLA_FILTER_OPTIONS];
+        continue;
+      }
       const values = new Set<string>();
       for (const row of scoped) {
         const raw = cellValue(row, col);
@@ -260,7 +320,7 @@ export default function EmbedAppRecordsTable({
       map[col.id] = [...values].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
     }
     return map;
-  }, [scoped, columns, itsmCompanyMode]);
+  }, [scoped, columns, itsmCompanyMode, travelMode, travelPackKind, emsMode, solarMode]);
 
   const applyColumnAndDateFilters = (rows: AppRecordRow[], omitCols: string[] = []) => {
     const skip = new Set(omitCols);
@@ -286,17 +346,23 @@ export default function EmbedAppRecordsTable({
     });
   };
 
-  const filtered = useMemo(
-    () => applyColumnAndDateFilters(scoped),
-    [scoped, columnFilters, dateFilters, columns, itsmCompanyMode],
-  );
+  const filtered = useMemo(() => {
+    let rows = applyColumnAndDateFilters(scoped);
+    if (itsmCompanyMode && occurrenceFocusKey) {
+      rows = rows.filter((row) => itsmIssueOccurrenceKey(row) === occurrenceFocusKey);
+    }
+    return rows;
+  }, [scoped, columnFilters, dateFilters, columns, itsmCompanyMode, occurrenceFocusKey]);
 
   const headerNoStatus = useMemo(
-    () => filterAppRecords(fareReadyInventory, {
+    () => filterAppRecords(inventory, {
       entity,
       company,
+      department,
       assigned,
       assignedId,
+      requester,
+      ticketKind: ticketKind || undefined,
       dateFrom,
       dateTo,
       itsmCompanyMode,
@@ -305,11 +371,14 @@ export default function EmbedAppRecordsTable({
       activityDates,
     }),
     [
-      fareReadyInventory,
+      inventory,
       entity,
       company,
+      department,
       assigned,
       assignedId,
+      requester,
+      ticketKind,
       dateFrom,
       dateTo,
       itsmCompanyMode,
@@ -330,37 +399,16 @@ export default function EmbedAppRecordsTable({
     [headerNoStatus, columnFilters, dateFilters, columns, itsmCompanyMode],
   );
 
-  const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
-    || Object.values(dateFilters).some((range) => range.from || range.to);
-
   useEffect(() => {
-    onColumnScopedRowsChange?.({
-      kpiRows: columnScopedForKpis,
-      sourceRows: columnScopedForSource,
-      active: filtersActive,
-    });
-  }, [columnScopedForKpis, columnScopedForSource, filtersActive, onColumnScopedRowsChange]);
+    onColumnScopedRowsChange?.({ kpiRows: columnScopedForKpis, sourceRows: columnScopedForSource });
+  }, [columnScopedForKpis, columnScopedForSource, onColumnScopedRowsChange]);
 
-  const searchBlobs = useMemo(
-    () => filtered.map((row) => recordSearchText(row, [
-      travelMode ? travelSlaLabel(row) : '',
-      itsmCompanyMode ? itsmSlaDisplay(row) : null,
-    ])),
-    [filtered, travelMode, itsmCompanyMode],
-  );
-
-  const searched = useMemo(() => {
-    const q = String(textQuery || '').trim().toLowerCase();
-    if (!q) return filtered;
-    return filtered.filter((_, index) => searchBlobs[index]?.includes(q));
-  }, [filtered, searchBlobs, textQuery]);
-
-  const summary = useMemo(() => summarizeAppRecords(searched), [searched]);
+  const summary = useMemo(() => summarizeAppRecords(filtered), [filtered]);
 
   const pageItems = useMemo(() => {
     const off = page * pageSize;
-    return searched.slice(off, off + pageSize);
-  }, [searched, page]);
+    return filtered.slice(off, off + pageSize);
+  }, [filtered, page]);
 
   const visibleColumns = useMemo(() => {
     if (itsmCompanyMode) return columns;
@@ -380,11 +428,13 @@ export default function EmbedAppRecordsTable({
       }
       return columns.filter((col) => {
         if (isEmsCoreColumn(col.id)) return true;
+        // SLA is derived from expected_at / Deadline — not a raw row.sla field.
+        if (col.id === 'sla') return true;
         return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
       });
     }
     if (!pageItems.length) return columns;
-    const always = new Set(['request_id', 'subject', 'status', 'entity', 'company_name', 'website', 'created_at']);
+    const always = new Set(['request_id', 'subject', 'status', 'entity', 'company_name', 'website', 'created_at', 'sla']);
     return columns.filter((col) => {
       if (always.has(col.id) || isDateRecordColumn(col.id)) return true;
       return pageItems.some((row) => !isEmptyCell((row as Record<string, unknown>)[col.id]));
@@ -392,11 +442,15 @@ export default function EmbedAppRecordsTable({
   }, [columns, emsMode, itsmCompanyMode, pageItems, travelMode, travelPackKind]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const filtersActive = Object.values(columnFilters).some((v) => v && v !== 'all')
+    || Object.values(dateFilters).some((range) => range.from || range.to)
+    || Boolean(occurrenceFocusKey);
 
   const clearColumnFilters = () => {
     setPage(0);
     setColumnFilters({});
     setDateFilters({});
+    setOccurrenceFocus(null);
   };
 
   const showLoader = filterAnimating || inventoryLoading;
@@ -407,7 +461,6 @@ export default function EmbedAppRecordsTable({
       return travelExpandTiles(row, {
         hideRouteFields: Boolean(route),
         hideTravelMode: travelPackKind === 'booking',
-        includeFareDetails: travelPackKind !== 'booking' && isTravelBookingRow(row),
       });
     }
     return emsMode ? emsExpandTiles(row) : itsmExpandTiles(row);
@@ -422,99 +475,47 @@ export default function EmbedAppRecordsTable({
   );
   const showExpandColumn = expandEnabled && pageItems.some((row) => rowCanExpand(row));
 
-  const renderColumnFilter = (col: AppRecordColumn) => (
-    isDateRecordColumn(col.id) ? (
-      <RecordsColumnDateFilter
-        label={col.label}
-        from={dateFilters[col.id]?.from || ''}
-        to={dateFilters[col.id]?.to || ''}
-        onFromChange={(next) => {
-          setPage(0);
-          setDateFilters((prev) => ({
-            ...prev,
-            [col.id]: { from: next, to: prev[col.id]?.to || '' },
-          }));
-        }}
-        onToChange={(next) => {
-          setPage(0);
-          setDateFilters((prev) => ({
-            ...prev,
-            [col.id]: { from: prev[col.id]?.from || '', to: next },
-          }));
-        }}
-        onClear={() => {
-          setPage(0);
-          setDateFilters((prev) => {
-            const next = { ...prev };
-            delete next[col.id];
-            return next;
-          });
-        }}
-      />
-    ) : (
-      <RecordsColumnHeaderFilter
-        label={col.label}
-        value={columnFilters[col.id] || ''}
-        options={columnFilterOptions[col.id] || []}
-        onChange={(next) => {
-          setPage(0);
-          setColumnFilters((prev) => ({ ...prev, [col.id]: next }));
-        }}
-      />
-    )
-  );
-
   return (
-    <div className="ne-list-panel relative p-5">
+    <div className="relative rounded-xl border border-slate-100 bg-white p-5 shadow-[0_4px_18px_rgba(112,144,176,0.12)]">
       {showLoader && pageItems.length ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[1.25rem] bg-white/60 backdrop-blur-[1px]">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-white/60 backdrop-blur-[1px]">
           <Loader2 className="h-6 w-6 animate-spin text-[#3977BE]" />
         </div>
       ) : null}
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#1E88E5]/10 text-[#1E88E5]">
-            <ClipboardList className="h-4 w-4" strokeWidth={2.25} />
-          </div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h3 className={NE_TYPE.sectionTitle}>Records</h3>
+          {occurrenceFocusKey ? (
+            <button
+              type="button"
+              onClick={() => {
+                setOccurrenceFocus(null);
+                setPage(0);
+              }}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800"
+              title="Clear Times occurred drill-down"
+            >
+              <span className="truncate">Times occurred · {occurrenceFocusLabel || 'issue type'}</span>
+              <X className="h-3 w-3 shrink-0" aria-hidden />
+            </button>
+          ) : null}
         </div>
-        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+        <div className="flex items-center gap-2">
           {filtersActive ? (
             <button
               type="button"
               onClick={clearColumnFilters}
-              className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-700"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3 w-3" />
               Clear filters
             </button>
           ) : null}
-          {onTextQueryChange ? (
-            <label className="relative block min-w-0 w-full max-w-[360px]">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                  <circle cx="11" cy="11" r="7" />
-                  <path d="M20 20l-3.5-3.5" />
-                </svg>
-        </span>
-              <input
-                type="search"
-                value={textQuery}
-                onChange={(event) => onTextQueryChange(event.target.value)}
-                placeholder="Search records..."
-                className="h-9 w-full rounded-full border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#0F6B7A]"
-              />
-            </label>
-          ) : null}
+          <span className="text-xs font-semibold tabular-nums text-slate-500">
+            {Number(summary.total || 0).toLocaleString('en-IN')} rows
+            {dataSource === 'live_cache' ? ' · cached' : ''}
+          </span>
         </div>
-      </div>
-
-      <div className="mb-3 flex gap-3 overflow-x-auto pb-1 lg:hidden">
-        {visibleColumns.map((col) => (
-          <div key={col.id} className="shrink-0 text-xs font-semibold text-slate-600">
-            {renderColumnFilter(col)}
-          </div>
-        ))}
       </div>
 
       {showLoader && !pageItems.length ? (
@@ -527,12 +528,12 @@ export default function EmbedAppRecordsTable({
       ) : (
         <>
           <div className="space-y-2.5 lg:hidden">
-            {pageItems.map((row, index) => {
+            {pageItems.map((row) => {
               const titleCol = visibleColumns.find((c) => c.id === 'subject') || visibleColumns[0];
               const idCol = visibleColumns.find((c) => c.id === 'request_id');
               const statusCol = visibleColumns.find((c) => c.id === 'status');
               const previewIds = itsmCompanyMode
-                ? new Set(['requested_by', 'assigned_to', 'form_status', 'source', 'ticket_type', 'created_at', 'closed_at'])
+                ? new Set(['requested_by', 'company_name', 'assigned_to', 'form_status', 'source', 'category', 'sub_category', 'laptop_label', 'ticket_type', 'created_at', 'closed_at'])
                 : travelMode
                   ? new Set(
                     travelPackKind === 'booking'
@@ -540,16 +541,10 @@ export default function EmbedAppRecordsTable({
                       : ['requested_by', 'assigned_to', 'purpose', 'created_at'],
                   )
                   : emsMode
-                    ? new Set(['requested_by', 'assigned_to', 'expense_type', 'entity', 'created_at'])
+                    ? new Set(['requested_by', 'assigned_to', 'expense_type', 'entity', 'sla', 'created_at'])
                   : new Set(['assigned_to', 'entity', 'company_name', 'created_at']);
-              const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
+              const personCols = new Set(['assigned_to', 'closed_by']);
               const displayField = (col: AppRecordColumn) => {
-                if (col.id === 'fare_trend') {
-                  return <TravelFareTrendCell trend={row.fare_trend} deviationPct={row.deviation_pct} />;
-                }
-                if (travelMode && col.id === 'sla') {
-                  return <TravelSlaCell row={row} />;
-                }
                 const text = cellValue(row, col);
                 if (itsmCompanyMode && personCols.has(col.id)) {
                   return <MisPersonInitialsCell name={text === '—' ? '' : text} />;
@@ -563,14 +558,12 @@ export default function EmbedAppRecordsTable({
                 .filter((c) => !previewIds.has(c.id) && c.id !== titleCol?.id && c.id !== idCol?.id && c.id !== statusCol?.id)
                 .map((c) => ({ label: c.label, value: displayField(c) }))
                 .filter((field) => {
-                  if (field.value && typeof field.value !== 'string') return true;
                   const text = typeof field.value === 'string' ? field.value.trim() : '';
                   return Boolean(text) && text !== '—';
                 });
               return (
                 <MisMobileRecordCard
                   key={row.id}
-                  index={index}
                   title={cellValue(row, titleCol || { id: 'subject', label: 'Subject' })}
                   subtitle={idCol ? cellValue(row, idCol) : undefined}
                   badge={statusCol ? (
@@ -585,29 +578,64 @@ export default function EmbedAppRecordsTable({
               );
             })}
           </div>
-          <div className="-mx-5 hidden overflow-x-auto overflow-y-visible px-3 lg:block">
-            <table className="ne-list-table text-sm">
-              <thead className={`${NE_TYPE.tableHead} bg-transparent`}>
-                <tr>
+          <div className="-mx-5 -mb-5 hidden overflow-x-auto overflow-y-visible lg:block">
+            <table className="w-full min-w-[780px] text-sm">
+              <thead className={NE_TYPE.tableHead}>
+                <tr className="border-b border-slate-200">
                   {showExpandColumn ? <th className="w-10 px-3 py-3" aria-hidden /> : null}
                   {visibleColumns.map((col) => (
                     <th key={col.id} className={`${NE_TYPE.tableHeadCell} font-semibold`}>
-                      {renderColumnFilter(col)}
+                      {isDateRecordColumn(col.id) ? (
+                        <RecordsColumnDateFilter
+                          label={col.label}
+                          from={dateFilters[col.id]?.from || ''}
+                          to={dateFilters[col.id]?.to || ''}
+                          onFromChange={(next) => {
+                            setPage(0);
+                            setDateFilters((prev) => ({
+                              ...prev,
+                              [col.id]: { from: next, to: prev[col.id]?.to || '' },
+                            }));
+                          }}
+                          onToChange={(next) => {
+                            setPage(0);
+                            setDateFilters((prev) => ({
+                              ...prev,
+                              [col.id]: { from: prev[col.id]?.from || '', to: next },
+                            }));
+                          }}
+                          onClear={() => {
+                            setPage(0);
+                            setDateFilters((prev) => {
+                              const next = { ...prev };
+                              delete next[col.id];
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : (
+                        <RecordsColumnHeaderFilter
+                          label={col.label}
+                          value={columnFilters[col.id] || ''}
+                          options={columnFilterOptions[col.id] || []}
+                          onChange={(next) => {
+                            setPage(0);
+                            setColumnFilters((prev) => ({ ...prev, [col.id]: next }));
+                          }}
+                        />
+                      )}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((row, index) => {
+                {pageItems.map((row) => {
                   const rowId = String(row.id || row.request_id || '');
                   const canExpand = rowCanExpand(row);
                   const expanded = canExpand && expandedId === rowId;
                   return (
                   <Fragment key={rowId}>
-                  <tr
-                    className="ne-list-row group"
-                    style={{ '--r': index } as CSSProperties}
-                  >
+                  <tr className="border-t border-slate-100 hover:bg-[#EEF5FF]/70">
                     {showExpandColumn ? (
                       <td className="px-3 py-2.5">
                         {canExpand ? (
@@ -625,31 +653,14 @@ export default function EmbedAppRecordsTable({
                     ) : null}
                     {visibleColumns.map((col) => {
                       const raw = (row as Record<string, unknown>)[col.id];
-                      if (col.id === 'amount' || col.id === 'raised_amount') {
+                      if (col.id === 'amount' || col.id === 'raised_amount' || col.id === 'policy_deviation_cost') {
+                        const blankPolicy = col.id === 'policy_deviation_cost' && (raw == null || raw === '');
+                        const amountNum = typeof raw === 'number' ? raw : Number(raw);
                         return (
                           <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
-                            {formatInr(typeof raw === 'number' ? raw : Number(raw))}
-                          </td>
-                        );
-                      }
-                      if (col.id === 'fare_trend') {
-                        return (
-                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right">
-                            <TravelFareTrendCell trend={row.fare_trend} deviationPct={row.deviation_pct} />
-                          </td>
-                        );
-                      }
-                      if (travelMode && col.id === 'sla') {
-                        return (
-                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right">
-                            <TravelSlaCell row={row} />
-                          </td>
-                        );
-                      }
-                      if (col.id === 'reference_fare' || col.id === 'policy_deviation_cost' || col.id === 'deviation_pct' || col.id === 'sla') {
-                        return (
-                          <td key={col.id} className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums font-semibold text-slate-800">
-                            {cellValue(row, col)}
+                            {blankPolicy || (col.id === 'policy_deviation_cost' && !Number.isFinite(amountNum))
+                              ? '—'
+                              : formatInr(amountNum)}
                           </td>
                         );
                       }
@@ -667,9 +678,9 @@ export default function EmbedAppRecordsTable({
                         return (
                           <td key={col.id} className="px-5 py-2.5">
                             <div className="flex flex-col items-start gap-0.5">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
-                            >
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ${statusTone(String(raw || ''))}`}
+                              >
                                 {displayDashText(raw || row.status_raw, '—')}
                               </span>
                               {reopen ? (
@@ -701,6 +712,80 @@ export default function EmbedAppRecordsTable({
                           </td>
                         );
                       }
+                      if (travelMode && col.id === 'sla') {
+                        if (travelPackKind === 'advance' || travelPackKind === 'expense' || isTravelDeadlineSlaProcess(row.process_id)) {
+                          const sla = travelDeadlineSlaDisplay(row);
+                          const primary = sla.primary || '—';
+                          const tone = sla.state === 'breached'
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : sla.state === 'ok'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border-slate-200 bg-slate-50 text-slate-500';
+                          return (
+                            <td key={col.id} className="px-5 py-2.5">
+                              <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                                {primary}
+                              </span>
+                            </td>
+                          );
+                        }
+                        const sla = travelAirSlaDisplay(row);
+                        return (
+                          <td key={col.id} className="px-5 py-2.5">
+                            <span className={`inline-flex max-w-[14rem] whitespace-normal rounded-md border px-1.5 py-0.5 text-[11px] font-semibold leading-snug ${travelAirSlaTone(sla.state)}`}>
+                              {sla.primary}
+                            </span>
+                          </td>
+                        );
+                      }
+                      if (emsMode && col.id === 'sla') {
+                        const sla = emsSlaDisplay(row);
+                        const primary = sla.primary || '—';
+                        const tone = sla.state === 'breached'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : sla.state === 'ok'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-slate-200 bg-slate-50 text-slate-500';
+                        return (
+                          <td key={col.id} className="px-5 py-2.5">
+                            <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                              {primary}
+                            </span>
+                          </td>
+                        );
+                      }
+                      if (solarMode && col.id === 'sla') {
+                        const sla = solarSlaDisplay(row);
+                        const primary = sla.primary || '—';
+                        const tone = sla.state === 'breached'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : sla.state === 'ok'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-slate-200 bg-slate-50 text-slate-500';
+                        return (
+                          <td key={col.id} className="px-5 py-2.5">
+                            <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                              {primary}
+                            </span>
+                          </td>
+                        );
+                      }
+                      if (col.id === 'sla') {
+                        const sla = pmSlaDisplay(row);
+                        const primary = sla.primary || '—';
+                        const tone = sla.state === 'breached'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : sla.state === 'ok'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-slate-200 bg-slate-50 text-slate-500';
+                        return (
+                          <td key={col.id} className="px-5 py-2.5">
+                            <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-semibold ${tone}`}>
+                              {primary}
+                            </span>
+                          </td>
+                        );
+                      }
                       if (isDateRecordColumn(col.id)) {
                         const dateRaw = itsmCompanyMode && col.id === 'closed_at'
                           ? itsmClosedAtDisplay(row)
@@ -718,7 +803,18 @@ export default function EmbedAppRecordsTable({
                           : col.id === 'purpose'
                             ? displayDashText(travelPurposeText(row), '—')
                             : displayPersonCell(raw);
-                      const personCols = new Set(['requested_by', 'assigned_to', 'closed_by']);
+                      if (itsmCompanyMode && col.id === 'requested_by') {
+                        return (
+                          <td
+                            key={col.id}
+                            title={text}
+                            className="min-w-[10rem] max-w-[16rem] whitespace-normal break-words px-5 py-2.5 font-medium text-slate-800"
+                          >
+                            {text}
+                          </td>
+                        );
+                      }
+                      const personCols = new Set(['assigned_to', 'closed_by']);
                       if (itsmCompanyMode && personCols.has(col.id)) {
                         return (
                           <td key={col.id} title={text} className="px-5 py-2.5">
@@ -726,14 +822,14 @@ export default function EmbedAppRecordsTable({
                           </td>
                         );
                       }
-                      const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'purpose', 'from_city', 'to_city', 'trip_type', 'form_status', 'source', 'ticket_type', 'category', 'expense_type']);
+                      const wrapIds = new Set(['entity', 'company_name', 'website', 'subject', 'purpose', 'from_city', 'to_city', 'trip_type', 'form_status', 'source', 'ticket_type', 'category', 'sub_category', 'laptop_label', 'expense_type']);
                       return (
                         <td
                           key={col.id}
                           title={text}
                           className={`px-5 py-2.5 text-slate-800 ${
                             wrapIds.has(col.id)
-                              ? 'max-w-[14rem] whitespace-normal break-words'
+                              ? 'min-w-[11rem] max-w-[18rem] whitespace-normal break-words'
                               : 'max-w-[220px]'
                           }`}
                         >

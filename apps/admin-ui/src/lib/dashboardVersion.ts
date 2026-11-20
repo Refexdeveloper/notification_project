@@ -1,7 +1,16 @@
 /** Bump this on each dashboard KPI / MIS / filter change so we can revert by version. */
-export const DASHBOARD_VERSION = '2026.11.16-itsm-no-department';
+export const DASHBOARD_VERSION = '2026.11.20-itsm-closed-excludes-rejected';
 
 export const DASHBOARD_VERSION_NOTES = [
+  'IT Help Desk: Top users Closed (incl. Top 10 service request) counts/filters Ticket Status closed only — rejected excluded from Closed list.',
+  'IT Help Desk: SLA Breached card uses the same production rules (flag for closed; tech-work In Progress elapsed>budget; approval steps excluded).',
+  'IT Help Desk: Top users Open / Closed / SLA Breached drills match card counts (Requester + issue type + SR/Incident kind + status/SLA).',
+  'IT Help Desk: Top users Open keeps Requester Name filter (not cleared by MIS User dropdown) so only that user’s open tickets show.',
+  'IT Help Desk: Top users Open / Closed drill filters Records by Requester Name + issue type + status bucket (matches card counts).',
+  'IT Help Desk: Top 10 service request / Top 10 incident / Recurring user names use Requester Name.',
+  'IT Help Desk: Top 10 service request / Top 10 incident / Recurring user names use Raised By (not Behalf Of).',
+  'All dashboards: same Entity (Refex / Extrovis / Venwind) + Company catalog filters, including EMS and Lead (Website filter replaced by Company).',
+  'Solar Expense: SLA Breached KPI card (Kissflow Deadline → expected_at); click filters Records; SLA column on table.',
   'IT Help Desk: removed Department filter from dashboard and Records (Entity + Company remain).',
   'IT Help Desk: Entity filter uses Kissflow Employee_entity / user_details_lookup Entity (Adrenalin via Kissflow), then process Entity.',
   'IT Help Desk dashboard: Top users / Requester Name / inventory use Behalf Of Name (not Fazulahemed / Raised By); live cache schema bumped so the update applies after Refresh.',

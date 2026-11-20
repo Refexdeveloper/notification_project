@@ -330,6 +330,10 @@ function minutesBetween(from: unknown, to: unknown): number | null {
   return (end.getTime() - start.getTime()) / 60000;
 }
 
+function normalizeSlaToken(value: unknown): string {
+  return String(value || '').toLowerCase().replace(/[\s_-]+/g, '');
+}
+
 function headSlaBudgetMinutes(row: AppRecordRow): number {
   if (isPendingApprovalSlaRow(row)) return PENDING_APPROVAL_SLA_MINUTES;
   const closure = parseSlaMinutes(row.closure_minutes);
@@ -342,17 +346,79 @@ function headSlaBudgetMinutes(row: AppRecordRow): number {
   return expected && expected > 0 ? expected : 0;
 }
 
+/** IT Tech / support work steps where elapsed-vs-budget SLA applies (matches production). */
+function isItsmTechWorkStep(row: AppRecordRow): boolean {
+  const step = String(row.current_step || '').toLowerCase();
+  const token = normalizeSlaToken(step);
+  if (token === 'inprogress' || token === 'completed' || token === 'open') return false;
+  return step.includes('it tech')
+    || step.includes('tech support')
+    || step.includes('pickup')
+    || step.includes('pick up')
+    || step.includes('dependency')
+    || step.includes('it agent')
+    || step.includes('solution');
+}
+
+/** In-progress stage used with tech-work SLA timing (matches production). */
+function isItsmInProgressSlaStage(row: AppRecordRow): boolean {
+  const processStages = normalizeSlaToken(row.process_stages);
+  const formOrStages = normalizeSlaToken(row.form_status || row.stages || '');
+  const currentStep = normalizeSlaToken(row.current_step);
+  if (processStages) return processStages === 'inprogress';
+  return formOrStages === 'inprogress' || currentStep === 'inprogress' || isItsmTechWorkStep(row);
+}
+
+/** Approval / L1–L2 steps never count as SLA breached while open (matches production). */
+function isItsmApprovalSlaStep(row: AppRecordRow): boolean {
+  if (isPendingApprovalSlaRow(row)) return true;
+  const step = String(row.current_step || '').toLowerCase();
+  return /\bl1\b/.test(step)
+    || /\bl2\b/.test(step)
+    || step.includes('l1 approval')
+    || step.includes('l2 approval')
+    || step.includes('it manager approval')
+    || step.includes('it head approval');
+}
+
+function hasItsmSlaBreachFlag(row: AppRecordRow): boolean {
+  const flag = String(row.sla_breached || '').toLowerCase();
+  if (flag === 'true' || flag === 'yes' || flag === '1' || flag === 'breached') return true;
+  const statusBlob = [row.status_raw, row.item_status, row.itemStatus, row.status]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  return statusBlob.includes('breach');
+}
+
+/**
+ * Same SLA Breached rules as production admin-ui:
+ * - Closed/rejected/completed: breach flag only
+ * - Approval steps (open): never breached
+ * - IT tech/support In Progress: flag OR elapsed > budget
+ * - Other open steps: breach flag only
+ */
 export function itsmSlaDisplay(row: AppRecordRow, now = new Date()): { primary: string; sub: string | null; state: 'breached' | 'ok' | 'hold' | 'none' } {
-  const form = String(row.form_status || '').toLowerCase().replace(/[\s_-]+/g, '');
-  if (form === 'onhold' || form === 'hold') {
+  const form = normalizeSlaToken(row.form_status);
+  const status = String(row.status || '').toLowerCase();
+  const isClosed = status === 'closed' || status === 'rejected' || status === 'completed';
+  if (!isClosed && (form === 'onhold' || form === 'hold')) {
     return { primary: 'Hold', sub: null, state: 'hold' };
   }
+
   const budget = headSlaBudgetMinutes(row);
+  const elapsedStart = isClosed ? row.created_at : (row.modified_at || row.created_at);
   const closedAt = itsmClosedAtDisplay(row) || now;
-  const elapsed = minutesBetween(row.created_at, String(row.status || '').toLowerCase() === 'closed' ? closedAt : now);
-  const flag = String(row.sla_breached || '').toLowerCase();
-  const breached = flag === 'true' || flag === 'yes' || flag === '1' || flag === 'breached'
-    || (budget > 0 && elapsed != null && elapsed > budget);
+  const elapsed = minutesBetween(elapsedStart, isClosed ? closedAt : now);
+  const flag = hasItsmSlaBreachFlag(row);
+
+  const breached = isClosed
+    ? flag
+    : isItsmApprovalSlaStep(row)
+      ? false
+      : (isItsmTechWorkStep(row) && isItsmInProgressSlaStage(row)
+        ? (flag || (budget > 0 && elapsed != null && elapsed > budget))
+        : flag);
+
   if (breached) {
     const over = budget > 0 && elapsed != null ? Math.max(0, elapsed - budget) : elapsed;
     return {
@@ -361,7 +427,7 @@ export function itsmSlaDisplay(row: AppRecordRow, now = new Date()): { primary: 
       state: 'breached',
     };
   }
-  if (String(row.status || '').toLowerCase() === 'closed' || String(row.status || '').toLowerCase() === 'rejected') {
+  if (isClosed) {
     return {
       primary: 'Not Breached',
       sub: elapsed != null && budget > 0
@@ -381,7 +447,7 @@ export function itsmSlaFilterLabel(row: AppRecordRow): string {
   return display.primary && display.primary !== '—' ? display.primary : '';
 }
 
-/** True when the SLA column would show Breached (flag or elapsed over budget). */
+/** True when the SLA column / SLA Breached card would count the ticket (production rules). */
 export function isItsmSlaBreached(row: AppRecordRow, now = new Date()): boolean {
   return itsmSlaDisplay(row, now).state === 'breached';
 }

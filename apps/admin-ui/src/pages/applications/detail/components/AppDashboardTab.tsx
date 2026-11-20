@@ -36,8 +36,6 @@ import {
   buildPmProjectState,
   companyCountsFromRecords,
   departmentCountsFromRecords,
-  itsmEntityFieldCountsFromRecords,
-  websiteCountsFromRecords,
   countPmPortfolio,
   countTodayActivity,
   entityCountsFromRecords,
@@ -64,6 +62,8 @@ import { countTravelDeadlineSlaBreached, travelColumnsForPack, type TravelPackKi
 import { countTravelAirSlaBreached } from '@/lib/travelAirSla';
 import { countPmTaskSlaBreached, PM_DASH_COLUMNS } from '@/lib/pmSla';
 import {
+  countSolarSlaBreached,
+  SOLAR_DASH_COLUMNS,
   solarPackCountsFromRecords,
   solarRowMatchesPack,
 } from '@/lib/solarCategory';
@@ -521,6 +521,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const [recurringDrillMetric, setRecurringDrillMetric] = useState<ItsmIssueDrillMetric | null>(null);
   const [recurringMonthFocus, setRecurringMonthFocus] = useState<ItsmRecurringMonth | null>(null);
   const [ticketIssueFocus, setTicketIssueFocus] = useState<{ key: string; label: string } | null>(null);
+  /** Top users / Recurring drill — Requester Name (not MIS User / assignee dropdown). */
+  const [recordsRequester, setRecordsRequester] = useState<string | null>(null);
   const [recordsStatus, setRecordsStatus] = useState('all');
   const [misScopedRecords, setMisScopedRecords] = useState<AppRecordRow[] | null>(null);
   const [userPage, setUserPage] = useState(0);
@@ -717,6 +719,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       setCompany('all');
       setDepartment('all');
       setUserFilter('all');
+      setRecordsRequester(null);
       setRecordsStatus('all');
       setKpiFocus(null);
     },
@@ -727,6 +730,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setCompany(next);
     setDepartment('all');
     setUserFilter('all');
+    setRecordsRequester(null);
     setRecordsStatus('all');
     setKpiFocus(null);
   }, []);
@@ -734,6 +738,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const handleDepartmentChange = useCallback((next: string) => {
     setDepartment(next);
     setUserFilter('all');
+    setRecordsRequester(null);
     setRecordsStatus('all');
     setKpiFocus(null);
   }, []);
@@ -743,6 +748,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setCompany('all');
     setDepartment('all');
     setUserFilter('all');
+    setRecordsRequester(null);
     setPeriod('fy');
     setDateFrom('');
     setDateTo('');
@@ -769,7 +775,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     || /procurement|p2p/i.test(appId || '');
   const isEmsLayout = appKind === 'expense' && !travelMode;
   const hasInventory = !inventoryLoading && recordInventory.length > 0;
-  const dropdownFiltersActive = (!isEmsLayout && entity !== 'all')
+  const dropdownFiltersActive = entity !== 'all'
     || company !== 'all'
     || (!itsmCompanyMode && department !== 'all')
     || userFilter !== 'all';
@@ -861,13 +867,12 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const filterInventory = useMemo(() => {
     if (!periodScopedInventory.length) return [] as AppRecordRow[];
     return filterAppRecords(periodScopedInventory, {
-      // Expense Management: Entity filter removed — always all.
-      // IT Help Desk: Entity = Kissflow Entity field (or legacy Refex/Extrovis).
-      entity: isEmsLayout ? 'all' : entity,
+      // Same Entity buckets (Refex / Extrovis / Venwind) on every dashboard.
+      entity,
       itsmCompanyMode,
       travelMode,
     });
-  }, [entity, isEmsLayout, itsmCompanyMode, periodScopedInventory, travelMode]);
+  }, [entity, itsmCompanyMode, periodScopedInventory, travelMode]);
 
   const companyScopedRecords = useMemo(() => {
     if (!useClientInventory) return [] as AppRecordRow[];
@@ -875,9 +880,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       company,
       itsmCompanyMode,
       travelMode,
-      leadWebsiteMode: leadMode,
     });
-  }, [company, filterInventory, itsmCompanyMode, leadMode, travelMode, useClientInventory]);
+  }, [company, filterInventory, itsmCompanyMode, travelMode, useClientInventory]);
 
   const scopeRecords = useMemo(() => {
     // IT Help Desk: Department filter removed — always all departments.
@@ -951,9 +955,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setTopIssueDrillKey((prev) => {
       if (prev === overallKey) {
         setTicketIssueFocus(null);
+        setRecordsRequester(null);
         return null;
       }
-      setUserFilter(user.name);
+      setRecordsRequester(user.name);
       setTicketIssueFocus(null);
       return overallKey;
     });
@@ -963,7 +968,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     metric: ItsmIssueDrillMetric,
   ) => {
     const overallKey = itsmTopUserOverallKey(user.key);
-    setUserFilter(user.name);
+    setRecordsRequester(user.name);
     setTicketIssueFocus(null);
     setRecurringDrillKey(null);
     setRecurringDrillMetric(null);
@@ -1001,9 +1006,10 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setTopIssueDrillKey((prev) => {
       if (prev === drillKey) {
         setTicketIssueFocus(null);
+        setRecordsRequester(null);
         return null;
       }
-      setUserFilter(name);
+      setRecordsRequester(name);
       setTicketIssueFocus({ key: issue.key, label: issue.label });
       return drillKey;
     });
@@ -1015,7 +1021,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   ) => {
     const userKey = personDedupeKey(name);
     const drillKey = `${userKey}::${issue.key}`;
-    setUserFilter(name);
+    setRecordsRequester(name);
     setTicketIssueFocus({ key: issue.key, label: issue.label });
     setRecurringDrillKey(null);
     setRecurringDrillMetric(null);
@@ -1049,7 +1055,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setTopIssueDrillMetric(null);
     setRecurringDrillMetric(null);
     setTicketIssueFocus(null);
-    setUserFilter('all');
+    setRecordsRequester(null);
     setRecurringDrillKey((prev) => {
       if (prev === drillKey) {
         setRecurringMonthFocus(null);
@@ -1069,7 +1075,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     const drillKey = itsmRecurringMonthDrillKey(month.key);
     setTopIssueDrillKey(null);
     setTopIssueDrillMetric(null);
-    setUserFilter('all');
+    setRecordsRequester(null);
     setTicketIssueFocus(null);
     setRecurringMonthFocus(month);
     setRecurringDrillKey(drillKey);
@@ -1109,10 +1115,11 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setRecurringDrillKey((prev) => {
       if (prev === row.key) {
         setTicketIssueFocus(null);
+        setRecordsRequester(null);
         setRecurringMonthFocus(null);
         return null;
       }
-      setUserFilter(row.userName);
+      setRecordsRequester(row.userName);
       setTicketIssueFocus({ key: row.issue.key, label: row.issue.label });
       setRecurringMonthFocus(month);
       return row.key;
@@ -1131,7 +1138,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     };
     setTopIssueDrillKey(null);
     setTopIssueDrillMetric(null);
-    setUserFilter(row.userName);
+    setRecordsRequester(row.userName);
     setTicketIssueFocus({ key: row.issue.key, label: row.issue.label });
     setRecurringMonthFocus(month);
     setRecurringDrillKey(row.key);
@@ -1177,6 +1184,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setRecurringDrillMetric(null);
     setRecurringMonthFocus(null);
     setTicketIssueFocus(null);
+    setRecordsRequester(null);
   }, [entity, company, department, period, dateFrom, dateTo]);
 
   const todayKind = kpiFocus === 'opened_today' ? 'opened' : kpiFocus === 'closed_today' ? 'closed' : undefined;
@@ -1226,7 +1234,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       stampedInventory.length ? stampedInventory : recordInventory,
     );
     const companyActive = company !== 'all';
-    const entityActive = !isEmsLayout && entity !== 'all';
+    const entityActive = entity !== 'all';
     if (!companyActive && !entityActive) return enriched;
 
     // Company filter: exact legal company only (IT agents on Holding tickets
@@ -1247,7 +1255,6 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     company,
     entity,
     identityRoster,
-    isEmsLayout,
     itsmCompanyMode,
     misOwnerMode,
     recordInventory,
@@ -1325,75 +1332,36 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const hasMoreMisUsers = displayedMisUsers.length > pagedMisUsers.length;
 
   const entityOptions = useMemo(() => {
-    // IT Help Desk: every distinct Kissflow entity field value
-    // (Employee_entity / Entity — Adrenalin via Kissflow).
-    if (itsmCompanyMode) {
-      const allSource = stampedInventory.length ? stampedInventory : recordInventory;
-      const periodSource = periodScopedInventory.length ? periodScopedInventory : allSource;
-      const allRows = itsmEntityFieldCountsFromRecords(allSource);
-      const periodCounts = new Map(
-        itsmEntityFieldCountsFromRecords(periodSource).map((r) => [r.id.toLowerCase(), r.count]),
-      );
-      return ensureFilterOption(
-        [
-          { id: 'all', label: 'All entities' },
-          ...allRows.map((r) => ({
-            id: r.id,
-            label: r.label,
-            count: periodCounts.get(r.id.toLowerCase()) || 0,
-          })),
-        ],
-        entity,
-      );
-    }
-    // Always keep Refex/Extrovis (or Venwind) in the list, even at count 0, so the
-    // native select cannot snap back to All when a period has no rows for one entity.
+    // Same Entity filter on every dashboard: Refex / Extrovis / Venwind.
+    // Keep buckets at count 0 so the select cannot snap back to All.
     const source = periodScopedInventory.length ? periodScopedInventory : recordInventory;
-    const mode = travelMode ? 'refex_venwind' : 'all_buckets';
-    const rows = entityCountsFromRecords(source, { itsmCompanyMode, travelMode });
+    const rows = entityCountsFromRecords(source, { itsmCompanyMode });
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.id] = r.count;
     return ensureFilterOption(
-      buildEntityBucketOptions(counts, { mode, allLabel: 'All entities' }),
+      buildEntityBucketOptions(counts, { mode: 'all_buckets', allLabel: 'All entities' }),
       entity,
     );
-  }, [entity, itsmCompanyMode, periodScopedInventory, recordInventory, stampedInventory, travelMode]);
+  }, [entity, itsmCompanyMode, periodScopedInventory, recordInventory]);
 
   const companyOptions = useMemo(() => {
+    // Same Company filter on every dashboard: Refex catalog scoped by Entity.
     const source = filterInventory.length ? filterInventory : stampedInventory;
-    if (leadMode) {
-      const rows = websiteCountsFromRecords(source);
-      return sortCompanyFilterOptions(ensureFilterOption(
-        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
-        company,
-      ));
-    }
-    // EMS: no Entity filter → full catalog.
-    // ITSM: Entity is Kissflow Entity field → keep full company catalog (bucket ids still scope).
-    // Other apps: Company list follows Entity bucket.
-    const companyEntity = isEmsLayout
-      ? 'all'
-      : itsmCompanyMode
-        ? (entity === 'refex' || entity === 'extrovis' || entity === 'venwind' ? entity : 'all')
-        : entity;
+    const companyEntity = entity === 'refex' || entity === 'extrovis' || entity === 'venwind'
+      ? entity
+      : 'all';
     const rows = companyCountsFromRecords(source, { itsmCompanyMode, entity: companyEntity });
-    if (itsmCompanyMode || travelMode || isEmsLayout) {
-      const counts: Record<string, number> = {};
-      for (const r of rows) counts[r.id] = r.count;
-      return sortCompanyFilterOptions(ensureFilterOption(
-        buildRefexCompanyOptions(counts, {
-          includeAll: true,
-          allLabel: 'All companies',
-          entity: companyEntity,
-        }),
-        company,
-      ));
-    }
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.id] = r.count;
     return sortCompanyFilterOptions(ensureFilterOption(
-      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      buildRefexCompanyOptions(counts, {
+        includeAll: true,
+        allLabel: 'All companies',
+        entity: companyEntity,
+      }),
       company,
     ));
-  }, [company, entity, filterInventory, isEmsLayout, itsmCompanyMode, leadMode, stampedInventory, travelMode]);
+  }, [company, entity, filterInventory, itsmCompanyMode, stampedInventory]);
 
   const departmentOptions = useMemo(() => {
     // IT Help Desk: no Department filter.
@@ -1441,16 +1409,13 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const kpiClosed = clientKpis.closed;
   const kpiRejected = clientKpis.rejected;
 
-  /**
-   * IT Help Desk: Entity + Company (no Department).
-   * Other apps: Entity + Company; Lead uses Website; EMS has no Entity.
-   */
+  /** Same Entity + Company filters on every dashboard. */
   const showCompanyFilter = true;
 
   const scopedIdle = dropdownFiltersActive && useClientKpis && kpiTotal === 0;
   const companyScopedAdoption = company !== 'all'
     || (!itsmCompanyMode && department !== 'all')
-    || (!isEmsLayout && entity !== 'all');
+    || entity !== 'all';
   const workAdoption = useMemo(() => adoptionCounts(workUsers), [workUsers]);
   const adoptionOverall = scopedIdle
     ? 0
@@ -1517,6 +1482,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setAdoptionOpen(false);
     setTopIssueUsersFocus(null);
     setTicketIssueFocus(null);
+    setRecordsRequester(null);
+    setTopIssueDrillKey(null);
+    setTopIssueDrillMetric(null);
     setKpiFocus((prev) => {
       const next = prev === focus ? null : focus;
       if (
@@ -1639,6 +1607,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setRecurringDrillMetric(null);
     setRecurringMonthFocus(null);
     setTicketIssueFocus(null);
+    setRecordsRequester(null);
     setRecordsStatus('all');
     setTopIssueDrillKey(null);
     setTopIssueDrillMetric(null);
@@ -1663,6 +1632,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     setTopIssueUsersFocus(null);
     setTopIssueDrillKey(null);
     setTopIssueDrillMetric(null);
+    setRecordsRequester(null);
     setRecordsStatus('all');
     setRecurringIssuesOpen((prev) => {
       const next = !prev;
@@ -1697,8 +1667,9 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
   const kpiSlaBreached = useMemo(() => {
     if (itsmCompanyMode) return countItsmSlaBreached(ticketKpiRows);
     if (isEmsLayout) return countEmsSlaBreached(ticketKpiRows);
+    if (isSolarLayout) return countSolarSlaBreached(ticketKpiRows);
     return 0;
-  }, [isEmsLayout, itsmCompanyMode, ticketKpiRows]);
+  }, [isEmsLayout, isSolarLayout, itsmCompanyMode, ticketKpiRows]);
   const pmTaskSlaBreached = useMemo(
     () => (isPmLayout ? countPmTaskSlaBreached(kpiRecords) : 0),
     [isPmLayout, kpiRecords],
@@ -1735,8 +1706,8 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
     );
   }
 
-  // Expense Management + Lead: hide Entity. IT Help Desk and other apps show Entity.
-  const showEntityFilter = !isEmsLayout && !leadMode;
+  // Same Entity + Company on every dashboard (EMS / Lead included).
+  const showEntityFilter = true;
   const showCompanyDropdown = showCompanyFilter;
   // IT Help Desk: no Department filter (Travel / EMS / PM still show it).
   const showDepartmentFilter = !itsmCompanyMode && departmentOptions.length > 0;
@@ -1760,7 +1731,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
       company={company}
       onCompanyChange={showCompanyDropdown ? handleCompanyChange : undefined}
       companyOptions={showCompanyDropdown ? companyOptions : undefined}
-      companyLabel={leadMode ? 'Website' : 'Company'}
+      companyLabel="Company"
       department={department}
       onDepartmentChange={showDepartmentFilter ? handleDepartmentChange : undefined}
       departmentOptions={showDepartmentFilter ? departmentOptions : undefined}
@@ -2422,7 +2393,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               </div>
             ) : (
               <div className="space-y-5">
-              <div className={neKpiBalancedGridClass(10)}>
+              <div className={neKpiBalancedGridClass(isSolarLayout ? 11 : 10)}>
                 <KpiCard
                   label={totalLabel}
                   value={displayDashCount(kpiTotal)}
@@ -2477,6 +2448,17 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                   active={kpiFocus === 'closed_today'}
                   onClick={() => handleKpiClick('closed_today')}
                 />
+                {isSolarLayout ? (
+                  <KpiCard
+                    label="SLA Breached"
+                    value={displayDashCount(kpiSlaBreached)}
+                    styleIndex={3}
+                    embed
+                    appKind={appKind}
+                    active={kpiFocus === 'sla_breached'}
+                    onClick={() => handleKpiClick('sla_breached')}
+                  />
+                ) : null}
                 {!isP2pLayout ? (
                   <EmbedKpiCard
                     label="Adoption · overall"
@@ -2663,7 +2645,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 activeIssueKey={topIssueDrillKey}
                 activeMetric={topIssueDrillMetric}
                 title="Top users · Service Request"
-                hint="Names are Behalf Of (actual user), not Raised By · click for Open / Closed / SLA"
+                hint="Names are Requester Name · click for Open / Closed / SLA"
                 sectionId={ITSM_TOP_SR_USERS_ID}
               />
             ) : null}
@@ -2679,7 +2661,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                 activeIssueKey={topIssueDrillKey}
                 activeMetric={topIssueDrillMetric}
                 title="Top users · Incident"
-                hint="Names are Behalf Of (actual user), not Raised By · click for Open / Closed / SLA"
+                hint="Names are Requester Name · click for Open / Closed / SLA"
                 sectionId={ITSM_TOP_INCIDENT_USERS_ID}
               />
             ) : null}
@@ -2707,7 +2689,7 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     : isPmLayout
                       ? `pm-${pmPackFocus?.key || 'all'}-${pmPackFocus?.metric || recordsStatus}`
                       : itsmCompanyMode
-                        ? `itsm-${entity}-${company}-${kpiFocus || 'all'}-${recordsStatus}`
+                        ? `itsm-${entity}-${company}-${topIssueUsersFocus || 'all'}-${recordsRequester || 'all'}-${ticketIssueFocus?.key || 'all'}-${topIssueDrillMetric || kpiFocus || 'all'}-${recordsStatus}`
                         : 'records'
               }
               inventory={tableInventory}
@@ -2718,17 +2700,25 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
                     ? travelColumnsForPack(travelPackFocus?.key)
                     : isEmsLayout
                       ? EMS_DASH_COLUMNS
-                      : isPmLayout
-                        ? PM_DASH_COLUMNS
-                    : recordsColumns
+                      : isSolarLayout
+                        ? SOLAR_DASH_COLUMNS
+                        : isPmLayout
+                          ? PM_DASH_COLUMNS
+                          : recordsColumns
               }
               dataSource={recordsDataSource}
               entity={entity}
               company={company}
               department={department}
               status={recordsStatus}
-              assigned={assignedFilterName}
-              assignedId={assignedFilterId}
+              assigned={recordsRequester ? undefined : assignedFilterName}
+              assignedId={recordsRequester ? undefined : assignedFilterId}
+              requester={recordsRequester || undefined}
+              ticketKind={
+                itsmCompanyMode && (topIssueUsersFocus === 'sr' || topIssueUsersFocus === 'incident')
+                  ? topIssueUsersFocus
+                  : null
+              }
               dateFrom={recurringMonthFocus?.from || resolvedDates.from || undefined}
               dateTo={recurringMonthFocus?.to || resolvedDates.to || undefined}
               todayKind={todayKind}
@@ -2736,10 +2726,16 @@ export default function AppDashboardTab({ app, embed = false, refreshNonce = 0, 
               travelMode={travelMode}
               travelPackKind={travelMode ? travelPackFocus?.key || null : null}
               travelSlaFocus={travelMode && travelPackFocus?.metric === 'sla_breached' ? 'breached' : null}
-              itsmSlaFocus={itsmCompanyMode && kpiFocus === 'sla_breached' ? 'breached' : null}
+              itsmSlaFocus={
+                itsmCompanyMode && (kpiFocus === 'sla_breached' || topIssueDrillMetric === 'sla_breached')
+                  ? 'breached'
+                  : null
+              }
               emsSlaFocus={isEmsLayout && kpiFocus === 'sla_breached' ? 'breached' : null}
               emsMode={isEmsLayout}
-              leadWebsiteMode={leadMode}
+              solarSlaFocus={isSolarLayout && kpiFocus === 'sla_breached' ? 'breached' : null}
+              solarMode={isSolarLayout}
+              leadWebsiteMode={false}
               activityDates={recurringMonthFocus ? false : activityDates}
               filterAnimating={false}
               inventoryLoading={inventoryLoading}

@@ -28,10 +28,10 @@ describe('itsmTicketKind / filterItsmByTicketKind', () => {
     expect(buildItsmTopIssueUsers(filterItsmByTicketKind(rows, 'incident'), 10).map((u) => u.name)).toEqual(['Bob']);
   });
 
-  it('uses Behalf Of / username, not the proxy who raised the ticket', () => {
+  it('uses Requester Name (Behalf Of / requester), not Raised By proxy', () => {
     const rows = [
       {
-        requested_by: 'Fazulahemed',
+        requested_by: 'Priya S',
         raised_by: 'Fazulahemed',
         behalf_of_name: 'Priya S',
         ticket_type: 'Service Request',
@@ -39,15 +39,16 @@ describe('itsmTicketKind / filterItsmByTicketKind', () => {
         sub_category: 'Laptop',
       },
       {
-        requested_by: 'Fazulahemed',
+        requested_by: 'Priya S',
         raised_by: 'Fazulahemed',
-        Behalf_Of_Name: { Name: 'Priya S' },
+        behalf_of_name: 'Priya S',
         ticket_type: 'Service Request',
         category: 'Hardware',
         sub_category: 'Laptop',
       },
       {
         requested_by: 'Ada',
+        raised_by: 'Ada',
         ticket_type: 'Service Request',
         category: 'Network',
         sub_category: 'VPN',
@@ -112,7 +113,7 @@ describe('buildItsmTopIssueUsers', () => {
       name: 'Ada',
       total: 4,
       open: 2,
-      closed: 2,
+      closed: 1,
       slaBreached: 1,
     });
     expect(top[0].issues[0]).toMatchObject({
@@ -126,7 +127,7 @@ describe('buildItsmTopIssueUsers', () => {
       label: 'Network · VPN',
       count: 1,
       open: 0,
-      closed: 1,
+      closed: 0,
       slaBreached: 0,
     });
   });
@@ -178,7 +179,7 @@ describe('buildItsmRecurringIssues', () => {
       'Network · VPN:2',
     ]);
     expect(recurring[0]).toMatchObject({ open: 2, closed: 1, slaBreached: 1 });
-    expect(recurring[1]).toMatchObject({ open: 1, closed: 1, slaBreached: 0 });
+    expect(recurring[1]).toMatchObject({ open: 1, closed: 0, slaBreached: 0 });
   });
 });
 

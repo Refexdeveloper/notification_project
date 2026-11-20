@@ -65,8 +65,9 @@ function emptyIssueFace(
 function bumpIssueStatus(face: ItsmIssueFace, row: TicketLike) {
   face.count += 1;
   const status = String(row.status || '').toLowerCase();
-  if (status === 'closed' || status === 'rejected') face.closed += 1;
-  else face.open += 1;
+  // Closed card = Ticket Status closed only (rejected is separate, not in Closed).
+  if (status === 'closed') face.closed += 1;
+  else if (status !== 'rejected') face.open += 1;
   if (isItsmSlaBreached(row as AppRecordRow)) face.slaBreached += 1;
 }
 
@@ -107,10 +108,9 @@ export function buildItsmTopIssueUsers(
   const byUser = new Map<string, Acc>();
 
   for (const row of records || []) {
-    // Top users = actual user (Behalf Of Name when a proxy raised the ticket).
-    // Never prefer Raised By / Fazulahemed-style proxy names when Behalf Of is set.
+    // Top users = Requester Name (same field as Records / expand “Requester Name”).
     const name = itsmRequesterName(row as AppRecordRow)
-      || normalizeItsmPersonLabel(String(row.requested_by || '').trim());
+      || normalizeItsmPersonLabel(String(row.requested_by || row.requester_name || '').trim());
     if (!isDisplayablePersonName(name)) continue;
     const userKey = personDedupeKey(name);
     if (!userKey) continue;
@@ -129,8 +129,9 @@ export function buildItsmTopIssueUsers(
     }
     acc.total += 1;
     const status = String(row.status || '').toLowerCase();
-    if (status === 'closed' || status === 'rejected') acc.closed += 1;
-    else acc.open += 1;
+    // Closed card = Ticket Status closed only (rejected is separate, not in Closed).
+    if (status === 'closed') acc.closed += 1;
+    else if (status !== 'rejected') acc.open += 1;
     if (isItsmSlaBreached(row as AppRecordRow)) acc.slaBreached += 1;
 
     let face = acc.issues.get(issueKey);
@@ -354,7 +355,7 @@ export function buildItsmRecurringUserTable(
     const monthKey = ticketCreatedMonthKey(row);
     if (!monthKey) continue;
     const name = itsmRequesterName(row as AppRecordRow)
-      || normalizeItsmPersonLabel(String(row.requested_by || '').trim());
+      || normalizeItsmPersonLabel(String(row.requested_by || row.requester_name || '').trim());
     if (!isDisplayablePersonName(name)) continue;
     const userKey = personDedupeKey(name);
     if (!userKey) continue;

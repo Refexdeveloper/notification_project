@@ -26,10 +26,8 @@ import {
   assignedRecordLabel,
   companyCountsFromRecords,
   departmentCountsFromRecords,
-  websiteCountsFromRecords,
   ensureFilterOption,
   entityCountsFromRecords,
-  itsmEntityFieldCountsFromRecords,
   filterAppRecords,
   stampRecordsWithAssigneeCompany,
   summarizeAppRecords,
@@ -113,7 +111,6 @@ export default function RecordsTab({ app, embed = false }: Props) {
   const backendAppId = resolveBackendApplicationId(app);
   const itsmCompanyMode = /itsm|service_management/i.test(String(app.appId || app.id || backendAppId || ''));
   const travelMode = /travel|expense_and_travel/i.test(String(app.appId || app.id || backendAppId || ''));
-  const leadMode = /lead/i.test(String(app.appId || app.id || backendAppId || ''));
   const pmMode = /project_management|project_tracker/i.test(String(app.appId || app.id || backendAppId || ''));
   const emsMode = !travelMode && resolveNeAppKind(backendAppId, app.displayName || app.name) === 'expense';
   const { id: routeAppId } = useParams<{ id: string }>();
@@ -214,7 +211,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
   const filteredRows = useMemo(() => {
     if (!inventoryReady) return [];
     const scoped = filterAppRecords(stampedInventory, {
-      entity: (itsmCompanyMode || emsMode) ? 'all' : entity,
+      entity,
       company,
       department: (emsMode || travelMode || pmMode) ? department : undefined,
       status,
@@ -223,7 +220,6 @@ export default function RecordsTab({ app, embed = false }: Props) {
       dateTo: resolvedDates.to,
       itsmCompanyMode,
       travelMode,
-      leadWebsiteMode: leadMode,
       activityDates: period === 'daily',
     });
     // Count Category+Sub Category frequency in the date/entity scope (before column filters).
@@ -309,7 +305,6 @@ export default function RecordsTab({ app, embed = false }: Props) {
     app.id,
     backendAppId,
     itsmCompanyMode,
-    leadMode,
     travelMode,
     columnFilters,
     dateColumnFilters,
@@ -354,50 +349,29 @@ export default function RecordsTab({ app, embed = false }: Props) {
   }, [filteredRows.length, pageSize]);
 
   const entityOptions = useMemo(() => {
-    if (itsmCompanyMode) {
-      const rows = itsmEntityFieldCountsFromRecords(stampedInventory);
-      return ensureFilterOption(
-        [{ id: 'all', label: 'All entities' }, ...rows.map((r) => ({ id: r.id, label: r.label, count: r.count }))],
-        entity,
-      );
-    }
-    const mode = travelMode ? 'refex_venwind' : 'all_buckets';
-    const rows = entityCountsFromRecords(stampedInventory, { itsmCompanyMode, travelMode });
+    // Same Entity filter on every app Records tab: Refex / Extrovis / Venwind.
+    const rows = entityCountsFromRecords(stampedInventory, { itsmCompanyMode });
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.id] = r.count;
     return ensureFilterOption(
-      buildEntityBucketOptions(counts, { mode, allLabel: 'All entities' }),
+      buildEntityBucketOptions(counts, { mode: 'all_buckets', allLabel: 'All entities' }),
       entity,
     );
-  }, [entity, stampedInventory, itsmCompanyMode, travelMode]);
+  }, [entity, stampedInventory, itsmCompanyMode]);
 
   const companyOptions = useMemo(() => {
-    if (leadMode) {
-      const rows = websiteCountsFromRecords(stampedInventory);
-      return sortCompanyFilterOptions(ensureFilterOption(
-        [{ id: 'all', label: 'All websites' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
-        company,
-      ));
-    }
-    const companyEntity = (itsmCompanyMode || emsMode) ? 'all' : entity;
+    // Same Company catalog on every app, scoped by Entity.
+    const companyEntity = entity === 'refex' || entity === 'extrovis' || entity === 'venwind'
+      ? entity
+      : 'all';
     const rows = companyCountsFromRecords(stampedInventory, { itsmCompanyMode, entity: companyEntity });
-    // ITSM + Travel + EMS: full company catalog (not only companies present in tickets).
-    if (itsmCompanyMode || travelMode || emsMode) {
-      const counts: Record<string, number> = {};
-      for (const r of rows) counts[r.id] = r.count;
-      return sortCompanyFilterOptions(ensureFilterOption(
-        buildRefexCompanyOptions(counts, { allLabel: 'All companies', entity: companyEntity }),
-        company,
-      ));
-    }
-    if (!rows.length) {
-      return buildRefexCompanyOptions({}, { allLabel: 'All companies', entity: companyEntity });
-    }
+    const counts: Record<string, number> = {};
+    for (const r of rows) counts[r.id] = r.count;
     return sortCompanyFilterOptions(ensureFilterOption(
-      [{ id: 'all', label: 'All companies' }, ...rows.map((r) => ({ id: r.id, label: r.label }))],
+      buildRefexCompanyOptions(counts, { allLabel: 'All companies', entity: companyEntity }),
       company,
     ));
-  }, [company, emsMode, entity, stampedInventory, itsmCompanyMode, leadMode, travelMode]);
+  }, [company, entity, stampedInventory, itsmCompanyMode]);
 
   const departmentOptions = useMemo(() => {
     // IT Help Desk: no Department filter.
@@ -413,7 +387,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       );
     }
     const scoped = filterAppRecords(stampedInventory, {
-      entity: emsMode ? 'all' : entity,
+      entity,
       company,
       itsmCompanyMode,
       travelMode,
@@ -434,8 +408,8 @@ export default function RecordsTab({ app, embed = false }: Props) {
     () => uniquePersonLabels(stampedInventory.map((row) => row.requested_by)),
     [stampedInventory],
   );
-  // Expense Management + IT Help Desk Records: no Entity here; IT Help Desk also hides Department.
-  const showEntity = !leadMode && !itsmCompanyMode && !emsMode;
+  // Same Entity + Company on every app Records tab.
+  const showEntity = true;
   const showCompany = true;
   const showDepartment = !itsmCompanyMode && departmentOptions.length > 0;
   const showAssigned = assigneeOptions.length > 0;
@@ -506,7 +480,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
         { id: 'requested_by', label: 'Requested by' },
         { id: 'status', label: 'Status' },
         { id: 'entity', label: 'Entity' },
-        { id: leadMode ? 'website' : 'company_name', label: leadMode ? 'Website' : 'Company name' },
+        { id: 'company_name', label: 'Company name' },
         { id: 'created_at', label: 'Created' },
       ];
 
@@ -541,7 +515,7 @@ export default function RecordsTab({ app, embed = false }: Props) {
       company={company}
       onCompanyChange={showCompany ? handleCompanyChange : undefined}
       companyOptions={showCompany ? companyOptions : undefined}
-      companyLabel={leadMode ? 'Website' : 'Company'}
+      companyLabel="Company"
       department={department}
       onDepartmentChange={showDepartment ? setDepartment : undefined}
       departmentOptions={showDepartment ? departmentOptions : undefined}

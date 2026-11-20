@@ -171,6 +171,67 @@ describe('filterAppRecords', () => {
     expect(filterAppRecords(rows, { assigned: 'Bhukkay Naik', itsmCompanyMode: true }).map((r) => r.id)).toEqual(['1']);
   });
 
+  it('ITSM Top users Open drill matches requester + open bucket (not closed/rejected)', () => {
+    const rows: AppRecordRow[] = [
+      { id: '1', request_id: 'IT-1', requested_by: 'Sudhaya K', behalf_of_name: 'Sudhaya K', status: 'open' },
+      { id: '2', request_id: 'IT-2', requested_by: 'Sudhaya K', behalf_of_name: 'Sudhaya K', status: 'inprogress' },
+      { id: '3', request_id: 'IT-3', requested_by: 'Sudhaya K', behalf_of_name: 'Sudhaya K', status: 'closed' },
+      { id: '4', request_id: 'IT-4', requested_by: 'Other', behalf_of_name: 'Other', status: 'open' },
+      {
+        id: '5',
+        request_id: 'IT-5',
+        requested_by: 'Fazulahemed',
+        raised_by: 'Fazulahemed',
+        behalf_of_name: 'Sudhaya K',
+        status: 'open',
+      },
+    ];
+    expect(filterAppRecords(rows, {
+      itsmCompanyMode: true,
+      requester: 'Sudhaya K',
+      status: 'open',
+    }).map((r) => r.id)).toEqual(['1', '2', '5']);
+  });
+
+  it('ITSM Top users Closed / ticket-kind drill is closed-only (excludes rejected)', () => {
+    const rows: AppRecordRow[] = [
+      {
+        id: '1',
+        request_id: 'IT-1',
+        requested_by: 'Tech',
+        ticket_type: 'Incident',
+        status: 'closed',
+      },
+      {
+        id: '2',
+        request_id: 'IT-2',
+        requested_by: 'Tech',
+        ticket_type: 'Incident',
+        status: 'rejected',
+      },
+      {
+        id: '3',
+        request_id: 'IT-3',
+        requested_by: 'Tech',
+        ticket_type: 'Service Request',
+        status: 'closed',
+      },
+      {
+        id: '4',
+        request_id: 'IT-4',
+        requested_by: 'Other',
+        ticket_type: 'Incident',
+        status: 'closed',
+      },
+    ];
+    expect(filterAppRecords(rows, {
+      itsmCompanyMode: true,
+      requester: 'Tech',
+      ticketKind: 'incident',
+      status: 'closed',
+    }).map((r) => r.id)).toEqual(['1']);
+  });
+
   it('Today activity window includes closed tickets created earlier', () => {
     const today = new Date().toISOString();
     const yesterday = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();

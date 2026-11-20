@@ -8,7 +8,7 @@ import {
   normalizeItsmPersonLabel,
   personDedupeKey,
 } from '@/lib/personName';
-import { itsmHumanName } from '@/lib/itsmRecordDisplay';
+import { getRequestTypeShort, itsmHumanName, itsmRequesterName } from '@/lib/itsmRecordDisplay';
 import { isPmSlaBreached } from '@/lib/pmSla';
 import {
   buildEntityBucketOptions,
@@ -63,11 +63,11 @@ export function recordMatchesItsmEntityField(
 
 export type RecordFilterOpts = {
   /**
-   * ITSM: exact Kissflow Entity field label (or legacy bucket refex/extrovis).
-   * Other apps: entity bucket all | refex | extrovis | venwind.
+   * Entity bucket: all | refex | extrovis | venwind (same on every dashboard).
+   * Legacy ITSM Employee_entity labels still accepted.
    */
   entity?: string;
-  /** Company catalog id (or Lead website label). */
+  /** Company catalog id (same on every dashboard). */
   company?: string;
   /** Requester department label (EMS); compared case-insensitively. */
   department?: string;
@@ -77,6 +77,13 @@ export type RecordFilterOpts = {
   assigned?: string;
   /** Kissflow user id / email when the dropdown option is not a display name */
   assignedId?: string;
+  /**
+   * IT Help Desk Top users drill: match Requester Name / Behalf Of only
+   * (not Assigned to).
+   */
+  requester?: string;
+  /** IT Help Desk Top users · SR / Incident — keep Records on the same ticket kind. */
+  ticketKind?: 'sr' | 'incident';
   dateFrom?: string;
   dateTo?: string;
   /** IST calendar-day slice for Opened today / Closed today KPI clicks. */
@@ -148,6 +155,21 @@ export function recordMatchesAssigned(
   if (namel && who && who.toLowerCase().includes(namel)) return true;
   if (matchRequester && namel && requester && requester.toLowerCase().includes(namel)) return true;
   return false;
+}
+
+/** IT Help Desk Top users: filter by Requester Name / Behalf Of (not Assigned to). */
+export function recordMatchesItsmRequester(
+  row: AppRecordRow,
+  requesterFilter?: string,
+): boolean {
+  const want = normalizeItsmPersonLabel(String(requesterFilter || '').trim());
+  if (!want || want.toLowerCase() === 'all') return true;
+  const have = normalizeItsmPersonLabel(itsmRequesterName(row) || String(row.requested_by || '').trim());
+  if (!have) return false;
+  const compactWant = personDedupeKey(want);
+  const compactHave = personDedupeKey(have);
+  if (compactWant.length >= 3 && compactHave.length >= 3 && compactWant === compactHave) return true;
+  return have.toLowerCase() === want.toLowerCase();
 }
 
 function isDraftRow(row: AppRecordRow): boolean {
@@ -282,6 +304,10 @@ export function filterAppRecords(
   const departmentFilter = String(opts.department || 'all').trim().toLowerCase();
   const assignedFilter = String(opts.assigned || '').trim();
   const assignedId = String(opts.assignedId || '').trim();
+  const requesterFilter = String(opts.requester || '').trim();
+  const ticketKindFilter = opts.ticketKind === 'sr' || opts.ticketKind === 'incident'
+    ? opts.ticketKind
+    : null;
   const from = String(opts.dateFrom || '').slice(0, 10);
   const to = String(opts.dateTo || '').slice(0, 10);
   const todayKind = opts.todayKind;
@@ -295,16 +321,35 @@ export function filterAppRecords(
     const id = String(row.request_id || row.id || '').trim();
     if (!id || id === '—') return false;
 
-    if (statusFilter !== 'all' && String(row.status || '').toLowerCase() !== statusFilter) return false;
+    if (ticketKindFilter) {
+      const short = getRequestTypeShort(row.ticket_type);
+      const raw = String(row.ticket_type || '').toLowerCase();
+      const kind = short === 'SR' || /service\s*request|\bsr\b/.test(raw)
+        ? 'sr'
+        : short === 'IC' || /\bincident\b|\bic\b/.test(raw)
+          ? 'incident'
+          : 'other';
+      if (kind !== ticketKindFilter) return false;
+    }
 
-    if (itsmCompanyMode) {
-      // Entity dropdown = Kissflow Employee_entity / Entity (Adrenalin via Kissflow).
-      // Keep legacy bucket ids working if still selected.
-      if (entityFilter === 'refex' || entityFilter === 'extrovis' || entityFilter === 'venwind') {
-        if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) return false;
-      } else if (!recordMatchesItsmEntityField(row, String(opts.entity || 'all').trim())) {
+    if (statusFilter !== 'all') {
+      const status = String(row.status || '').toLowerCase();
+      // Match Top users Open / Closed buckets (Closed = closed only; rejected excluded).
+      if (itsmCompanyMode && statusFilter === 'open') {
+        if (status === 'closed' || status === 'rejected') return false;
+      } else if (itsmCompanyMode && statusFilter === 'closed') {
+        if (status !== 'closed') return false;
+      } else if (status !== statusFilter) {
         return false;
       }
+    }
+
+    // Same Entity buckets on every dashboard (Refex / Extrovis / Venwind).
+    // Legacy ITSM Employee_entity labels still match if somehow selected.
+    if (entityFilter === 'refex' || entityFilter === 'extrovis' || entityFilter === 'venwind') {
+      if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) return false;
+    } else if (itsmCompanyMode && entityFilter !== 'all') {
+      if (!recordMatchesItsmEntityField(row, String(opts.entity || 'all').trim())) return false;
     } else if (!recordMatchesEntityBucket(row, entityFilter, itsmCompanyMode)) {
       return false;
     }
@@ -323,6 +368,10 @@ export function filterAppRecords(
     if ((assignedFilter || assignedId) && !recordMatchesAssigned(row, assignedFilter, assignedId, {
       matchRequester: !itsmCompanyMode,
     })) {
+      return false;
+    }
+
+    if (requesterFilter && !recordMatchesItsmRequester(row, requesterFilter)) {
       return false;
     }
 
@@ -535,7 +584,6 @@ export function entityCountsFromRecords(
   items: AppRecordRow[],
   {
     itsmCompanyMode = false,
-    travelMode = false,
   }: { itsmCompanyMode?: boolean; travelMode?: boolean } = {},
 ): Array<{ id: string; label: string; count: number }> {
   const counts: Record<string, number> = {};
@@ -543,8 +591,8 @@ export function entityCountsFromRecords(
     const key = recordEntityKey(row, itsmCompanyMode);
     counts[key] = (counts[key] || 0) + 1;
   }
-  const mode = travelMode ? 'refex_venwind' : itsmCompanyMode ? 'refex_extrovis' : 'all_buckets';
-  return buildEntityBucketOptions(counts, { mode, includeAll: false })
+  // Same Entity buckets on every dashboard: Refex / Extrovis / Venwind.
+  return buildEntityBucketOptions(counts, { mode: 'all_buckets', includeAll: false })
     .filter((e) => (e.count || 0) > 0)
     .map((e) => ({ id: e.id, label: e.label, count: Number(e.count || 0) }));
 }
